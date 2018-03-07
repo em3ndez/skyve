@@ -135,7 +135,7 @@
 										<!-- add the test classes to the classpath for generated tests -->
 										<pathelement path="bin/" />
 									</classpath>
-									<arg value="src/skyve/" /> <!-- source path -->
+									<arg value="src/main/java/" /> <!-- source path -->
 									<arg value="src/test/" /> <!-- test path -->
 									<arg value="src/generatedTest/" /> <!-- generated test path -->
 									<arg value="true" /> <!-- debug -->
@@ -177,7 +177,7 @@
 									<!-- list all modules as arguments here -->
 									<arg value="admin" />
 								</java>
-						        <javadoc sourcepath="src/skyve" packagenames="modules.*.domain" destdir="../javadoc" private="true" verbose="false">
+						        <javadoc sourcepath="src/main/java" packagenames="modules.*.domain" destdir="../javadoc" private="true" verbose="false">
 									<classpath refid="classpath"/>
 						            <doclet name="org.skyve.impl.tools.javadoc.SkyveDoclet" path="tools/lib/umlgraph-5.6.6.jar:tools/lib/skyve-tools.jar">
 						                    <param name="-hide" value="org.skyve.*|java.*|org.skyve.impl.*"/>
