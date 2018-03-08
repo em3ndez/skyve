@@ -12,7 +12,6 @@
  	<packaging>war</packaging>
 
 	<properties>
-		<finalName>skyve</finalName>
 		<javaee-path>${basedir}/javaee</javaee-path>
 		<ear-path>${javaee-path}/skyve.ear</ear-path>
 		<war-path>${ear-path}/skyve.war</war-path>
@@ -229,7 +228,7 @@
 			<plugin>
 				<artifactId>maven-war-plugin</artifactId>
 				<configuration>
-					<webappDirectory>${basedir}/javaee/${project.build.finalName}.war</webappDirectory>
+					<webappDirectory>${basedir}/javaee/skyve.war</webappDirectory>
 				</configuration>
 				<executions>
 					<execution>
