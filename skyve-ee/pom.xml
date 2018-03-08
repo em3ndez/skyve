@@ -136,7 +136,7 @@
 										<pathelement path="bin/" />
 									</classpath>
 									<arg value="src/main/java/" /> <!-- source path -->
-									<arg value="src/test/" /> <!-- test path -->
+									<arg value="src/test/java/" /> <!-- test path -->
 									<arg value="src/generatedTest/java/" /> <!-- generated test path -->
 									<arg value="true" /> <!-- debug -->
 									<arg value="H2_NO_INDEXES" /> <!-- dialect options -->
