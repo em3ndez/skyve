@@ -9,8 +9,10 @@
 		<version>20180308-SNAPSHOT</version>
 	</parent>
 	<artifactId>skyve-ee</artifactId>
+ 	<packaging>war</packaging>
 
 	<properties>
+		<finalName>skyve</finalName>
 		<javaee-path>${basedir}/javaee</javaee-path>
 		<ear-path>${javaee-path}/skyve.ear</ear-path>
 		<war-path>${ear-path}/skyve.war</war-path>
@@ -221,6 +223,20 @@
 								<source>src/generatedTest/java</source>
 							</sources>
 						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<artifactId>maven-war-plugin</artifactId>
+				<configuration>
+					<webappDirectory>${basedir}/javaee/${project.build.finalName}.war</webappDirectory>
+				</configuration>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>exploded</goal>
+						</goals>
 					</execution>
 				</executions>
 			</plugin>
