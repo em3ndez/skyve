@@ -6,9 +6,10 @@
 	<parent>
 		<groupId>org.skyve</groupId>
 		<artifactId>skyve-parent</artifactId>
-		<version>20180222-SNAPSHOT</version>
+		<version>20180308-SNAPSHOT</version>
 	</parent>
 	<artifactId>skyve-ee</artifactId>
+ 	<packaging>war</packaging>
 
 	<properties>
 		<javaee-path>${basedir}/javaee</javaee-path>
@@ -135,9 +136,9 @@
 										<!-- add the test classes to the classpath for generated tests -->
 										<pathelement path="bin/" />
 									</classpath>
-									<arg value="src/skyve/" /> <!-- source path -->
-									<arg value="src/test/" /> <!-- test path -->
-									<arg value="src/generatedTest/" /> <!-- generated test path -->
+									<arg value="src/main/java/" /> <!-- source path -->
+									<arg value="src/test/java/" /> <!-- test path -->
+									<arg value="src/generatedTest/java/" /> <!-- generated test path -->
 									<arg value="true" /> <!-- debug -->
 									<arg value="H2_NO_INDEXES" /> <!-- dialect options -->
 									<arg value="test,whosin,whosinintegrate" /> <!-- excluded modules -->
@@ -177,7 +178,7 @@
 									<!-- list all modules as arguments here -->
 									<arg value="admin" />
 								</java>
-						        <javadoc sourcepath="src/skyve" packagenames="modules.*.domain" destdir="../javadoc" private="true" verbose="false">
+						        <javadoc sourcepath="src/main/java" packagenames="modules.*.domain" destdir="../javadoc" private="true" verbose="false">
 									<classpath refid="classpath"/>
 						            <doclet name="org.skyve.impl.tools.javadoc.SkyveDoclet" path="tools/lib/umlgraph-5.6.6.jar:tools/lib/skyve-tools.jar">
 						                    <param name="-hide" value="org.skyve.*|java.*|org.skyve.impl.*"/>
@@ -194,7 +195,61 @@
 					</execution>
 				</executions>
 			</plugin>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>build-helper-maven-plugin</artifactId>
+				<version>1.7</version>
+				<executions>
+					<execution>
+						<phase>generate-sources</phase>
+						<goals>
+							<goal>add-source</goal>
+						</goals>
+						<configuration>
+							<sources>
+								<source>src/web/java</source>
+							</sources>
+						</configuration>
+					</execution>
+					<execution>
+						<id>add-test-source</id>
+						<phase>generate-test-sources</phase>
+						<goals>
+							<goal>add-test-source</goal>
+						</goals>
+						<configuration>
+							<sources>
+								<source>src/generatedTest/java</source>
+							</sources>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<artifactId>maven-war-plugin</artifactId>
+				<configuration>
+					<webappDirectory>${basedir}/javaee/skyve.war</webappDirectory>
+				</configuration>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>exploded</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
  		</plugins>
+
+		<resources>
+			<resource>
+				<directory>src/main/java</directory>
+				<excludes>
+					<exclude>**/*.java</exclude>
+				</excludes>
+			</resource>
+		</resources>
+
  	</build>
 
 	<dependencies>
@@ -502,7 +557,8 @@
 			<groupId>junit</groupId>
 			<artifactId>junit</artifactId>
 			<version>${junit.version}</version>
-			<scope>test</scope>
+			<!-- Assert is used in runtime code -->
+			<scope>compile</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.mockito</groupId>
