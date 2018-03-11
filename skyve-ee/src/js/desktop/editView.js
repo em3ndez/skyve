@@ -1109,8 +1109,8 @@ isc.EditView.addMethods({
 					}
 				}
 
-				// restore the current tab (careful - tab 0 is valid but is falsey)
-				if ((selectedTabNumber !== undefined) && (selectedTabNumber != null)) {
+				// restore the current tab
+				if (selectedTabNumber) {
 					contained.selectTab(selectedTabNumber);
 				}
 			}
@@ -1520,15 +1520,10 @@ isc.BizButton.addMethods({
 					var me = this;
 					// apply changes to current form before exporting
 					this._view.saveInstance(validate, null, function() {
-						var url = 'download?_n=' + me.actionName + 
-									'&_doc=' + me._view._mod + '.' + me._view._doc + 
-									'&_c=' + instance._c;
-						if (me._view._b) {
-							url += '&_b=' + me._view._b.replaceAll('_', '.');
-						}
-						url += '&_ctim=' + new Date().getTime();
-
-						window.location.assign(url);
+						window.location.assign('download?_n=' + me.actionName + 
+												'&_doc=' + me._view._mod + '.' + me._view._doc + 
+												'&_c=' + instance._c +
+												'&_ctim=' + new Date().getTime());
 					});
 				}
 			}

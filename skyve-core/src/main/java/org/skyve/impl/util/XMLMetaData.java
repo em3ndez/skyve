@@ -44,7 +44,6 @@ import org.skyve.impl.metadata.repository.module.ModuleMetaData;
 import org.skyve.impl.metadata.repository.router.Router;
 import org.skyve.impl.metadata.repository.view.ViewMetaData;
 import org.skyve.metadata.MetaDataException;
-import org.skyve.metadata.sail.language.TestSuite;
 import org.skyve.util.Util;
 import org.xml.sax.SAXException;
 
@@ -73,7 +72,6 @@ public class XMLMetaData {
 	public static final String MODULE_NAMESPACE = "http://www.skyve.org/xml/module";
 	public static final String DOCUMENT_NAMESPACE = "http://www.skyve.org/xml/document";
 	public static final String VIEW_NAMESPACE = "http://www.skyve.org/xml/view";
-	public static final String SAIL_NAMESPACE = "http://www.skyve.org/xml/sail";
 
 	private static final JAXBContext ROUTER_CONTEXT;
 	private static final Schema ROUTER_SCHEMA;
@@ -89,9 +87,6 @@ public class XMLMetaData {
 
 	private static final JAXBContext VIEW_CONTEXT;
 	private static final Schema VIEW_SCHEMA;
-
-	private static final JAXBContext SAIL_CONTEXT;
-	private static final Schema SAIL_SCHEMA;
 
 	static {
 		try {
@@ -109,9 +104,6 @@ public class XMLMetaData {
 
 			VIEW_CONTEXT = JAXBContext.newInstance(ViewMetaData.class);
 			VIEW_SCHEMA = getSchema(UtilImpl.getAbsoluteBasePath() + "schemas/view.xsd");
-
-			SAIL_CONTEXT = JAXBContext.newInstance(TestSuite.class);
-			SAIL_SCHEMA = getSchema(UtilImpl.getAbsoluteBasePath() + "schemas/sail.xsd");
 		}
 		catch (Exception e) {
 			throw new IllegalStateException("Could not initialize one of the metadata JAXB contexts", e);
@@ -179,44 +171,6 @@ public class XMLMetaData {
 		}
 	}
 
-	/**
-	 * Writes the CustomerMetaData to a new customer.xml in the location of the
-	 * specified directory. This will overwrite any existing file in that location with
-	 * the same name as specified in the metadata.
-	 *
-	 * @param customer The customer to output to a file
-	 * @param sourceDirectory The root source directory, e.g. <code>src/main/java</code>
-	 */
-	public static void marshalCustomer(CustomerMetaData customer, String sourceDirectory) {
-		// NB Cannot use FileWriter in here as it doesn't work with UTF-8 properly on Linux.
-		// We need to specifically mention UTF-8 to get this to happen in the adapter abomination below
-		StringBuilder filePath = new StringBuilder(64);
-		filePath.append(sourceDirectory);
-		if (!sourceDirectory.endsWith("/") && !sourceDirectory.endsWith("\\")) {
-			filePath.append('/');
-		}
-		filePath.append("customers/").append(customer.getName()).append('/');
-		File file = new File(filePath.toString());
-		file.mkdirs();
-		filePath.append(customer.getName()).append(".xml");
-		file = new File(filePath.toString());
-		Util.LOGGER.info(String.format("Attempting to write %s.xml to %s", customer.getName(), file.getAbsolutePath()));
-
-		try (FileOutputStream fos = new FileOutputStream(file)) {
-			try (BufferedOutputStream bos = new BufferedOutputStream(fos)) {
-				try (OutputStreamWriter osw = new OutputStreamWriter(bos, Util.UTF8)) {
-					try (BufferedWriter bw = new BufferedWriter(osw)) {
-						String contents = marshalCustomer(customer);
-						bw.write(contents);
-						bw.flush();
-					}
-				}
-			}
-		} catch (Exception e) {
-			throw new MetaDataException("Could not marshal customer at " + file.getPath(), e);
-		}
-	}
-
 	public static CustomerMetaData unmarshalCustomer(String file) {
 		// NB Cannot use FileReader in here as it doesn't work with UTF-8 properly on linux.
 		// We need to specifically mention UTF-8 to get this to happen in the adapter abomination below
@@ -270,17 +224,17 @@ public class XMLMetaData {
 	 * 
 	 * @param module The module to output to a file
 	 * @param overridden Should be true if this module is a customer override, false otherwise
-	 * @param modulesDirectory The root source modules directory, e.g. <code>src/main/java/modules</code>
+	 * @param sourceDirectory The root source directory, e.g. <code>src/main/java</code>
 	 */
-	public static void marshalModule(ModuleMetaData module, boolean overridden, String modulesDirectory) {
+	public static void marshalModule(ModuleMetaData module, boolean overridden, String sourceDirectory) {
 		// NB Cannot use FileWriter in here as it doesn't work with UTF-8 properly on Linux.
 		// We need to specifically mention UTF-8 to get this to happen in the adapter abomination below
 		StringBuilder filePath = new StringBuilder(64);
-		filePath.append(modulesDirectory);
-		if (!modulesDirectory.endsWith("/") && !modulesDirectory.endsWith("\\")) {
+		filePath.append(sourceDirectory);
+		if (!sourceDirectory.endsWith("/") && !sourceDirectory.endsWith("\\")) {
 			filePath.append('/');
 		}
-		filePath.append(module.getName()).append('/');
+		filePath.append("modules/").append(module.getName()).append('/');
 		File file = new File(filePath.toString());
 		file.mkdirs();
 		filePath.append(module.getName()).append(".xml");
@@ -352,14 +306,14 @@ public class XMLMetaData {
 	 * 
 	 * @param document The document to output to a file
 	 * @param overridden Should be true if this document is a customer override, false otherwise
-	 * @param documentModuleDirectory The path to the module this document belongs to
+	 * @param moduleDirectory The location of the module this file belongs to
 	 */
-	public static void marshalDocument(DocumentMetaData document, boolean overridden, String documentModuleDirectory) {
+	public static void marshalDocument(DocumentMetaData document, boolean overridden, String moduleDirectory) {
 		// NB Cannot use FileWriter in here as it doesn't work with UTF-8 properly on Linux.
 		// We need to specifically mention UTF-8 to get this to happen in the adapter abomination below
 		StringBuilder filePath = new StringBuilder(64);
-		filePath.append(documentModuleDirectory);
-		if (!documentModuleDirectory.endsWith("/") && !documentModuleDirectory.endsWith("\\")) {
+		filePath.append(moduleDirectory);
+		if (!moduleDirectory.endsWith("/") && !moduleDirectory.endsWith("\\")) {
 			filePath.append('/');
 		}
 		filePath.append(document.getName()).append('/');
@@ -449,41 +403,6 @@ public class XMLMetaData {
 		}
 	}
 
-	public static String marshalSAIL(TestSuite testSuite) {
-		try {
-			Marshaller marshaller = SAIL_CONTEXT.createMarshaller();
-			marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, Boolean.TRUE);
-			marshaller.setProperty(Marshaller.JAXB_SCHEMA_LOCATION,
-									SAIL_NAMESPACE + " http://www.skyve.org/xml/sail.xsd");
-			marshaller.setSchema(SAIL_SCHEMA);
-			StringWriter sos = new StringWriter(1024);
-			marshaller.marshal(testSuite, sos);
-			return sos.toString();
-		}
-		catch (JAXBException e) {
-			throw new MetaDataException("Could not marshal SAIL", e);
-		}
-	}
-
-	public static TestSuite unmarshalSAIL(String file) {
-		// NB Cannot use FileReader in here as it doesn't work with UTF-8 properly on linux.
-		// We need to specifically mention UTF-8 to get this to happen in the adapter abomination below
-		try (FileInputStream fis = new FileInputStream(file)) {
-			try (BufferedInputStream bis = new BufferedInputStream(fis)) {
-				try (InputStreamReader isr = new InputStreamReader(bis, Util.UTF8)) {
-					try (BufferedReader br = new BufferedReader(isr)) {
-						Unmarshaller unmarshaller = SAIL_CONTEXT.createUnmarshaller();
-						unmarshaller.setSchema(SAIL_SCHEMA);
-						return (TestSuite) unmarshaller.unmarshal(br);
-					}
-				}
-			}
-		}
-		catch (Exception e) {
-			throw new MetaDataException("Could not unmarshal view at " + file, e);
-		}
-	}
-
 	/**
 	 * Cleans the XML string by removing any empty lines left by removing
 	 * nodes during the {@link JAXBFixingVisitor}.
@@ -508,6 +427,44 @@ public class XMLMetaData {
 			// this can only happen if there's a deployment error and the resource is missing.
 			throw new JAXBException("Could not find XML Schema for " + schemaFileName, se);
 		}
+	}
+	
+	public static void main(String[] args) throws Exception {
+		JAXBContext jaxbContext = JAXBContext.newInstance(CustomerMetaData.class, 
+															ModuleMetaData.class,
+															DocumentMetaData.class,
+															ViewMetaData.class,
+															Router.class);
+		jaxbContext.generateSchema(new SchemaOutputResolver() {
+			@Override
+			public Result createOutput(String namespaceUri, String suggestedFileName) throws IOException {
+				File file = null;
+				if (namespaceUri.endsWith("/common")) {
+					file = new File("common.xsd");
+				}
+				else if (namespaceUri.endsWith("/customer")) {
+					file = new File("customer.xsd");
+				}
+				else if (namespaceUri.endsWith("/module")) {
+					file = new File("module.xsd");
+				}
+				else if (namespaceUri.endsWith("/document")) {
+					file = new File("document.xsd");
+				}
+				else if (namespaceUri.endsWith("/view")) {
+					file = new File("view.xsd");
+				}
+				else if (namespaceUri.endsWith("/router")) {
+					file = new File("router.xsd");
+				}
+				else {
+					throw new IllegalArgumentException(namespaceUri + " not catered for");
+				}
+		        StreamResult result = new StreamResult(file);
+		        result.setSystemId(file.toURI().toURL().toString());
+		        return result;
+			}
+		});
 	}
 
 	/**
@@ -623,47 +580,5 @@ public class XMLMetaData {
 				}
 			}
 		}
-	}
-	
-	public static void main(String[] args) throws Exception {
-		JAXBContext jaxbContext = JAXBContext.newInstance(CustomerMetaData.class, 
-															ModuleMetaData.class,
-															DocumentMetaData.class,
-															ViewMetaData.class,
-															Router.class,
-															TestSuite.class);
-		jaxbContext.generateSchema(new SchemaOutputResolver() {
-			@Override
-			public Result createOutput(String namespaceUri, String suggestedFileName) throws IOException {
-				File file = null;
-				if (namespaceUri.endsWith("/common")) {
-					file = new File("common.xsd");
-				}
-				else if (namespaceUri.endsWith("/customer")) {
-					file = new File("customer.xsd");
-				}
-				else if (namespaceUri.endsWith("/module")) {
-					file = new File("module.xsd");
-				}
-				else if (namespaceUri.endsWith("/document")) {
-					file = new File("document.xsd");
-				}
-				else if (namespaceUri.endsWith("/view")) {
-					file = new File("view.xsd");
-				}
-				else if (namespaceUri.endsWith("/router")) {
-					file = new File("router.xsd");
-				}
-				else if (namespaceUri.endsWith("/sail")) {
-					file = new File("sail.xsd");
-				}
-				else {
-					throw new IllegalArgumentException(namespaceUri + " not catered for");
-				}
-		        StreamResult result = new StreamResult(file);
-		        result.setSystemId(file.toURI().toURL().toString());
-		        return result;
-			}
-		});
 	}
 }

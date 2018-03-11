@@ -11,11 +11,7 @@ import org.primefaces.component.toolbar.Toolbar;
 
 public class ResponsiveComponentBuilder extends TabularComponentBuilder {
 	@Override
-	public UIComponent view(UIComponent component, String invisibleConditionName) {
-		if (component != null) {
-			return component;
-		}
-
+	public HtmlPanelGroup view(String invisibleConditionName) {
 		HtmlPanelGroup result = panelGroup(false, false, true, invisibleConditionName, null);
 		result.setStyleClass("ui-g");
 		return result;
@@ -24,11 +20,7 @@ public class ResponsiveComponentBuilder extends TabularComponentBuilder {
 	// Overridden to not set the toolbar style width to 100% since it's wrapped in a ui-g-12
 	// for the responsive renderer.
 	@Override
-	public List<UIComponent> toolbars(List<UIComponent> components, String widgetId) {
-		if (components != null) {
-			return components;
-		}
-
+	public List<UIComponent> toolbars(String widgetId) {
 		Toolbar toolbar = (Toolbar) a.createComponent(Toolbar.COMPONENT_TYPE);
 		setId(toolbar, widgetId);
 		
@@ -38,14 +30,7 @@ public class ResponsiveComponentBuilder extends TabularComponentBuilder {
 	}
 
 	@Override
-	public UIComponent border(UIComponent component, 
-								String borderTitle,
-								String invisibleConditionName,
-								Integer pixelWidth) {
-		if (component != null) {
-			return component;
-		}
-		
+	public UIComponent border(String borderTitle, String invisibleConditionName, Integer pixelWidth) {
 /*
 		HtmlPanelGroup card = panelGroup(false, false, true, invisibleConditionName);
 		card.setStyleClass("card");
@@ -60,7 +45,10 @@ public class ResponsiveComponentBuilder extends TabularComponentBuilder {
 		return card;
 */
 		Panel result = (Panel) a.createComponent(Panel.COMPONENT_TYPE);
-		setValueOrValueExpression(borderTitle, result::setHeader, "header", result);
+		if (borderTitle != null) {
+			result.setHeader(borderTitle);
+		}
+
 		setInvisible(result, invisibleConditionName, null);
 		setId(result, null);
 		result.setStyleClass("ui-g-12");

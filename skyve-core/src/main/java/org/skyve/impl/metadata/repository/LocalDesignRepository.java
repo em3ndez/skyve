@@ -7,6 +7,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+import javax.enterprise.inject.Alternative;
+
 import org.skyve.domain.Bean;
 import org.skyve.domain.types.Enumeration;
 import org.skyve.impl.bind.BindUtil;
@@ -77,6 +79,7 @@ import org.skyve.util.Binder.TargetMetaData;
  * 
  * @author Mike
  */
+@Alternative
 public class LocalDesignRepository extends AbstractRepository {
 	/**
 	 * The cache. MetaData File Location -> MetaData

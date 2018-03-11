@@ -29,7 +29,6 @@ import org.skyve.impl.metadata.view.widget.bound.tabular.DataGridBoundColumn;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.util.XMLMetaData;
 import org.skyve.metadata.MetaData;
-import org.skyve.metadata.MetaDataException;
 import org.skyve.metadata.controller.ImplicitActionName;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.Attribute;
@@ -141,23 +140,12 @@ public class ViewGenerator {
 				}
 				catch (Exception e1) {
 					try {
-						repository.getDownloadAction(customer, document, actionName, false);
-						action.setImplicitName(ImplicitActionName.Download);
+						repository.getBizExportAction(customer, document, actionName, false);
+						action.setImplicitName(ImplicitActionName.BizExport);
 					}
 					catch (Exception e2) {
-						try {
-							repository.getBizExportAction(customer, document, actionName, false);
-							action.setImplicitName(ImplicitActionName.BizExport);
-						}
-						catch (Exception e3) {
-							try {
-								repository.getBizImportAction(customer, document, actionName, false);
-								action.setImplicitName(ImplicitActionName.BizImport);
-							}
-							catch (Exception e4) {
-								throw new MetaDataException(actionName + " cannot be found");
-							}
-						}
+						repository.getBizImportAction(customer, document, actionName, false);
+						action.setImplicitName(ImplicitActionName.BizImport);
 					}
 				}
 			}

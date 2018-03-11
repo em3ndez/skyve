@@ -4,6 +4,9 @@ import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.SortedMap;
 
+import javax.enterprise.context.ApplicationScoped;
+import javax.enterprise.inject.Produces;
+
 import org.skyve.impl.metadata.model.document.CollectionImpl;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.ThreadSafeFactory;
@@ -18,6 +21,7 @@ import org.skyve.persistence.Persistence;
  * The central factory for creating all objects required in the skyve core API.
  * See {@link org.skyve.EXT} for creating objects implemented in skyve ext.
  */
+@ApplicationScoped
 public class CORE {
 	/**
 	 * Disallow instantiation
@@ -33,6 +37,7 @@ public class CORE {
 	 * 
 	 * @return The persistence object.
 	 */
+	@Produces
 	public static Persistence getPersistence() {
 		return AbstractPersistence.get();
 	}
@@ -54,6 +59,7 @@ public class CORE {
 	 * 
 	 * @return The current user.
 	 */
+	@Produces
 	public static User getUser() {
 		return AbstractPersistence.get().getUser();
 	}
@@ -63,6 +69,7 @@ public class CORE {
 	 * 
 	 * @return The current customer.
 	 */
+	@Produces
 	public static Customer getCustomer() {
 		return AbstractPersistence.get().getUser().getCustomer();
 	}
@@ -71,6 +78,7 @@ public class CORE {
 	 * A place (thread-local), where state can be stashed for the duration of the conversation.
 	 * Bear in mind that this map is serialised and cached in the conversation so manage its size aggressively.
 	 */
+	@Produces
 	public static SortedMap<String, Object> getStash() {
 		return AbstractPersistence.get().getStash();
 	}
@@ -83,6 +91,7 @@ public class CORE {
 	 * 
 	 * @return The repository.
 	 */
+	@Produces
 	public static Repository getRepository() {
 		return org.skyve.impl.metadata.repository.AbstractRepository.get();
 	}

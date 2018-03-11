@@ -36,14 +36,12 @@ import org.skyve.impl.metadata.repository.module.ModuleDocument;
 import org.skyve.impl.metadata.repository.module.ModuleMetaData;
 import org.skyve.impl.metadata.repository.module.ModuleRoleMetaData;
 import org.skyve.impl.script.SkyveScriptException.ExceptionType;
-import org.skyve.impl.util.PluralUtil;
 import org.skyve.metadata.model.Persistent;
 import org.skyve.metadata.model.document.Association;
 import org.skyve.metadata.model.document.Association.AssociationType;
 import org.skyve.metadata.model.document.Collection.CollectionType;
 import org.skyve.metadata.user.DocumentPermission;
 import org.skyve.metadata.view.View.ViewType;
-import org.skyve.util.Binder;
 import org.skyve.util.Util;
 
 public class SkyveScriptInterpreter {
@@ -74,10 +72,6 @@ public class SkyveScriptInterpreter {
 	 * Matches a markdown enum declaration missing the word enum
 	 */
 	private static String ENUM_SHORTHAND_PATTERN = "^[-|+]\\s\\*?['\"]?\\w+['\"]?\\*?\\s\\(.+\\)";
-	/**
-	 * Matches the end of a markdown enum declaration for parsisng substition
-	 */
-	private static String ENUM_ATTRIBUTE_PATTERN = "\\s(\\(.+\\))$";
 	/**
 	 * Matches a markdown heading declaration missing the space after #
 	 */
@@ -292,7 +286,8 @@ public class SkyveScriptInterpreter {
 					if (documentName != null) {
 						currentDocument.setName(documentName);
 						currentDocument.setSingularAlias(singularAlias);
-						currentDocument.setPluralAlias(PluralUtil.pluralise(singularAlias));
+						currentDocument.setPluralAlias(
+								singularAlias + (singularAlias != null && singularAlias.endsWith("s") ? "es" : "s"));
 
 						BizKey bizKey = new BizKey();
 						bizKey.setExpression(singularAlias);
@@ -308,9 +303,6 @@ public class SkyveScriptInterpreter {
 							Persistent persistent = new Persistent();
 							persistent.setName(persistentName.getLiteral());
 							currentDocument.setPersistent(persistent);
-						} else {
-							// set plural alias to singular if non-persistent
-							currentDocument.setPluralAlias(singularAlias);
 						}
 					} else {
 						addError(String.format("Unsupported document name declaratation: %s", text.getLiteral()));
@@ -318,6 +310,7 @@ public class SkyveScriptInterpreter {
 				}
 
 				getDocuments().add(currentDocument);
+
 
 				// add this document to the module
 				if (currentModule == null) {
@@ -492,7 +485,7 @@ public class SkyveScriptInterpreter {
 	private void createAttribute(String attributeName, String[] parts, boolean required, Node line) {
 		// identify the type from the parts
 		String type = null;
-		if (parts.length >= 1) {
+		if (parts.length == 1 || parts.length == 2) {
 			type = parts[0];
 		}
 
@@ -516,9 +509,6 @@ public class SkyveScriptInterpreter {
 					break;
 				case "colour":
 					field = createFieldColour(required, name, displayName);
-					break;
-				case "content":
-					field = createFieldContent(required, name, displayName);
 					break;
 				case "date":
 					field = createFieldDate(required, name, displayName);
@@ -569,9 +559,6 @@ public class SkyveScriptInterpreter {
 						} else {
 							addError(String.format("Enum attribute: %s missing required value array", attributeName));
 						}
-					} else {
-						addWarning(String.format("Unsupported enum definition: %s",
-								Arrays.toString(parts).replace(",,", ",").replace("[", "").replace("]", "")));
 					}
 					break;
 				case "text":
@@ -607,9 +594,6 @@ public class SkyveScriptInterpreter {
 			if (field != null) {
 				currentDocument.getAttributes().add(field);
 			}
-		} else {
-			addWarning(String.format("Unsupported attribute definition: %s",
-					Arrays.toString(parts).replace(",,", ",").replace("[", "").replace("]", "")));
 		}
 	}
 
@@ -621,9 +605,7 @@ public class SkyveScriptInterpreter {
 		CollectionType collectionType = extractCollectionType(line);
 
 		// if the collection type is child, store it for processing the parent at the end
-		if (CollectionType.child.equals(collectionType)) {
-			parentDocuments.put(type, currentDocument.getName());
-		}
+		parentDocuments.put(type, currentDocument.getName());
 
 		CollectionImpl collection = new CollectionImpl();
 		collection.setName(name);
@@ -641,11 +623,6 @@ public class SkyveScriptInterpreter {
 
 	private static Field createFieldColour(boolean required, String name, String displayName) {
 		Field field = new org.skyve.impl.metadata.model.document.field.Colour();
-		return setCommonFieldAttributes(field, required, name, displayName);
-	}
-
-	private static Field createFieldContent(boolean required, String name, String displayName) {
-		Field field = new org.skyve.impl.metadata.model.document.field.Content();
 		return setCommonFieldAttributes(field, required, name, displayName);
 	}
 
@@ -683,16 +660,7 @@ public class SkyveScriptInterpreter {
 			for (String v : values) {
 				v = v.trim().replace("(", "").replace(")", "");
 				EnumeratedValue ev = new EnumeratedValue();
-
-				// check for quotes
-				if (v.startsWith("\"") || v.startsWith("'") || v.indexOf(" ") != -1) {
-					v = v.replaceAll("[\"']", "");
-					ev.setDescription(v);
-					ev.setCode(Binder.toJavaTypeIdentifier(v));
-				} else {
-					ev.setCode(v);
-				}
-
+				ev.setCode(v);
 				e.getValues().add(ev);
 			}
 		}
@@ -1001,7 +969,7 @@ public class SkyveScriptInterpreter {
 			// get the rest of the attribute spec
 			if (em.getNext() != null && em.getNext() instanceof Text) {
 				String remainingDefinition = getTextFromNode(em.getNext());
-				String[] parts = splitAttribute(remainingDefinition);
+				String[] parts = remainingDefinition.trim().split("\\s");
 				createAttribute(attributeName, parts, true, em);
 			} else {
 				addWarning("Invalid attribute definition: " + node.getLastChild().toString());
@@ -1009,7 +977,7 @@ public class SkyveScriptInterpreter {
 
 		} else if (node.getFirstChild() != null && node.getFirstChild() instanceof Text) {
 			String line = getTextFromNode(node.getFirstChild());
-			String[] parts = splitAttribute(line);
+			String[] parts = line.split("\\s");
 			createAttribute(parts, node.getFirstChild());
 		}
 	}
@@ -1047,38 +1015,6 @@ public class SkyveScriptInterpreter {
 		field.setRequired(required);
 		field.setDisplayName(displayName);
 		return field;
-	}
-
-	/**
-	 * Splits the attribute declaration into individual parts so they can
-	 * be processed one at a time, e.g. type, length.
-	 * 
-	 * @param line The attribute line to be parsed
-	 * @return A String array of line parts
-	 */
-	private static String[] splitAttribute(final String line) {
-		String match = null, line2 = line;
-
-		// if this is an enum, treat that separately as a single part
-		Pattern p = Pattern.compile(ENUM_ATTRIBUTE_PATTERN);
-		Matcher m = p.matcher(line2);
-
-		while (m.find()) {
-			match = m.group(1);
-			if (match != null) {
-				line2 = line2.replace(match, "");
-			}
-		}
-
-		String[] parts = line2.trim().split("\\s");
-
-		// append the enum definition if one was found
-		if (match != null) {
-			parts = Arrays.copyOf(parts, parts.length + 1);
-			parts[parts.length - 1] = match;
-		}
-
-		return parts;
 	}
 
 	/**

@@ -10,6 +10,7 @@ import org.apache.commons.beanutils.PropertyUtils;
 import org.apache.deltaspike.core.api.provider.BeanProvider;
 import org.hibernate.collection.spi.PersistentCollection;
 import org.skyve.CORE;
+import org.skyve.cdi.CDIProvider;
 import org.skyve.domain.Bean;
 import org.skyve.domain.HierarchicalBean;
 import org.skyve.impl.bind.BindUtil;
@@ -238,7 +239,7 @@ public abstract class AbstractBean implements Bean {
 	 */
 	@Override
 	public boolean isNotCreated() {
-		return ! isCreated();
+		return false;
 	}
 
 	/**
@@ -266,15 +267,14 @@ public abstract class AbstractBean implements Bean {
 			return thisOne.getBizId().compareTo(otherOne.getBizId());
 		}
 	}
-
-	/**
-	 * Injects any {@link Injected} fields after de-serialisation.
-	 * @return this
-	 * @throws Exception
-	 * @see BeanProvider#injectFields(Object)
-	 */
+	
 	protected Object readResolve() throws Exception {
 	    BeanProvider.injectFields(this);
+	    return this;
+	}
+	
+	protected Object writeReplace() throws Exception {
+	    CDIProvider.clearInjectedFields(this);
 	    return this;
 	}
 }

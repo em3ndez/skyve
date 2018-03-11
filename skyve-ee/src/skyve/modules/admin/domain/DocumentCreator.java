@@ -43,8 +43,8 @@ public class DocumentCreator extends AbstractTransientBean {
 	/**
 	 * Output Location
 	 * <br/>
-	 * Absolute path on the filesystem to the module source directory. 
-					E.g. c:/workspace/project/src/main/java/modules/
+	 * Absolute path on the filesystem to the source directory where modules live. 
+					E.g. c:/workspace/project/src/main/java
 	 **/
 	private String outputLocation;
 	/**

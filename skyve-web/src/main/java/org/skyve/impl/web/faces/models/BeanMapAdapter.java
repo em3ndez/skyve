@@ -141,12 +141,19 @@ public final class BeanMapAdapter<T extends Bean> implements Map<String, Object>
 		return delegate.entrySet();
 	}
 
+	private Map<String, List<SelectItem>> lists = new TreeMap<>();
 	public List<SelectItem> getSelectItems(String binding, boolean includeEmptyItem) {
 		String bizModule = bean.getBizModule();
 		String bizDocument = bean.getBizDocument();
-		final String key = String.format("%s.%s.%s", bizModule, bizDocument, binding);
+		final String key = new StringBuilder(64).append(bizModule).append('.').append(bizDocument).append('.').append(binding).toString();
 		if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.finest("BeanMapAdapter.getSelectItems - key = " + key);
-		return new GetSelectItemsAction(bean, binding, includeEmptyItem).execute();
+		List<SelectItem> result = lists.get(key);
+		if (result == null) {
+			result = new GetSelectItemsAction(bean, binding, includeEmptyItem).execute();
+			lists.put(key, result);
+		}
+		
+		return result;
 	}
 	
 	private Object get(final String binding) throws Exception {

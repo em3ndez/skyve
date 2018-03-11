@@ -17,13 +17,13 @@ public abstract class LayoutBuilder extends AbstractFacesBuilder {
 	 * The view Layout for the view internally
 	 * @return	The layout component added
 	 */
-	public abstract UIComponent viewLayout(UIComponent component);
+	public abstract UIComponent viewLayout();
 	
 	/**
 	 * The layout within each toolbar for the view.
 	 * @return	The toolbar layout(s)
 	 */
-	public abstract List<UIComponent> toolbarLayouts(List<UIComponent> components);
+	public abstract List<UIComponent> toolbarLayouts();
 
 	/**
 	 * The number of toolbars and the number of layouts will always be equal.
@@ -39,23 +39,21 @@ public abstract class LayoutBuilder extends AbstractFacesBuilder {
 	 */
 	public abstract void addToolbarsOrLayouts(UIComponent view, List<UIComponent> toolbarsOrLayouts);
 	
-	public abstract UIComponent tabLayout(UIComponent component);
-	public abstract UIComponent addTabLayout(UIComponent component, UIComponent tab, UIComponent tabLayout);
+	public abstract UIComponent tabLayout();
+	public abstract UIComponent addTabLayout(UIComponent tab, UIComponent tabLayout);
 	public abstract void addTab(UIComponent tabPane, UIComponent tab);
-	public abstract UIComponent addedTab(UIComponent component, UIComponent tab);
+	public abstract UIComponent addedTab(UIComponent tab);
 
 	public abstract void addBorderLayout(UIComponent border, UIComponent borderLayout);
-	public abstract UIComponent addedBorderLayout(UIComponent component, UIComponent borderLayout);
+	public abstract UIComponent addedBorderLayout(UIComponent borderLayout);
 
-	public abstract UIComponent vboxLayout(UIComponent component, VBox vbox);
-	public abstract UIComponent hboxLayout(UIComponent component, HBox hbox);
+	public abstract UIComponent vboxLayout(VBox vbox);
+	public abstract UIComponent hboxLayout(HBox vbox);
 
-	public abstract UIComponent formLayout(UIComponent component, Form form);
-	public abstract UIComponent formRowLayout(UIComponent component, FormRow row);
-	public abstract UIComponent addFormRowLayout(UIComponent component,
-													UIComponent formLayout,
-													UIComponent rowLayout);
-	public abstract UIComponent addedFormRowLayout(UIComponent component, UIComponent rowLayout);
+	public abstract UIComponent formLayout(Form form);
+	public abstract UIComponent formRowLayout(FormRow row);
+	public abstract UIComponent addFormRowLayout(UIComponent formLayout, UIComponent rowLayout);
+	public abstract UIComponent addedFormRowLayout(UIComponent rowLayout);
 	public abstract void layoutFormItem(UIComponent formOrRowLayout,
 											UIComponent formItemComponent,
 											Form currentForm,
@@ -78,8 +76,7 @@ public abstract class LayoutBuilder extends AbstractFacesBuilder {
 	 * @param invisibleConditionName
 	 * @return	The new current component to continue processing with.
 	 */
-	public abstract UIComponent addToContainer(UIComponent component,
-												Container viewContainer,
+	public abstract UIComponent addToContainer(Container viewContainer,
 												UIComponent container, 
 												UIComponent componentToAdd, 
 												Integer pixelWidth, 
@@ -93,5 +90,5 @@ public abstract class LayoutBuilder extends AbstractFacesBuilder {
 	 * @param container
 	 * @return	The new current component to continue processing with.
 	 */
-	public abstract UIComponent addedToContainer(UIComponent component, Container viewContainer, UIComponent container);
+	public abstract UIComponent addedToContainer(Container viewContainer, UIComponent container);
 }

@@ -7,7 +7,6 @@ import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.skyve.CORE;
-import org.skyve.impl.cdi.SkyveCDIProducer;
 import org.skyve.impl.content.AbstractContentManager;
 import org.skyve.impl.content.NoOpContentManager;
 import org.skyve.impl.metadata.repository.AbstractRepository;
@@ -46,7 +45,7 @@ public abstract class AbstractH2Test {
 	@BeforeClass
 	public static void beforeClass() throws Exception {
 		weld = new Weld();
-		weld.addPackage(true, SkyveCDIProducer.class);
+		weld.addPackage(true, CORE.class);
 		weld.initialize();
 	}
 	

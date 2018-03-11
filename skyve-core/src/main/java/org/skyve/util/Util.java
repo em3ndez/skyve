@@ -48,7 +48,7 @@ public class Util {
 	 * @throws Exception
 	 */
 	public static final <T extends Serializable> T cloneToTransientBySerialization(T object)
-	throws Exception {
+			throws Exception {
 		return UtilImpl.cloneToTransientBySerialization(object);
 	}
 
@@ -174,10 +174,6 @@ public class Util {
 
 	public static String getContentDirectory() {
 		return UtilImpl.CONTENT_DIRECTORY;
-	}
-
-	public static String getModuleDirectory() {
-		return UtilImpl.MODULE_DIRECTORY;
 	}
 
 	public static String getPasswordHashingAlgorithm() {

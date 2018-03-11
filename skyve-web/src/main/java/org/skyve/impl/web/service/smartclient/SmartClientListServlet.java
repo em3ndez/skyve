@@ -37,8 +37,7 @@ import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.TagUtil;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.AbstractWebContext;
-import org.skyve.impl.web.SortParameterImpl;
-import org.skyve.web.SortParameter;
+import org.skyve.impl.web.SortParameter;
 import org.skyve.impl.web.WebUtil;
 import org.skyve.metadata.MetaDataException;
 import org.skyve.metadata.SortDirection;
@@ -243,7 +242,7 @@ public class SmartClientListServlet extends HttpServlet {
 							for (int i = 0; i < sortBys.length; i++) {
 								String sortBy = sortBys[i];
 								
-								SortParameter sortParameter = new SortParameterImpl();
+								SortParameter sortParameter = new SortParameter();
 								if (sortBy.startsWith("-")) {
 									sortParameter.setDirection(SortDirection.descending);
 									sortBy = sortBy.substring(1);

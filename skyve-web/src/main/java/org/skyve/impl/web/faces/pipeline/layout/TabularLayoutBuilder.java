@@ -21,23 +21,15 @@ import org.skyve.impl.metadata.view.container.form.FormRow;
 
 public class TabularLayoutBuilder extends LayoutBuilder {
 	@Override
-	public UIComponent viewLayout(UIComponent component) {
-		if (component != null) {
-			return component;
-		}
-
-		// Add the panel grid layout for the view container aspect
+	public UIComponent viewLayout() {
+        // Add the panel grid layout for the view container aspect
 		PanelGrid result = panelGrid(null, null, ONE_HUNDRED, null, null, null, null);
 		result.setColumns(1);
     	return result;
 	}
 
 	@Override
-	public List<UIComponent> toolbarLayouts(List<UIComponent> components) {
-		if (components != null) {
-			return components;
-		}
-
+	public List<UIComponent> toolbarLayouts() {
 		UIComponent layout = panelGroup(false, false, false, null, null);
 		List<UIComponent> result = new ArrayList<>(1);
 		result.add(layout);
@@ -66,22 +58,14 @@ public class TabularLayoutBuilder extends LayoutBuilder {
 	}
 
 	@Override
-	public UIComponent tabLayout(UIComponent component) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent tabLayout() {
 		PanelGrid result = panelGrid(null, null, ONE_HUNDRED, null, null, null, null);
 		result.setColumns(1);
 		return result;
 	}
 	
 	@Override
-	public UIComponent addTabLayout(UIComponent component, UIComponent tab, UIComponent tabLayout) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent addTabLayout(UIComponent tab, UIComponent tabLayout) {
 		tab.getChildren().add(tabLayout);
 		return tabLayout;
 	}
@@ -92,13 +76,9 @@ public class TabularLayoutBuilder extends LayoutBuilder {
 	}
 	
 	@Override
-	public UIComponent addedTab(UIComponent component, UIComponent tab) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent addedTab(UIComponent component) {
 		// need to remove the layout grid and the tab
-		return tab.getParent().getParent();
+		return component.getParent().getParent();
 	}
 	
 	@Override
@@ -107,20 +87,12 @@ public class TabularLayoutBuilder extends LayoutBuilder {
 	}
 	
 	@Override
-	public UIComponent addedBorderLayout(UIComponent component, UIComponent borderLayout) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent addedBorderLayout(UIComponent borderLayout) {
 		return borderLayout.getParent();
 	}
 	
 	@Override
-	public UIComponent vboxLayout(UIComponent component, VBox vbox) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent vboxLayout(VBox vbox) {
 		// VBox is a Panel grid with 1 column
 		PanelGrid result = panelGrid(vbox.getPixelWidth(),
 										null,
@@ -134,11 +106,7 @@ public class TabularLayoutBuilder extends LayoutBuilder {
 	}
 	
 	@Override
-	public UIComponent hboxLayout(UIComponent component, HBox hbox) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent hboxLayout(HBox hbox) {
 		// HBox is a Panel grid with n columns
 		return panelGrid(hbox.getPixelWidth(),
 							null,
@@ -150,11 +118,7 @@ public class TabularLayoutBuilder extends LayoutBuilder {
 	}
 
 	@Override
-	public UIComponent formLayout(UIComponent component, Form form) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent formLayout(Form form) {
 		return panelGrid(form.getPixelWidth(),
 							null,
 							null, // the parent container sets the percentage width
@@ -165,30 +129,18 @@ public class TabularLayoutBuilder extends LayoutBuilder {
 	}
 	
 	@Override
-	public UIComponent formRowLayout(UIComponent component, FormRow row) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent formRowLayout(FormRow row) {
 		return row();
 	}
 	
 	@Override
-	public UIComponent addFormRowLayout(UIComponent component, UIComponent formLayout, UIComponent rowLayout) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent addFormRowLayout(UIComponent formLayout, UIComponent rowLayout) {
 		formLayout.getChildren().add(rowLayout);
 		return rowLayout;
 	}
 
 	@Override
-	public UIComponent addedFormRowLayout(UIComponent component, UIComponent rowLayout) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent addedFormRowLayout(UIComponent rowLayout) {
 		return rowLayout.getParent();
 	}
 
@@ -254,18 +206,13 @@ public class TabularLayoutBuilder extends LayoutBuilder {
 	}
 	
 	@Override
-	public UIComponent addToContainer(UIComponent component,
-										Container viewContainer,
+	public UIComponent addToContainer(Container viewContainer,
 										UIComponent container, 
 										UIComponent componentToAdd, 
 										Integer pixelWidth, 
 										Integer responsiveWidth,
 										Integer percentageWidth,
 										String widgetInvisible) {
-		if (component != null) {
-			return component;
-		}
-
 		if (container instanceof PanelGrid) {
 			if (viewContainer instanceof HBox) {
 				// get the row or add a row if there is none
@@ -294,11 +241,7 @@ public class TabularLayoutBuilder extends LayoutBuilder {
 	}
 	
 	@Override
-	public UIComponent addedToContainer(UIComponent component, Container viewContainer, UIComponent container) {
-		if (component != null) {
-			return component;
-		}
-
+	public UIComponent addedToContainer(Container viewContainer, UIComponent container) {
 		UIComponent result = container.getParent(); // account for the previously pushed component
 
 		// strip off the column and the row for HBox containers

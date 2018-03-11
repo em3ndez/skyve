@@ -44,7 +44,7 @@ public class CustomerResourceServlet extends HttpServlet {
 	 */
 	private static final long serialVersionUID = 1L;
 
-	protected final class Resource {
+	private static final class Resource {
 		private ContentManager cm;
 		private AttachmentContent content;
 		private File file;
@@ -58,7 +58,7 @@ public class CustomerResourceServlet extends HttpServlet {
 			}
 		}
 
-		public long getLastModified() {
+		long getLastModified() {
 			long result = -1;
 
 			if (file != null) {
@@ -71,7 +71,7 @@ public class CustomerResourceServlet extends HttpServlet {
 			return result;
 		}
 
-		public byte[] getBytes() 
+		byte[] getBytes() 
 		throws FileNotFoundException, IOException {
 			byte[] result = null;
 
@@ -120,19 +120,11 @@ public class CustomerResourceServlet extends HttpServlet {
 			return result;
 		}
 
-		public boolean isContent() {
+		boolean isContent() {
 			return (content != null);
 		}
 		
-		public AttachmentContent getContent() {
-			return content;
-		}
-		
-		public File getFile() {
-			return file;
-		}
-
-		public MimeType getMimeType() {
+		MimeType getMimeType() {
 			MimeType result = MimeType.plain;
 
 			if ((imageWidth > 0) && (imageHeight > 0)) {
@@ -148,7 +140,7 @@ public class CustomerResourceServlet extends HttpServlet {
 			return result;
 		}
 		
-		public String getFileName() {
+		String getFileName() {
 			String result = null;
 			
 			if ((imageWidth > 0) && (imageHeight > 0)) {
@@ -231,8 +223,27 @@ public class CustomerResourceServlet extends HttpServlet {
 
 				if (DownloadAreaType.content.toString().equals(resourceArea)) {
 					if ((user != null) && (customer != null)) {
+						Module module = customer.getModule(moduleName);
+						Document document = module.getDocument(customer, documentName);
+						TargetMetaData target = BindUtil.getMetaDataForBinding(customer,
+																				module,
+																				document,
+																				binding);
 						cm = EXT.newContentManager();
 						content = cm.get(resourceFileName);
+						if (content != null) {
+							// Check that the user has access
+							if (! user.canAccessContent(content.getBizId(),
+															content.getBizModule(),
+															content.getBizDocument(),
+															content.getBizCustomer(),
+															content.getBizDataGroupId(),
+															content.getBizUserId(),
+															target.getAttribute().getName())) {
+								throw new SecurityException(moduleName + '.' + documentName + '.' + binding,
+																user.getName());
+							}
+						}
 					}
 				} 
 				else if (DownloadAreaType.resources.toString().equals(resourceArea)) {
@@ -259,7 +270,6 @@ public class CustomerResourceServlet extends HttpServlet {
 				else {
 					throw new IllegalStateException("Unsupported resource area " + resourceArea);
 				}
-				CustomerResourceServlet.this.secure(this, moduleName, documentName, binding, resourceFileName, user);
 			}
 		}
 	}
@@ -349,65 +359,9 @@ public class CustomerResourceServlet extends HttpServlet {
 				out.flush();
 			}
 		} 
-		catch (SecurityException e) {
-			response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-			System.err.println("Problem getting the customer resource - " + e.toString());
-			e.printStackTrace();
-		}
 		catch (Exception e) {
-			response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
 			System.err.println("Problem getting the customer resource - " + e.toString());
 			e.printStackTrace();
-		}
-	}
-	
-	/**
-	 * Throws SecurityException if the resource should not be served.
-	 * 
-	 * This implementation checks that a request for content is from an authenticated user
-	 * who has privileges to access the that content.
-	 * There is no securing of file requests.
-	 * 
-	 * @param resource	The file or content resource found - never null.
-	 * @param moduleName	The module name in the request - never null.
-	 * @param documentName	The document name in the request - never null.
-	 * @param binding	The binding in the request - can be null.
-	 * @param resourceFileName	The file/content identifier - never null.
-	 * @param user	The logged in user or null if not logged in
-	 * @param intendedCustomerName	The customer name from a customer cookie (if no principal).
-	 * @throws SecurityException
-	 */
-	@SuppressWarnings({"static-method", "unused"})
-	protected void secure(Resource resource, 
-							String moduleName, 
-							String documentName, 
-							String binding, 
-							String resourceFileName,
-							User user)
-	throws SecurityException {
-		// Content can only be accessed if we have an authenticated user that has access
-		if (resource.isContent()) {
-			if (user == null) {
-				throw new SecurityException(moduleName + '.' + documentName + '.' + binding, "anonymous");
-			}
-			Customer customer = user.getCustomer();
-			Module module = customer.getModule(moduleName);
-			Document document = module.getDocument(customer, documentName);
-			TargetMetaData target = BindUtil.getMetaDataForBinding(customer,
-																	module,
-																	document,
-																	binding);
-			// Check that the user has access
-			AttachmentContent content = resource.getContent();
-			if (! user.canAccessContent(content.getBizId(),
-											content.getBizModule(),
-											content.getBizDocument(),
-											content.getBizCustomer(),
-											content.getBizDataGroupId(),
-											content.getBizUserId(),
-											target.getAttribute().getName())) {
-				throw new SecurityException(moduleName + '.' + documentName + '.' + binding, user.getName());
-			}
 		}
 	}
 }

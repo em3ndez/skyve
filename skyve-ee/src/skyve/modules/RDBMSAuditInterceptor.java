@@ -96,14 +96,7 @@ public class RDBMSAuditInterceptor extends Interceptor {
 				try {
 					tempP.setUser(p.getUser());
 					PersistentBean oldBean = tempP.retrieve(bean.getBizModule(), bean.getBizDocument(), bean.getBizId(), false);
-					// oldBean can be null when the bean was inserted and updated within this transaction but not yet committed
-					// ie tempP can't see the bean yet on another DB connection
-					if (oldBean == null) {
-						audit(bean, Operation.insert, true);
-					}
-					else {
-						audit(oldBean, Operation.insert, true);
-					}
+					audit(oldBean, Operation.insert, true);
 				}
 				finally {
 					// Can't call tempP.commit(true) here as it would remove the current thread's Persistence as well

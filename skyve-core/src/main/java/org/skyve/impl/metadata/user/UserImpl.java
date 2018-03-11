@@ -8,6 +8,8 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
+import javax.enterprise.inject.Alternative;
+
 import org.skyve.domain.Bean;
 import org.skyve.domain.ChildBean;
 import org.skyve.impl.metadata.repository.AbstractRepository;
@@ -24,7 +26,11 @@ import org.skyve.metadata.user.DocumentPermissionScope;
 import org.skyve.metadata.user.User;
 import org.skyve.persistence.Persistence;
 
+@Alternative
 public class UserImpl implements User {
+	/**
+	 * For Serialization.
+	 */
 	private static final long serialVersionUID = -8485741818564437957L;
 
 	protected static final String SUPER_ROLE = "design.BizHubDesigner";

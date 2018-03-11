@@ -80,7 +80,7 @@ public class SkyveScriptInterpreterTest {
 
 		assertThat(document.getName(), is("Address"));
 		assertThat(document.getSingularAlias(), is("Address"));
-		assertThat("Plural alias should be singluar for non-persistent documents", document.getPluralAlias(), is("Address"));
+		assertThat(document.getPluralAlias(), is("Addresses"));
 		assertThat(document.getPersistent(), is(nullValue()));
 		assertThat(document.getBizKey(), is(notNullValue()));
 		assertThat(document.getBizKey().getExpression(), is(("Address")));
@@ -130,7 +130,7 @@ public class SkyveScriptInterpreterTest {
 
 		assertThat(document.getName(), is("AddressTitle"));
 		assertThat(document.getSingularAlias(), is("Address Title"));
-		assertThat(document.getPluralAlias(), is("Address Title"));
+		assertThat(document.getPluralAlias(), is("Address Titles"));
 		assertThat(document.getPersistent(), is(nullValue()));
 	}
 
@@ -670,30 +670,6 @@ public class SkyveScriptInterpreterTest {
 		assertThat(document.getAttributes().get(0).getName(), is("selectedColour"));
 		assertThat(document.getAttributes().get(0).getDisplayName(), is("Selected Colour"));
 	}
-	
-	@Test
-	@SuppressWarnings("boxing")
-	public void testScalarContentAttribute() throws Exception {
-		// setup the test data
-		String script = "# Admin\n## Address\n- content content";
-
-		// perform the method under test
-		i = new SkyveScriptInterpreter(script);
-		i.process();
-
-		// verify the result
-		assertThat(i.getModules().size(), is(1));
-		assertThat(i.getDocuments().size(), is(1));
-
-		DocumentMetaData document = i.getDocuments().get(0);
-
-		assertThat(document, is(notNullValue()));
-		assertThat(document.getAttributes().size(), is(1));
-
-		assertThat(document.getAttributes().get(0) instanceof org.skyve.impl.metadata.model.document.field.Content, is(true));
-		assertThat(document.getAttributes().get(0).getName(), is("content"));
-		assertThat(document.getAttributes().get(0).getDisplayName(), is("Content"));
-	}
 
 	@Test
 	@SuppressWarnings("boxing")
@@ -819,7 +795,7 @@ public class SkyveScriptInterpreterTest {
 	@SuppressWarnings("boxing")
 	public void testScalarEnumAttribute() throws Exception {
 		// setup the test data
-		String script = "# Admin\n## Address\n- state enum (QLD, NSW, WA, NT, ACT, SA, VIC, TAS)";
+		String script = "# Admin\n## Address\n- state enum (QLD,NSW,WA,NT,ACT,SA,VIC,TAS)";
 
 		// perform the method under test
 		i = new SkyveScriptInterpreter(script);
@@ -839,44 +815,6 @@ public class SkyveScriptInterpreterTest {
 		assertThat(e.getName(), is("state"));
 		assertThat(e.getDisplayName(), is("State"));
 		assertThat(e.getValues().size(), is(8));
-	}
-
-	@Test
-	@SuppressWarnings("boxing")
-	public void testScalarEnumWithSpacesAttribute() throws Exception {
-		// setup the test data
-		String script = "# Admin\n## Address\n- status enum (\"Not Started\", 'In Progress', Pending Review, Complete)";
-
-		// perform the method under test
-		i = new SkyveScriptInterpreter(script);
-		i.process();
-
-		// verify the result
-		assertThat(i.getModules().size(), is(1));
-		assertThat(i.getDocuments().size(), is(1));
-
-		DocumentMetaData document = i.getDocuments().get(0);
-
-		assertThat(document, is(notNullValue()));
-		assertThat(document.getAttributes().size(), is(1));
-
-		assertThat(document.getAttributes().get(0) instanceof org.skyve.impl.metadata.model.document.field.Enumeration, is(true));
-		Enumeration e = (Enumeration) document.getAttributes().get(0);
-		assertThat(e.getName(), is("status"));
-		assertThat(e.getDisplayName(), is("Status"));
-		assertThat(e.getValues().size(), is(4));
-
-		assertThat(e.getValues().get(0).getCode(), is("NotStarted"));
-		assertThat(e.getValues().get(0).getDescription(), is("Not Started"));
-
-		assertThat(e.getValues().get(1).getCode(), is("InProgress"));
-		assertThat(e.getValues().get(1).getDescription(), is("In Progress"));
-
-		assertThat(e.getValues().get(2).getCode(), is("PendingReview"));
-		assertThat(e.getValues().get(2).getDescription(), is("Pending Review"));
-
-		assertThat(e.getValues().get(3).getCode(), is("Complete"));
-		assertThat(e.getValues().get(3).getDescription(), is(nullValue()));
 	}
 
 	@Test

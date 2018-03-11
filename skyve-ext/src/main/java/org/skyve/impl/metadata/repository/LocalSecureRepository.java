@@ -1,5 +1,7 @@
 package org.skyve.impl.metadata.repository;
 
+import javax.enterprise.inject.Alternative;
+
 import org.skyve.impl.metadata.repository.LocalDesignRepository;
 import org.skyve.impl.metadata.user.UserImpl;
 import org.skyve.impl.util.SQLMetaDataUtil;
@@ -10,6 +12,7 @@ import org.skyve.metadata.user.User;
  * 
  * @author Mike
  */
+@Alternative
 public class LocalSecureRepository extends LocalDesignRepository {
 	@Override
 	public UserImpl retrieveUser(String userPrincipal) {
