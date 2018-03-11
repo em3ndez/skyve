@@ -16,7 +16,7 @@ import org.skyve.impl.web.faces.FacesAction;
 import org.skyve.impl.web.faces.FacesUtil;
 import org.skyve.impl.web.faces.pipeline.component.ComponentBuilder;
 import org.skyve.impl.web.faces.pipeline.component.ComponentRenderer;
-import org.skyve.impl.web.faces.pipeline.component.SkyveComponentBuilder;
+import org.skyve.impl.web.faces.pipeline.component.SkyveComponentBuilderChain;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
@@ -54,18 +54,12 @@ public class ListGrid extends HtmlPanelGroup {
 			Object zoomDisabledAttribute = attributes.get("zoomDisabled");
 			final boolean zoomDisabled = String.valueOf(true).equals(zoomDisabledAttribute) || // literal "true"
 											Boolean.TRUE.equals(zoomDisabledAttribute); // evaluated EL expression
-			Object stickyHeaderAttribute = attributes.get("stickyHeader");
-			final boolean stickyHeader = String.valueOf(true).equals(stickyHeaderAttribute) || // literal "true"
-											Boolean.TRUE.equals(stickyHeaderAttribute); // evaluated EL expression
-			Object paginatorAttribute = attributes.get("paginator");
-			final boolean paginator = String.valueOf(true).equals(paginatorAttribute) || // literal "true"
-											Boolean.TRUE.equals(paginatorAttribute); // evaluated EL expression
 	    	String classString = (String) attributes.get("componentBuilderClass");
 	    	ComponentBuilder tempComponentBuilder = null;
 	    	try {
 	    		tempComponentBuilder = (classString != null) ? 
 	    								(ComponentBuilder) Class.forName(classString).newInstance() :
-									new SkyveComponentBuilder();
+	    									new SkyveComponentBuilderChain();
 	    	}
 	    	catch (Exception e) {
 	    		throw new IOException("Cannot instantiate the component builder " + classString, e);
@@ -109,13 +103,12 @@ public class ListGrid extends HtmlPanelGroup {
 					listGrid.setShowZoom(zoomRendered);
 					listGrid.setDisableZoomConditionName(String.valueOf(zoomDisabled));
 
-					UIComponent grid = componentBuilder.listGrid(documentName,
-							name,
-							model,
-							listGrid,
-							user.canCreateDocument(model.getDrivingDocument()),
-							true,
-							false);
+					UIComponent grid = componentBuilder.listGrid(null,
+																	documentName,
+																	name,
+																	model,
+																	listGrid,
+																	user.canCreateDocument(model.getDrivingDocument()));
 				    ListGrid.this.getChildren().add(grid);
 				    
 					return null;

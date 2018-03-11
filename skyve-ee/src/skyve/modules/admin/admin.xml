@@ -344,7 +344,7 @@
 				<uxui name="tablet" />
 				<role name="SecurityAdministrator" />
 			</list>
-			<edit document="Configuration" name="Password Complexity">
+			<edit document="Configuration" name="Configuration">
 				<role name="SecurityAdministrator" />
 			</edit>
 		</group>
@@ -358,7 +358,7 @@
 				<uxui name="tablet" />
 				<role name="DevOps" />
 			</edit>
-			<edit name="Create Documents" document="DocumentCreator">
+			<edit name="Document Creator" document="DocumentCreator">
 				<uxui name="desktop" />
 				<uxui name="tablet" />
 				<role name="DevOps" />

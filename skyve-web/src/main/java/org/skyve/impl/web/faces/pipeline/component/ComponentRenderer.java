@@ -49,6 +49,7 @@ import org.primefaces.component.inputtextarea.InputTextarea;
 import org.primefaces.component.message.Message;
 import org.primefaces.component.outputlabel.OutputLabel;
 import org.primefaces.component.outputpanel.OutputPanel;
+import org.primefaces.component.overlaypanel.OverlayPanel;
 import org.primefaces.component.panel.Panel;
 import org.primefaces.component.panelgrid.PanelGrid;
 import org.primefaces.component.password.Password;
@@ -159,6 +160,10 @@ public class ComponentRenderer {
 			if ((priority > 0) && (priority <= 6)) {
 				putValue(attributes, "priority", Integer.toString(priority));
 			}
+			putValue(attributes, "field", column.getField());
+			if (! column.isSortable()) {
+				putValue(attributes, "sortable", Boolean.FALSE);
+			}
 		}
 		else if (component instanceof CommandButton) {
 			tagName = "p:commandButton";
@@ -204,6 +209,22 @@ public class ComponentRenderer {
 			DataTable table = (DataTable) component;
 			putValueExpression(attributes, "value", component);
 			putValue(attributes, "var", table.getVar());
+			if (table.isPaginator()) {
+				putValue(attributes, "paginator", Boolean.TRUE);
+				putValue(attributes, "rowsPerPageTemplate", table.getRowsPerPageTemplate());
+				putValue(attributes, "rows", Integer.valueOf(table.getRows()));
+				putValue(attributes, "paginatorAlwaysVisible", Boolean.valueOf(table.isPaginatorAlwaysVisible()));
+			}
+			if (table.isLazy()) {
+				putValue(attributes, "lazy", Boolean.TRUE);
+			}
+			putValue(attributes, "emptyMessage", table.getEmptyMessage());
+			if (table.isStickyHeader()) {
+				putValue(attributes, "stickyHeader", Boolean.TRUE);
+			}
+			if ("multiple".equals(table.getSortMode())) {
+				putValue(attributes, "sortMode", "multiple");
+			}
 			putValue(attributes, "widgetVar", table.getWidgetVar());
 			putValue(attributes, "selectionMode", table.getSelectionMode());
 			putValueExpression(attributes, "rowKey", component);
@@ -360,6 +381,20 @@ public class ComponentRenderer {
 			putValue(attributes, "columns", Integer.valueOf(grid.getColumns()));
 			putValue(attributes, "style", grid.getStyle());
 			putValue(attributes, "styleClass", grid.getStyleClass());
+		}
+		else if (component instanceof OverlayPanel) {
+			tagName = "p:overlayPanel";
+			
+			OverlayPanel overlay = (OverlayPanel) component;
+			putValue(attributes, "widgetVar", overlay.getWidgetVar());
+			putValue(attributes, "for", overlay.getFor());
+			putValue(attributes, "hideEffect", overlay.getHideEffect());
+			putValue(attributes, "dynamic", String.valueOf(overlay.isDynamic()));
+			putValue(attributes, "showCloseIcon", String.valueOf(overlay.isShowCloseIcon()));
+			putValue(attributes, "modal", String.valueOf(overlay.isModal()));
+			putValue(attributes, "style", overlay.getStyle());
+			putValue(attributes, "onHide", overlay.getOnHide());
+			putValueExpression(attributes, "onShow", component);
 		}
 		else if (component instanceof Password) {
 			tagName = "p:password";

@@ -152,9 +152,16 @@ public class UtilImpl {
 	public static String BOOTSTRAP_PASSWORD = null;
 	
 	// For versioning javascript/css etc for web site
-	public static final String WEB_RESOURCE_FILE_VERSION = "20180212";
-	public static final String SKYVE_VERSION = "20180212";
+	public static final String WEB_RESOURCE_FILE_VERSION = "20180222-SNAPSHOT";
+	public static final String SKYVE_VERSION = "20180222-SNAPSHOT";
 	public static final String SMART_CLIENT_DIR = "isomorphic110";
+
+	// for skyve script
+	/**
+	 * Absolute path on the filesystem to the source directory where modules live.
+	 * E.g. c:/workspace/project/src/main/java
+	 */
+	public static String MODULE_DIRECTORY = null;
 
 	private static String absoluteBasePath;
 
@@ -212,11 +219,11 @@ public class UtilImpl {
 		// }
 		// catch (Exception e) {
 		// throw new IllegalArgumentException(e);
-		// }
+		// }		
 	}
 
 	public static final <T extends Serializable> T cloneToTransientBySerialization(T object)
-			throws Exception {
+	throws Exception {
 		if (object instanceof List<?>) {
 			for (Object element : (List<?>) object) {
 				if (element instanceof AbstractPersistentBean) {
