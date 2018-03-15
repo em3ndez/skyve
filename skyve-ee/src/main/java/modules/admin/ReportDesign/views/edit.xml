@@ -335,7 +335,7 @@
 	<actions>
 		<defaults />
 		<action className="GenerateDefault" displayName="Generate Default" confirm="OK to Generate? All data will be cleared first." iconStyleClass="fa fa-bolt"/>
-		<report moduleName="design" documentName="ReportDesign" reportName="rptReportDesign" displayName="Preview" />
+		<download className="Preview" displayName="Preview" iconStyleClass="fa fa-print"/>
 	</actions>
 	<newParameters />
 </view>
