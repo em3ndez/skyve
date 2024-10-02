@@ -2,7 +2,6 @@ package modules.admin.User;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 import org.skyve.CORE;
@@ -12,8 +11,9 @@ import org.skyve.domain.messages.Message;
 import org.skyve.domain.messages.MessageSeverity;
 import org.skyve.domain.messages.ValidationException;
 import org.skyve.domain.types.DateTime;
-import org.skyve.impl.cdi.GeoIPService;
+import org.skyve.impl.cache.StateUtil;
 import org.skyve.impl.security.HIBPPasswordValidator;
+import org.skyve.impl.security.SkyveRememberMeTokenRepository;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.metadata.SortDirection;
 import org.skyve.metadata.controller.ImplicitActionName;
@@ -30,7 +30,6 @@ import org.skyve.util.SecurityUtil;
 import org.skyve.util.Util;
 import org.skyve.web.WebContext;
 
-import jakarta.enterprise.inject.spi.CDI;
 import jakarta.servlet.http.HttpServletRequest;
 import modules.admin.Configuration.ConfigurationExtension;
 import modules.admin.domain.ChangePassword;
@@ -250,11 +249,10 @@ public class UserBizlet extends Bizlet<UserExtension> {
 			if (request != null) {
 				String ipAddress = SecurityUtil.getSourceIpAddress(request);
 				bean.setPasswordLastChangedIP(ipAddress);
-				if (ipAddress != null && UtilImpl.IP_INFO_TOKEN != null) {
-					GeoIPService geoIPService = CDI.current().select(GeoIPService.class).get();
-					Optional<String> countryCode = geoIPService.getCountryCodeForIP(ipAddress);
-					if (countryCode.isPresent()) {
-						bean.setPasswordLastChangedRegion(countryCode.get());
+				if (ipAddress != null) {
+					String countryCode = EXT.getGeoIPService().geolocate(ipAddress).countryCode();
+					if (countryCode != null) {
+						bean.setPasswordLastChangedCountryCode(countryCode);
 					}
 				}
 			}
@@ -268,15 +266,26 @@ public class UserBizlet extends Bizlet<UserExtension> {
 	 */
 	@Override
 	public void postSave(UserExtension bean) throws Exception {
-		// If password has changed, notify & log security event
+		// If password has changed...
 		if (Boolean.TRUE.equals(CORE.getStash().get("passwordChanged"))) {
-			// Send email notification
+			// Remove any remember-me tokens
 			Persistence persistence = CORE.getPersistence();
+			new SkyveRememberMeTokenRepository().removeUserTokens(persistence, bean.getBizCustomer() + '/' + bean.getUserName());
+
+			// Remove any active user sessions
 			org.skyve.metadata.user.User user = persistence.getUser();
-			Customer customer = user.getCustomer();
-			Module module = customer.getModule(ChangePassword.MODULE_NAME);
-			final JobMetaData passwordChangeNotificationJobMetadata = module.getJob("jPasswordChangeNotification");
-			EXT.getJobScheduler().runOneShotJob(passwordChangeNotificationJobMetadata, bean, user);
+			StateUtil.removeSessions(user.getId());
+
+			// Send email notification
+			try {
+				Customer customer = user.getCustomer();
+				Module module = customer.getModule(ChangePassword.MODULE_NAME);
+				final JobMetaData passwordChangeNotificationJobMetadata = module.getJob("jPasswordChangeNotification");
+				EXT.getJobScheduler().runOneShotJob(passwordChangeNotificationJobMetadata, bean, user);
+			} catch (Exception e) {
+				Util.LOGGER.warning("Failed to kick off password change notification job");
+				e.printStackTrace();
+			}
 
 			// Record security event in security log
 			SecurityUtil.log("Password Change", bean.getUserName() + " changed their password");

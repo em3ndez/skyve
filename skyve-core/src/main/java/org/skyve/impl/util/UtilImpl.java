@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Scanner;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.logging.Logger;
 
 import org.hibernate.internal.util.SerializationHelper;
@@ -20,7 +21,9 @@ import org.skyve.CORE;
 import org.skyve.cache.CSRFTokenCacheConfig;
 import org.skyve.cache.CacheConfig;
 import org.skyve.cache.ConversationCacheConfig;
+import org.skyve.cache.GeoIPCacheConfig;
 import org.skyve.cache.HibernateCacheConfig;
+import org.skyve.cache.SessionCacheConfig;
 import org.skyve.domain.Bean;
 import org.skyve.impl.bind.BindUtil;
 import org.skyve.impl.domain.AbstractPersistentBean;
@@ -211,6 +214,7 @@ public class UtilImpl {
 	public static String SKYVE_CONTENT_MANAGER_CLASS = null;
 	public static String SKYVE_NUMBER_GENERATOR_CLASS = null;
 	public static String SKYVE_CUSTOMISATIONS_CLASS = null;
+	public static String SKYVE_GEOIP_SERVICE_CLASS = null;
 
 	// The directory used for temp files for file uploads etc
 	public static final String TEMP_DIRECTORY = System.getProperty("java.io.tmpdir");
@@ -223,6 +227,8 @@ public class UtilImpl {
 	public static String CACHE_DIRECTORY = null;
 	public static ConversationCacheConfig CONVERSATION_CACHE = null;
 	public static CSRFTokenCacheConfig CSRF_TOKEN_CACHE = null;
+	public static SessionCacheConfig SESSION_CACHE = null;
+	public static GeoIPCacheConfig GEO_IP_CACHE = null;
 	public static List<HibernateCacheConfig> HIBERNATE_CACHES = new ArrayList<>();
 	public static boolean HIBERNATE_FAIL_ON_MISSING_CACHE = false;
 	public static List<CacheConfig<? extends Serializable, ? extends Serializable>> APP_CACHES = new ArrayList<>();
@@ -268,9 +274,10 @@ public class UtilImpl {
 	public static String CLOUDFLARE_TURNSTILE_SITE_KEY = null;
 	public static String CLOUDFLARE_TURNSTILE_SECRET_KEY = null;
 	public static String CKEDITOR_CONFIG_FILE_URL = "";
-	public static String COUNTRY_CODES = null;
-	public static String COUNTRY_LIST_TYPE = null;
-	public static String IP_INFO_TOKEN = null;
+	public static String GEO_IP_KEY = null;
+	// NB This is a thread-safe set because it can be changed in setup UI on the fly
+	public static CopyOnWriteArraySet<String> GEO_IP_COUNTRY_CODES = null;
+	public static boolean GEO_IP_WHITELIST = true;
 
 	// null = prod, could be dev, test, uat or another arbitrary environment
 	public static String ENVIRONMENT_IDENTIFIER = null;
@@ -396,7 +403,7 @@ public class UtilImpl {
 		// minify the file to remove any comments
 		json = Minifier.minify(json);
 
-		return (Map<String, Object>) JSON.unmarshall(null, json);
+		return (Map<String, Object>) JSON.unmarshall(json);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -413,8 +420,7 @@ public class UtilImpl {
 		// }		
 	}
 
-	public static final <T extends Serializable> T cloneToTransientBySerialization(T object)
-	throws Exception {
+	public static final <T extends Serializable> T cloneToTransientBySerialization(T object) {
 		if (object instanceof List<?>) {
 			for (Object element : (List<?>) object) {
 				if (element instanceof AbstractPersistentBean) {
@@ -558,7 +564,7 @@ public class UtilImpl {
 		return possibleProxy;
 	}
 
-	public static void setTransient(Object object) throws Exception {
+	public static void setTransient(Object object) {
 		if (object instanceof List<?>) {
 			List<?> list = (List<?>) object;
 			for (Object element : list) {
@@ -598,7 +604,7 @@ public class UtilImpl {
 	}
 
 	// set the data group of a bean and all its children
-	public static void setDataGroup(Object object, String bizDataGroupId) throws Exception {
+	public static void setDataGroup(Object object, String bizDataGroupId) {
 		if (object instanceof List<?>) {
 			List<?> list = (List<?>) object;
 			for (Object element : list) {
