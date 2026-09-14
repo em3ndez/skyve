@@ -41,15 +41,18 @@ import org.skyve.impl.bizport.StandardLoader;
 import org.skyve.impl.cache.DefaultCaching;
 import org.skyve.impl.content.AbstractContentManager;
 import org.skyve.impl.dataaccess.sql.SQLDataAccessImpl;
+import org.skyve.impl.dataaccess.sql.StreamableConnection;
 import org.skyve.impl.generate.charts.JFreeChartGenerator;
-import org.skyve.impl.job.QuartzJobScheduler;
+import org.skyve.impl.geoip.GeoIPServiceStaticSingleton;
+import org.skyve.impl.job.JobSchedulerStaticSingleton;
+import org.skyve.impl.mail.MailServiceStaticSingleton;
 import org.skyve.impl.metadata.view.widget.Chart.ChartType;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.persistence.RDBMSDynamicPersistence;
+import org.skyve.impl.persistence.hibernate.AbstractHibernatePersistence;
 import org.skyve.impl.report.DefaultReporting;
-import org.skyve.impl.security.SkyveLegacyPasswordEncoder;
+import org.skyve.impl.sms.SMSServiceStaticSingleton;
 import org.skyve.impl.tag.DefaultTagManager;
-import org.skyve.impl.util.MailUtil;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.HttpServletRequestResponse;
 import org.skyve.impl.web.WebContainer;
@@ -71,27 +74,64 @@ import org.skyve.persistence.DocumentQuery;
 import org.skyve.persistence.Persistence;
 import org.skyve.report.Reporting;
 import org.skyve.tag.TagManager;
-import org.skyve.util.JSON;
+import org.skyve.util.GeoIPService;
 import org.skyve.util.Mail;
+import org.skyve.util.MailService;
+import org.skyve.util.OWASP;
 import org.skyve.util.PushMessage;
-import org.skyve.util.Util;
-import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.factory.PasswordEncoderFactories;
-import org.springframework.security.crypto.password.DelegatingPasswordEncoder;
-import org.springframework.security.crypto.password.Pbkdf2PasswordEncoder;
-import org.springframework.security.crypto.scrypt.SCryptPasswordEncoder;
+import org.skyve.util.PushMessage.PushMessageReceiver;
+import org.skyve.util.SMSService;
+import org.skyve.util.SecurityUtil;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import jakarta.annotation.Nonnull;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.websocket.Session;
 
 /**
- * The central factory for creating all objects required in skyve ext.
- * See {@link org.skyve.CORE} for creating objects implemented in the skyve core API.
+ * Static facade providing access to all Skyve extended runtime services.
+ *
+ * <p>{@code EXT} is the {@code skyve-ext} counterpart to {@link org.skyve.CORE}.
+ * It provides factory methods and service accessors for capabilities that depend
+ * on the full runtime stack: content management, job scheduling, tagging, caching,
+ * reporting, mail, SMS, push messaging, GeoIP, BizPort, SQL data access, and security.
+ *
+ * <p>All methods are static and may be called from any framework layer. Underlying
+ * service implementations are resolved via singleton holders; they are available from
+ * application startup onward.
+ *
+ * <p>Example usages:
+ * <pre>
+ *   // Content management — always in try-with-resources
+ *   try (ContentManager cm = EXT.newContentManager()) {
+ *       cm.put(attachment);
+ *   }
+ *
+ *   // Tag management
+ *   TagManager tm = EXT.getTagManager();
+ *   tm.tag(tagId, bean);
+ *
+ *   // SQL access to a named data store
+ *   try (SQLDataAccess sql = EXT.newSQLDataAccess()) {
+ *       SQL q = sql.newSQL("select count(*) from ...");
+ *   }
+ * </pre>
+ *
+ * <p>Threading: all static methods are safe to call concurrently. Individual
+ * returned objects (e.g. {@link ContentManager}, {@link SQLDataAccess}) are
+ * thread-confined and must not be shared.
+ *
+ * @see org.skyve.CORE
  */
 public class EXT {
+
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(EXT.class);
+	private static final String WITH_BINDING = " with binding ";
+	private static final String WITH_UX_UI = " with UX/UI ";
+	private static final String NAMED = " named ";
+
 	/**
 	 * Disallow instantiation
 	 */
@@ -104,7 +144,7 @@ public class EXT {
 	 * @return A JobScheduler
 	 */
 	public static @Nonnull JobScheduler getJobScheduler() {
-		return QuartzJobScheduler.get();
+		return JobSchedulerStaticSingleton.get();
 	}
 	
 	/**
@@ -137,6 +177,32 @@ public class EXT {
 	 */
 	public static @Nonnull AddInManager getAddInManager() {
 		return PF4JAddInManager.get();
+	}
+
+	/**
+	 * Get a geo-ip service
+	 * 
+	 * @return A geo-ip service
+	 */
+	public static @Nonnull GeoIPService getGeoIPService() {
+		return GeoIPServiceStaticSingleton.get();
+	}
+
+	/**
+	 * Get a mail service for sending email.
+	 * 
+	 * @return The system configured mail service wrapped with global pre-processing.
+	 */
+	public static @Nonnull MailService getMailService() {
+		return MailServiceStaticSingleton.getEffective();
+	}
+
+	/**
+	 * Get an SMS (text message) service
+	 * @return An SMS service
+	 */
+	public static @Nonnull SMSService getSMSService() {
+		return SMSServiceStaticSingleton.get();
 	}
 
 	/**
@@ -295,7 +361,7 @@ public class EXT {
 		for (String key : loader.getBeanKeys()) {
 			Bean bean = loader.getBean(key);
 			if (bean == null) {
-				loader.addError(c, bean, new IllegalStateException("Bean with key " + key + " not found"));
+				problems.addError(new UploadException.Problem("Bean with key " + key + " not found", key));
 			}
 			else {
 				Module module = c.getModule(bean.getBizModule());
@@ -320,7 +386,7 @@ public class EXT {
 		try {
 			for (Bean bean : beans) {
 				persistentBean = (PersistentBean) bean;
-				persistentBean = p.save(persistentBean);
+				p.save(persistentBean);
 			}
 		}
 		catch (DomainException e) {
@@ -343,45 +409,58 @@ public class EXT {
 	 * outlook displays a from addresses something like
 	 * "mailer@skyve.com (on behalf of sender@foo.com)".
 	 * 
-	 * @param mail	The email to write.
-	 * @param out	The stream to write to.
+	 * @deprecated Use {@link #getMailService()} to get the mail service and call writeMail on it.
+	 * @param mail The email to write.
+	 * @param out The stream to write to.
 	 */
+	@SuppressWarnings("java:S1133") // deprecated
+	@Deprecated(since = "10.0.0", forRemoval = false)
 	public static void writeMail(@Nonnull Mail mail, @Nonnull OutputStream out) {
-		MailUtil.writeMail(mail, out);
+		getMailService().writeMail(mail, out);
 	}
 
 	/**
 	 * Send an email.
 	 * 
-	 * @param mail	The email to send.
+	 * @deprecated Use {@link #getMailService()} to get the mail service and call sendMail on it,
+	 *             to ensure any global pre-processing is applied.
+	 * @param mail The email to send.
 	 */
+	@SuppressWarnings("java:S1133") // deprecated
+	@Deprecated(since = "10.0.0", forRemoval = false)
 	public static void sendMail(@Nonnull Mail mail) {
-		MailUtil.sendMail(mail);
+		getMailService().sendMail(mail);
 	}
 
 	/**
 	 * Push a message to connected client user interfaces.
+	 * Stale receivers are skipped during iteration.
 	 */
 	public static void push(@Nonnull PushMessage message) {
-		// Note Sessions are thread-safe
+
+		LOGGER.debug("Pushing message: {}", message);
+
 		Set<String> userIds = message.getUserIds();
 		boolean broadcast = userIds.isEmpty();
-		String payload = JSON.marshall(message.getItems());
-		for (Session session : PushMessage.SESSIONS) {
-			if (session.isOpen()) {
-				if (broadcast) {
-					session.getAsyncRemote().sendText(payload);
-				}
-				else {
-					Object userId = session.getUserProperties().get("user");
-					if ((userId == null) || userIds.contains(userId)) {
-						session.getAsyncRemote().sendText(payload);
-					}
+
+		for (PushMessageReceiver msgReceiver : PushMessage.RECEIVERS) {
+			// Skip receivers that have been detected as stale by the reaper or timeout logic
+			if (msgReceiver.isStale()) {
+				continue;
+			}
+
+			if (broadcast) {
+				msgReceiver.sendMessage(message);
+			} else {
+
+				String userId = msgReceiver.forUserId();
+				if (userIds.contains(userId)) {
+					msgReceiver.sendMessage(message);
 				}
 			}
 		}
 	}
-	
+
 	/**
 	 * Generate an image of a chart.
 	 * 
@@ -435,9 +514,14 @@ public class EXT {
 	 * {@link org.skyve.persistence.Persistence} can be used in conjunction with
 	 * {@link org.skyve.persistence.SQL}.
 	 * 
+	 * @param dataStore	The data store definition.
+	 * @param streaming	Whether the connection is for streaming use.
+	 *					Some JDBC drivers need special handling for streaming use.
+	 *					Ensure a Connection wrapper is returned where statements and prepared statements are created with FORWARD_ONLY and CONCUR_READ_ONLY and setFetchSize() is set appropriately.
 	 * @return a database connection from the container supplied pool.
 	 */
-	public static @Nonnull Connection getDataStoreConnection(@Nonnull DataStore dataStore) {
+	@SuppressWarnings("resource")
+	public static @Nonnull Connection getDataStoreConnection(@Nonnull DataStore dataStore, boolean streaming) {
 		Connection result = null;
 		try {
 			String jndiDataSourceName = dataStore.getJndiDataSourceName();
@@ -474,6 +558,10 @@ public class EXT {
 			throw new DomainException("Could not instantiate the JDBC driver", e);
 		}
 
+		if (streaming) {
+			result = new StreamableConnection(result, AbstractHibernatePersistence.getDialect(dataStore.getDialectClassName()).getRDBMS());
+		}
+		
 		return result;
 	}
 	
@@ -483,8 +571,9 @@ public class EXT {
 	 * 
 	 * @return A connection.
 	 */
+	@SuppressWarnings("resource")
 	public static @Nonnull Connection getDataStoreConnection() {
-		return getDataStoreConnection(UtilImpl.DATA_STORE);
+		return getDataStoreConnection(UtilImpl.DATA_STORE, true);
 	}
 
 	/**
@@ -492,9 +581,11 @@ public class EXT {
 	 * Note that this is not a CDI provider as it is auto-closeable.
 	 * 
 	 * @return A content manger.
+	 * @throws DomainException	If a content manager cannot be created.
 	 */
 	@SuppressWarnings("resource")
-	public static @Nonnull ContentManager newContentManager() {
+	public static @Nonnull ContentManager newContentManager()
+	throws DomainException {
 		final ContentManager result = (AbstractContentManager.IMPLEMENTATION_CLASS == null) ?
 										PF4JAddInManager.get().getExtension(ContentManager.class) :
 										AbstractContentManager.get();
@@ -510,6 +601,7 @@ public class EXT {
 	 * 
 	 * @return A SQLDataAccess.
 	 */
+	@SuppressWarnings("resource")
 	public static @Nonnull SQLDataAccess newSQLDataAccess() {
 		return new SQLDataAccessImpl(UtilImpl.DATA_STORE);
 	}
@@ -520,6 +612,7 @@ public class EXT {
 	 * 
 	 * @return A SQLDataAccess.
 	 */
+	@SuppressWarnings("resource")
 	public static @Nonnull SQLDataAccess newSQLDataAccess(@Nonnull DataStore dataStore) {
 		return new SQLDataAccessImpl(dataStore);
 	}
@@ -553,8 +646,8 @@ public class EXT {
 		catch (SkyveException e) {
 			throw e;
 		}
-		catch (Throwable t) {
-			throw new DomainException("Cannot create new list model", t);
+		catch (Exception e) {
+			throw new DomainException("Cannot create new list model", e);
 		}
 	}
 	
@@ -565,49 +658,25 @@ public class EXT {
 	 * @return	The encoded password.
 	 */
 	public static @Nonnull String hashPassword(@Nonnull String clearText) {
-		String result = null;
-
-		String passwordHashingAlgorithm = Util.getPasswordHashingAlgorithm();
-		// Legacy hashing with no SALT
-		if ("MD5".equals(passwordHashingAlgorithm) || "SHA1".equals(passwordHashingAlgorithm)) {
-			result = SkyveLegacyPasswordEncoder.encode(clearText, passwordHashingAlgorithm);
-		}
-		else if ("bcrypt".equals(passwordHashingAlgorithm)) {
-			result = "{bcrypt}" + new BCryptPasswordEncoder().encode(clearText);
-		}
-		else if ("pbkdf2".equals(passwordHashingAlgorithm)) {
-			result = "{pbkdf2}" + Pbkdf2PasswordEncoder.defaultsForSpringSecurity_v5_8().encode(clearText);
-		}
-		else if ("scrypt".equals(passwordHashingAlgorithm)) {
-			result = "{scrypt}" + SCryptPasswordEncoder.defaultsForSpringSecurity_v5_8().encode(clearText);
-		}
-		else if ("argon2".equals(passwordHashingAlgorithm)) {
-			result = "{argon2}" + Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8().encode(clearText);
-		}
-		else {
-			throw new DomainException(passwordHashingAlgorithm + " not supported");
-		}
-		
-		return result;
+		return SecurityUtil.hashPassword(clearText);
 	}
 
 	/**
 	 * Check a hash against a clear text password.
 	 * 
-	 * @param	clearText
-	 * @param	The encoded password.
-	 * @return	true if it matches, or false if it doesn't
+	 * @param clearText The candidate clear-text password
+	 * @param hashedPassword The encoded password hash
+	 * @return {@code true} when the candidate password matches the hash
 	 */
 	public static boolean checkPassword(@Nonnull String clearText, @Nonnull String hashedPassword) {
-		DelegatingPasswordEncoder dpe = (DelegatingPasswordEncoder) PasswordEncoderFactories.createDelegatingPasswordEncoder();
-		dpe.setDefaultPasswordEncoderForMatches(new SkyveLegacyPasswordEncoder());
+		PasswordEncoder dpe = SecurityUtil.createDelegatingPasswordEncoder();
 		return dpe.matches(clearText, hashedPassword);
 	}
 	
 	/**
 	 * Inject a bootstrap user according to the settings in the .json Bootstrap stanza
 	 * 
-	 * @param p	The Pdersistence to use.
+	 * @param p	The Persistence to use.
 	 * @throws Exception	When something unforeseen occurs.
 	 */
 	public static void bootstrap(@Nonnull Persistence p) throws Exception {
@@ -621,14 +690,11 @@ public class EXT {
 		q.getFilter().addEquals(AppConstants.USER_NAME_ATTRIBUTE_NAME, UtilImpl.BOOTSTRAP_USER);
 		PersistentBean user = q.beanResult();
 		if (user == null) {
-			UtilImpl.LOGGER.info(String.format("CREATING BOOTSTRAP USER %s/%s (%s)",
-												UtilImpl.BOOTSTRAP_CUSTOMER,
-												UtilImpl.BOOTSTRAP_USER,
-												UtilImpl.BOOTSTRAP_EMAIL));
+            LOGGER.info("CREATING BOOTSTRAP USER {}/{} ({})", UtilImpl.BOOTSTRAP_CUSTOMER, UtilImpl.BOOTSTRAP_USER, UtilImpl.BOOTSTRAP_EMAIL);
 
 			// Create user
 			user = userDoc.newInstance(u);
-			u.setId(user.getBizId());
+			u.setId(user.getBizId()); // set the persistence super-user bizId
 			user.setBizUserId(u.getId());
 			BindUtil.set(user, AppConstants.USER_NAME_ATTRIBUTE_NAME, UtilImpl.BOOTSTRAP_USER);
 			BindUtil.set(user, AppConstants.PASSWORD_ATTRIBUTE_NAME, u.getPasswordHash());
@@ -661,9 +727,8 @@ public class EXT {
 			p.save(user);
 		}
 		else {
-			UtilImpl.LOGGER.info(String.format("BOOTSTRAP USER %s/%s ALREADY EXISTS",
-												UtilImpl.BOOTSTRAP_CUSTOMER,
-												UtilImpl.BOOTSTRAP_USER));
+            LOGGER.info("BOOTSTRAP USER {}/{} ALREADY EXISTS", UtilImpl.BOOTSTRAP_CUSTOMER, UtilImpl.BOOTSTRAP_USER);
+			u.setId(user.getBizId()); // set the persistence super-user bizId
 		}
 	}
 
@@ -683,7 +748,7 @@ public class EXT {
 	}
 
 	/**
-	 * Get the {@link HttpServletRequest} for the current thread.
+	 * Get the {@link HttpServletResponse} for the current thread.
 	 * <br/>
 	 * This method will throw IllegalStateException if there is no request (eg called from a job or other background task).
 	 * 
@@ -698,6 +763,15 @@ public class EXT {
 	}
 
 	/**
+	 * Indicates if the current thread is for a web request.
+	 * That is, there are defined {@link getHttpServletRequest} and {@link getHttpServletRespsone}.
+	 * Jobs will return false for this call.
+	 */
+	public static boolean isWebRequest() {
+		return (WebContainer.getHttpServletRequestResponse() != null);
+	}
+	
+	/**
 	 * Does the given user in given router UX/UI have access to the given UserAccess.
 	 * 
 	 * @param user The user to test
@@ -705,67 +779,68 @@ public class EXT {
 	 * @param uxui The UX/UI name to test for
 	 */
 	public static void checkAccess(@Nonnull User user, @Nonnull UserAccess access, @Nonnull String uxui) {
-		if (!user.canAccess(access, uxui)) {
+		if (! user.canAccess(access, uxui)) {
 			final String userName = user.getName();
 			final String moduleName = access.getModuleName();
 			final String documentName = access.getDocumentName();
 			final String component = access.getComponent();
 			final StringBuilder warning = new StringBuilder(256);
 			final String resource;
-			warning.append("User ").append(userName).append(" cannot access ");
+	    		warning.append("User ").append(OWASP.sanitiseLog(userName)).append(" cannot access ");
 			if (access.isContent()) {
-				warning.append("content for document ").append(moduleName).append('.').append(documentName);
-				warning.append(" with binding ").append(component);
-				warning.append(" with UX/UI ").append(uxui);
+    			warning.append("content for document ").append(OWASP.sanitiseLog(moduleName)).append('.').append(OWASP.sanitiseLog(documentName));
+    			warning.append(WITH_BINDING).append(OWASP.sanitiseLog(component));
+    			warning.append(WITH_UX_UI).append(OWASP.sanitiseLog(uxui));
 				resource = "this content";
 			}
 			else if (access.isDocumentAggregate()) {
-				warning.append("default query for document ").append(moduleName).append('.').append(component);
-				warning.append(" with UX/UI ").append(uxui);
+    			warning.append("default query for document ").append(OWASP.sanitiseLog(moduleName)).append('.').append(OWASP.sanitiseLog(component));
+    			warning.append(WITH_UX_UI).append(OWASP.sanitiseLog(uxui));
 				resource = "this query";
 			}
 			else if (access.isDynamicImage()) {
-				warning.append("dynamic image for document ").append(moduleName).append('.').append(documentName);
-				warning.append(" with binding ").append(component);
-				warning.append(" and UX/UI ").append(uxui);
+    			warning.append("dynamic image for document ").append(OWASP.sanitiseLog(moduleName)).append('.').append(OWASP.sanitiseLog(documentName));
+    			warning.append(WITH_BINDING).append(OWASP.sanitiseLog(component));
+    			warning.append(WITH_UX_UI).append(OWASP.sanitiseLog(uxui));
 				resource = "this dynamic image";
 			}
 			else if (access.isModelAggregate()) {
-				warning.append("model for document ").append(moduleName).append('.').append(documentName);
-				warning.append(" named ").append(component);
-				warning.append(" with UX/UI ").append(uxui);
+    			warning.append("model for document ").append(OWASP.sanitiseLog(moduleName)).append('.').append(OWASP.sanitiseLog(documentName));
+    			warning.append(NAMED).append(OWASP.sanitiseLog(component));
+    			warning.append(WITH_UX_UI).append(OWASP.sanitiseLog(uxui));
 				resource = "this model";
 			}
 			else if (access.isPreviousComplete()) {
-				warning.append("previous complete for document ").append(moduleName).append('.').append(documentName);
-				warning.append(" with binding ").append(component);
-				warning.append(" and UX/UI ").append(uxui);
+    			warning.append("previous complete for document ").append(OWASP.sanitiseLog(moduleName)).append('.').append(OWASP.sanitiseLog(documentName));
+    			warning.append(WITH_BINDING).append(OWASP.sanitiseLog(component));
+    			warning.append(WITH_UX_UI).append(OWASP.sanitiseLog(uxui));
 				resource = "this previous data";
 			}
 			else if (access.isQueryAggregate()) {
-				warning.append("query for module ").append(moduleName);
-				warning.append(" named ").append(component);
-				warning.append(" with UX/UI ").append(uxui);
+    			warning.append("query for module ").append(OWASP.sanitiseLog(moduleName));
+    			warning.append(NAMED).append(OWASP.sanitiseLog(component));
+    			warning.append(WITH_UX_UI).append(OWASP.sanitiseLog(uxui));
 				resource = "this query";
 			}
 			else if (access.isReport()) {
-				warning.append("report for document ").append(moduleName).append('.').append(documentName);
-				warning.append(" named ").append(component);
-				warning.append(" with UX/UI ").append(uxui);
+    			warning.append("report for document ").append(OWASP.sanitiseLog(moduleName)).append('.').append(OWASP.sanitiseLog(documentName));
+    			warning.append(NAMED).append(OWASP.sanitiseLog(component));
+    			warning.append(WITH_UX_UI).append(OWASP.sanitiseLog(uxui));
 				resource = "this report";
 			}
 			else if (access.isSingular()) {
-				warning.append("view for document ").append(moduleName).append('.').append(documentName);
-				warning.append(" named ").append(component);
-				warning.append(" with UX/UI ").append(uxui);
+    			warning.append("view for document ").append(OWASP.sanitiseLog(moduleName)).append('.').append(OWASP.sanitiseLog(documentName));
+    			warning.append(NAMED).append(OWASP.sanitiseLog(component));
+    			warning.append(WITH_UX_UI).append(OWASP.sanitiseLog(uxui));
 				resource = "this view";
 			}
 			else {
 				throw new IllegalStateException(access.toString() + " not catered for");
 			}
 
-			UtilImpl.LOGGER.warning(warning.toString());
-			UtilImpl.LOGGER.info("If this user already has a document or action privilege, check if they were navigated to this page/resource programatically or by means other than the menu or views and need to be granted access via an <accesses> stanza in the module or view XML.");
+			final String log = warning.toString();
+			LOGGER.warn(log);
+			LOGGER.info("If this user already has a document or action privilege, check if they were navigated to this page/resource programatically or by means other than the menu or views and need to be granted access via an <accesses> stanza in the module or view XML.");
 			throw new AccessException(resource, userName);
 		}
 	}

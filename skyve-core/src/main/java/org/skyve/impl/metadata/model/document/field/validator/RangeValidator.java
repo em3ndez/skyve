@@ -10,6 +10,22 @@ import jakarta.xml.bind.annotation.XmlAttribute;
 import jakarta.xml.bind.annotation.XmlTransient;
 import jakarta.xml.bind.annotation.XmlType;
 
+/**
+ * Abstract JAXB base for range-constraint validators on ordered field types.
+ *
+ * <p>Adds an optional {@code min} and {@code max} boundary to
+ * {@link FieldValidator}.  Concrete subclasses specialise the generic type:
+ * {@link DateValidator}, {@link DecimalValidator}, {@link IntegerValidator},
+ * {@link LongValidator}.
+ *
+ * <p>Threading: not thread-safe.  Read-only after JAXB unmarshalling.
+ *
+ * @param <T> the ordered field value type
+ * @see DateValidator
+ * @see DecimalValidator
+ * @see IntegerValidator
+ * @see LongValidator
+ */
 @XmlType(namespace = XMLMetaData.DOCUMENT_NAMESPACE)
 public abstract class RangeValidator<T> extends FieldValidator<T> {
 	private static final long serialVersionUID = 1703003606474596114L;
@@ -54,6 +70,7 @@ public abstract class RangeValidator<T> extends FieldValidator<T> {
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public String constructMessage(User user, String localisedDisplayName, Converter<T> converter) {
 		String result = getLocalisedValidationMessage();
 		if (result == null) {
@@ -62,24 +79,24 @@ public abstract class RangeValidator<T> extends FieldValidator<T> {
 					String minDisplay = (converter == null) ? min.toString() : converter.toDisplayValue(min);
 					if (max == null) {
 						if (min instanceof Number) {
-							result = Util.i18n(BeanValidator.VALIDATION_RANGE_LESS_KEY, localisedDisplayName, minDisplay);
+							result = Util.nullSafeI18n(BeanValidator.VALIDATION_RANGE_LESS_KEY, localisedDisplayName, minDisplay);
 						}
 						else {
-							result = Util.i18n(BeanValidator.VALIDATION_RANGE_BEFORE_KEY, localisedDisplayName, minDisplay);
+							result = Util.nullSafeI18n(BeanValidator.VALIDATION_RANGE_BEFORE_KEY, localisedDisplayName, minDisplay);
 						}
 					}
 					else {
 						String maxDisplay = (converter == null) ? max.toString() : converter.toDisplayValue(max);
-						result = Util.i18n(BeanValidator.VALIDATION_RANGE_BETWEEN_KEY, localisedDisplayName, minDisplay, maxDisplay);
+						result = Util.nullSafeI18n(BeanValidator.VALIDATION_RANGE_BETWEEN_KEY, localisedDisplayName, minDisplay, maxDisplay);
 					}
 				}
 				else if (max != null) {
 					String maxDisplay = (converter == null) ? max.toString() : converter.toDisplayValue(max);
 					if (max instanceof Number) {
-						result = Util.i18n(BeanValidator.VALIDATION_RANGE_GREATER_KEY, localisedDisplayName, maxDisplay);
+						result = Util.nullSafeI18n(BeanValidator.VALIDATION_RANGE_GREATER_KEY, localisedDisplayName, maxDisplay);
 					}
 					else {
-						result = Util.i18n(BeanValidator.VALIDATION_RANGE_AFTER_KEY, localisedDisplayName, maxDisplay);
+						result = Util.nullSafeI18n(BeanValidator.VALIDATION_RANGE_AFTER_KEY, localisedDisplayName, maxDisplay);
 					}
 				}
 			}

@@ -5,6 +5,7 @@
 		xmlns:f="http://java.sun.com/jsf/core"
 		xmlns:p="http://primefaces.org/ui"
 		xmlns:s="http://skyve.org/xml/ui"
+		lang="#{skyvePublic.languageTag}" xml:lang="#{skyvePublic.languageTag}"
 		dir="#{skyvePublic.dir}">
 	<f:view contentType="text/html" encoding="UTF-8">
 		<f:metadata>
@@ -17,12 +18,13 @@
 			<f:event type="preRenderView" listener="#{skyvePublic.preRender}"/>
 		</f:metadata>
 		<p:importEnum type="org.skyve.web.WebAction" var="WebAction" allSuffix="ALL_ENUM_VALUES" />  
-		<ui:composition template="#{'/WEB-INF/pages/templates/'.concat(skyvePublic.templateName).concat('/view.xhtml')}">
+		<ui:composition template="#{'/WEB-INF/pages/templates/'.concat(_skyveTheme.templateName).concat('/view.xhtml')}">
 			<ui:param name="bean" value="#{skyvePublic}" />
 			<ui:param name="showMenu" value="false" />
 			<ui:param name="resetMenu" value="false" />
-			<ui:param name="showSwitchMode" value="#{'phone' ne skyve.userAgentType and skyve.canSwitchMode}" />
+			<ui:param name="showSwitchMode" value="false" />
 			<ui:param name="showLogout" value="false" />
+			<ui:param name="vue" value="false" />
 			<ui:define name="body">
 				<s:conversation managedBean="skyvePublic" />
 				<h:panelGroup layout="block" class="ui warning message" rendered="#{empty skyvePublic.user}">

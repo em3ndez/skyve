@@ -7,6 +7,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
+import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.math.BigDecimal;
 import java.nio.file.Paths;
@@ -17,12 +18,13 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.util.Calendar;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.TreeMap;
 
-import org.apache.commons.lang3.tuple.Pair;
 import org.hibernate.engine.spi.SessionImplementor;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.WKTWriter;
@@ -38,6 +40,7 @@ import org.skyve.domain.app.admin.DataMaintenance.DataSensitivity;
 import org.skyve.domain.messages.MessageSeverity;
 import org.skyve.domain.types.DateOnly;
 import org.skyve.impl.content.AbstractContentManager;
+import org.skyve.impl.metadata.customer.CustomerImpl;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.persistence.hibernate.AbstractHibernatePersistence;
 import org.skyve.impl.util.UtilImpl;
@@ -53,6 +56,8 @@ import org.skyve.util.FileUtil;
 import org.skyve.util.Mail;
 import org.skyve.util.PushMessage;
 import org.skyve.util.Util;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
 import org.supercsv.io.CsvMapWriter;
 import org.supercsv.prefs.CsvPreference;
 
@@ -71,14 +76,53 @@ import jakarta.annotation.Nullable;
  * of the content node - ie module name and document name are not known to the table.
  */
 public class BackupJob extends CancellableJob {
+	private static final Logger SLOGGER = SkyveLoggerFactory.getLogger(BackupJob.class);
+
+	private static final String CREATE_SQL = "create.sql";
+	private static final String FIELD_VALUE_SUFFIX = " value.";
+	private static final String MISSING_FIELD_PREFIX = " is missing a ";
+	private static final String WITH_DOCUMENT_ID = " with " + Bean.DOCUMENT_ID + " = ";
+
+	private Calendar gmt = Calendar.getInstance(TimeZone.getTimeZone("GMT"));
+
 	private File backupZip;
 
+	/**
+	 * Return the generated backup zip for this job, if available.
+	 *
+	 * @return the backup zip file or null if not generated yet
+	 */
 	public File getBackupZip() {
 		return backupZip;
 	}
 
+	/**
+	 * Run the backup job.
+	 *
+	 * @throws Exception if the backup fails
+	 */
 	@Override
 	public void execute() throws Exception {
+		CustomerImpl customer = (CustomerImpl) CORE.getCustomer();
+		try {
+			// Notify observers that we are starting a backup for this customer
+			customer.notifyBeforeBackup();
+
+			backup();
+		}
+		finally {
+			// Notify observers that we are finished a backup for this customer
+			customer.notifyAfterBackup();
+		}
+	}
+	
+	/**
+	 * Perform the backup workflow and write the backup archive.
+	 *
+	 * @throws Exception if the backup fails
+	 */
+	@SuppressWarnings({"java:S1143", "java:S3776", "java:S6541"}) // Allow nested try blocks for clarity in resource management and error handling; complexity OK
+	private void backup() throws Exception {
 		Bean bean = getBean();
 		List<String> log = getLog();
 		Collection<Table> tables = BackupUtil.getTables();
@@ -97,7 +141,7 @@ public class BackupJob extends CancellableJob {
 		String trace = "Backup to " + directory.getAbsolutePath();
 		String causation = null;
 		log.add(trace);
-		UtilImpl.LOGGER.info(trace);
+		LOGGER.info(trace);
 		
 		// Are we including audits in this backup?
 		boolean includeAuditLog = getIncludeAuditLog(bean);
@@ -117,9 +161,11 @@ public class BackupJob extends CancellableJob {
 		
 		BackupUtil.writeTables(tables, new File(backupDir, "tables.txt"));
 
-		p.generateDDL(new File(backupDir, "drop.sql").getAbsolutePath(),
-				new File(backupDir, "create.sql").getAbsolutePath(),
-				null);
+		List<String> dropDDL = new java.util.ArrayList<>();
+		List<String> createDDL = new java.util.ArrayList<>();
+		p.generateDDL(dropDDL, createDDL, null);
+		BackupUtil.writeScript(dropDDL, new File(backupDir, "drop.sql"));
+		BackupUtil.writeScript(createDDL, new File(backupDir, CREATE_SQL));
 		boolean problem = false; // indicates if the backup had a problem
 		try {
 			try {
@@ -138,7 +184,7 @@ public class BackupJob extends CancellableJob {
 										try (ResultSet resultSet = statement.getResultSet()) {
 											trace = "Backup " + table.agnosticIdentifier;
 											log.add(trace);
-											UtilImpl.LOGGER.info(trace);
+											LOGGER.info(trace);
 											try (OutputStreamWriter out = new OutputStreamWriter(
 													new FileOutputStream(backupDir + File.separator + table.agnosticIdentifier + ".csv"), UTF_8)) {
 												try (CsvMapWriter writer = new CsvMapWriter(out, CsvPreference.STANDARD_PREFERENCE)) {
@@ -155,9 +201,9 @@ public class BackupJob extends CancellableJob {
 														values.clear();
 	
 														for (String name : table.fields.keySet()) {
-															Pair<AttributeType, Sensitivity> field = table.fields.get(name);
-															AttributeType attributeType = field.getLeft();
-															Sensitivity sensitivity = field.getRight();
+															BackupField field = table.fields.get(name);
+															AttributeType attributeType = field.getAttributeType();
+															Sensitivity sensitivity = field.getSensitivity();
 															boolean redact = (sensitivityLevel > 0) && (sensitivity.ordinal() >= sensitivityLevel);
 															Object value = null;
 	
@@ -175,37 +221,37 @@ public class BackupJob extends CancellableJob {
 																if ("".equals(value)) {
 																	// bizId is mandatory
 																	if (name.equalsIgnoreCase(Bean.DOCUMENT_ID)) {
-																		throw new IllegalStateException(table.agnosticIdentifier + " is missing a " + Bean.DOCUMENT_ID + " value.");
+																		throw new IllegalStateException(table.agnosticIdentifier + MISSING_FIELD_PREFIX + Bean.DOCUMENT_ID + FIELD_VALUE_SUFFIX);
 																	}
 																	// bizLock is mandatory
 																	if (name.equalsIgnoreCase(PersistentBean.LOCK_NAME)) {
-																		throw new IllegalStateException(table.agnosticIdentifier + " with " +
-																											Bean.DOCUMENT_ID + " = " + values.get(Bean.DOCUMENT_ID) +
-																											" is missing a " + PersistentBean.LOCK_NAME + " value.");
+																		throw new IllegalStateException(table.agnosticIdentifier + WITH_DOCUMENT_ID + values.get(Bean.DOCUMENT_ID) +
+																											MISSING_FIELD_PREFIX + PersistentBean.LOCK_NAME + FIELD_VALUE_SUFFIX);
 																	}
 																	// bizKey is mandatory
 																	if (name.equalsIgnoreCase(Bean.BIZ_KEY)) {
-																		throw new IllegalStateException(table.agnosticIdentifier + " with " +
-																											Bean.DOCUMENT_ID + " = " + values.get(Bean.DOCUMENT_ID) +
-																											" is missing a " + Bean.BIZ_KEY + " value.");
+																		throw new IllegalStateException(table.agnosticIdentifier + WITH_DOCUMENT_ID + values.get(Bean.DOCUMENT_ID) +
+																											MISSING_FIELD_PREFIX + Bean.BIZ_KEY + FIELD_VALUE_SUFFIX);
 																	}
 																	// bizCustomer is mandatory
 																	if (name.equalsIgnoreCase(Bean.CUSTOMER_NAME)) {
-																		throw new IllegalStateException(table.agnosticIdentifier + " with " +
-																											Bean.DOCUMENT_ID + " = " + values.get(Bean.DOCUMENT_ID) +
-																											" is missing a " + Bean.CUSTOMER_NAME + " value.");
+																		throw new IllegalStateException(table.agnosticIdentifier + WITH_DOCUMENT_ID + values.get(Bean.DOCUMENT_ID) +
+																											MISSING_FIELD_PREFIX + Bean.CUSTOMER_NAME + FIELD_VALUE_SUFFIX);
 																	}
 																	// bizUserId is mandatory
 																	if (name.equalsIgnoreCase(Bean.USER_ID)) {
-																		throw new IllegalStateException(table.agnosticIdentifier + " with " +
-																											Bean.DOCUMENT_ID + " = " + values.get(Bean.DOCUMENT_ID) +
-																											" is missing a " + Bean.USER_ID + " value.");
+																		throw new IllegalStateException(table.agnosticIdentifier + WITH_DOCUMENT_ID + values.get(Bean.DOCUMENT_ID) +
+																											MISSING_FIELD_PREFIX + Bean.USER_ID + FIELD_VALUE_SUFFIX);
 																	}
 																}
 																// Respect sensitivity
 																if (redact) {
 																	// Redact value
-																	value = BackupUtil.redactData(attributeType, value);
+																	if (field instanceof BackupLengthField lengthField) {
+																		value = BackupUtil.redactData(attributeType, value, lengthField.getMaxLength());
+																	} else {
+																		value = BackupUtil.redactData(attributeType, value);
+																	}
 																}
 															}
 															else if (AttributeType.geometry.equals(attributeType)) {
@@ -239,7 +285,7 @@ public class BackupJob extends CancellableJob {
 																}
 															}
 															else if (AttributeType.date.equals(attributeType)) {
-																Date date = resultSet.getDate(name, BackupUtil.GMT);
+																Date date = resultSet.getDate(name, gmt);
 																if (resultSet.wasNull()) {
 																	value = "";
 																}
@@ -253,7 +299,7 @@ public class BackupJob extends CancellableJob {
 																}
 															}
 															else if (AttributeType.time.equals(attributeType)) {
-																Time time = resultSet.getTime(name, BackupUtil.GMT);
+																Time time = resultSet.getTime(name, gmt);
 																if (resultSet.wasNull()) {
 																	value = "";
 																}
@@ -268,7 +314,7 @@ public class BackupJob extends CancellableJob {
 															}
 															else if (AttributeType.dateTime.equals(attributeType) ||
 																	AttributeType.timestamp.equals(attributeType)) {
-																Timestamp timestamp = resultSet.getTimestamp(name, BackupUtil.GMT);
+																Timestamp timestamp = resultSet.getTimestamp(name, gmt);
 																if (resultSet.wasNull()) {
 																	value = "";
 																}
@@ -313,9 +359,8 @@ public class BackupJob extends CancellableJob {
 																// bizVersion is mandatory
 																if ("".equals(value) &&
 																		name.equalsIgnoreCase(PersistentBean.VERSION_NAME)) {
-																	throw new IllegalStateException(table.agnosticIdentifier + " with " +
-																			Bean.DOCUMENT_ID + " = " + values.get(Bean.DOCUMENT_ID) +
-																			" is missing a " + PersistentBean.VERSION_NAME + " value.");
+																	throw new IllegalStateException(table.agnosticIdentifier + WITH_DOCUMENT_ID + values.get(Bean.DOCUMENT_ID) +
+																			MISSING_FIELD_PREFIX + PersistentBean.VERSION_NAME + FIELD_VALUE_SUFFIX);
 																}
 	
 															}
@@ -359,7 +404,7 @@ public class BackupJob extends CancellableJob {
 																				// See if the content file exists
 																				final File contentDirectory = Paths.get(UtilImpl.CONTENT_DIRECTORY, ContentManager.FILE_STORE_NAME).toFile();
 																				final StringBuilder contentAbsolutePath = new StringBuilder(contentDirectory.getAbsolutePath()).append(File.separator);
-																				AbstractContentManager.appendBalancedFolderPathFromContentId(stringValue, contentAbsolutePath, false);
+																				AbstractContentManager.appendBalancedFolderPathFromContentId(stringValue, contentAbsolutePath);
 																				final File contentFile = Paths.get(contentAbsolutePath.toString()).toFile();
 																				if (contentFile.exists()) {
 																					problems.write(" but the matching file was found for this missing content at ");
@@ -370,7 +415,9 @@ public class BackupJob extends CancellableJob {
 																			else {
 																				StringBuilder contentPath = new StringBuilder(256);
 																				contentPath.append(directory.getAbsolutePath()).append('/').append(ContentManager.FILE_STORE_NAME).append('/');
-																				AbstractContentManager.writeContentFiles(contentPath, content, content.getContentBytes());
+																				try (InputStream cs = content.getContentStream()) {
+																					AbstractContentManager.writeContentFiles(contentPath, content, cs, true);
+																				}
 																			}
 																		}
 																		catch (Throwable t) {
@@ -406,7 +453,7 @@ public class BackupJob extends CancellableJob {
 										problems.write(trace);
 										problems.newLine();
 										log.add(trace);
-										Util.LOGGER.severe(trace);
+										LOGGER.error(trace);
 										throw e;
 									}
 								}
@@ -428,14 +475,14 @@ public class BackupJob extends CancellableJob {
 				trace = "A problem backing up " + UtilImpl.ARCHIVE_NAME + " was encountered : " + t.getLocalizedMessage();
 				causation = trace;
 				log.add(trace);
-				Util.LOGGER.info(trace);
+				LOGGER.info(trace);
 				throw t;
 			}
 			finally {
 				if (directory.exists()) {
 					trace = "Created backup folder " + directory.getAbsolutePath();
 					log.add(trace);
-					Util.LOGGER.info(trace);
+					LOGGER.info(trace);
 					setPercentComplete(50);
 					try {
 						File zip = new File(directory.getParentFile(),
@@ -443,19 +490,19 @@ public class BackupJob extends CancellableJob {
 						FileUtil.createZipArchive(directory, zip);
 						trace = "Compressed backup to " + zip.getAbsolutePath();
 						log.add(trace);
-						Util.LOGGER.info(trace);
+						LOGGER.info(trace);
 						backupZip = zip;
 	
 						if (ExternalBackup.areExternalBackupsEnabled()) {
 							ExternalBackup.getInstance().uploadBackup(zip.getAbsolutePath());
 							final String uploadLogMessage = "Uploaded compressed backup";
 							log.add(uploadLogMessage);
-							Util.LOGGER.info(uploadLogMessage);
+							LOGGER.info(uploadLogMessage);
 	
 							FileUtil.delete(zip);
 							final String deleteLogMessage = "Deleted local backup";
 							log.add(deleteLogMessage);
-							Util.LOGGER.info(deleteLogMessage);
+							LOGGER.info(deleteLogMessage);
 						}
 					}
 					catch (Throwable t) {
@@ -465,18 +512,18 @@ public class BackupJob extends CancellableJob {
 							causation = trace;
 						}
 						log.add(trace);
-						Util.LOGGER.info(trace);
+						LOGGER.info(trace);
 						throw t;
 					}
 					finally {
 						FileUtil.delete(directory);
 						trace = "Deleted backup folder " + directory.getAbsolutePath();
 						log.add(trace);
-						Util.LOGGER.info(trace);
+						LOGGER.info(trace);
 						setPercentComplete(100);
 						trace = "Backup Completed" + (problem ? " with problems" : "");
 						log.add(trace);
-						Util.LOGGER.info(trace);
+						LOGGER.info(trace);
 						EXT.push(new PushMessage().user().growl(MessageSeverity.info, trace));
 					}
 				}
@@ -489,8 +536,22 @@ public class BackupJob extends CancellableJob {
 		}
 	}
 	
-	public static void emailProblem(@Nonnull List<String> jobLog, @Nullable String problem) throws Exception {
-		String body = Binder.formatMessage("The " + UtilImpl.ARCHIVE_NAME + " backup taken at " + new DateOnly() + " has ");
+	/**
+	 * Email a backup problem report to support.
+	 *
+	 * @param jobLog the job log to append messages to
+	 * @param problem the problem description, or null for a generic message
+	 * @throws Exception if sending the email fails
+	 */
+	public static void emailProblem(@Nonnull List<String> jobLog, @Nullable String problem) {
+		// nameEnv is the application name and environment identifier.
+		StringBuilder nameEnv = new StringBuilder();
+		nameEnv.append("[").append(UtilImpl.ARCHIVE_NAME);
+		if (UtilImpl.ENVIRONMENT_IDENTIFIER != null) {
+			nameEnv.append(" - ").append(UtilImpl.ENVIRONMENT_IDENTIFIER);
+		}
+		nameEnv.append("]");
+		String body = Binder.formatMessage("The " + nameEnv + " backup taken at " + new DateOnly() + " has ");
 		if (problem == null) {
 			body += "problems.";
 		}
@@ -498,25 +559,30 @@ public class BackupJob extends CancellableJob {
 			body += "a problem:- " + problem;
 		}
 
+		StringBuilder subjectBuilder = new StringBuilder();
+		subjectBuilder.append(nameEnv).append(" Backup Problem");
+
 		if (UtilImpl.SUPPORT_EMAIL_ADDRESS != null) {
-			EXT.sendMail(new Mail().from(UtilImpl.SMTP_SENDER)
+			EXT.getMailService()
+					.sendMail(new Mail().from(UtilImpl.SMTP_SENDER)
 									.addTo(UtilImpl.SUPPORT_EMAIL_ADDRESS)
-									.subject("Problems with recent backup.")
+									.subject(subjectBuilder.toString())
 									.body(body));
 		}
 		else {
 			String trace = "Could not send a backup problem email as there is not a support email address defined - " + body;
 			jobLog.add(trace);
-			Util.LOGGER.info(trace);
+			SLOGGER.info(trace);
 		}
 	}
 
 	/**
 	 * Fetch sensitivity level, calculated from ordinal value of {@link SensitivityType} selected in UI.
-	 * 
+	 *
 	 * Returns 0 if no sensitivity level is selected.
-	 * 
+	 *
 	 * @param bean DataMaintenance bean
+	 * @return the sensitivity level ordinal
 	 */
 	private static int getSensitivityLevel(Bean bean) {
 		if (bean instanceof DataMaintenance dataMaintenance) {
@@ -531,8 +597,9 @@ public class BackupJob extends CancellableJob {
 	
 	/**
 	 * Fetch 'include content' value selected in UI.
-	 * 
+	 *
 	 * @param bean DataMaintenance bean
+	 * @return true if content should be included
 	 */
 	private static boolean getIncludeContent(Bean bean) {
 		if (bean instanceof DataMaintenance dataMaintenance) {
@@ -545,8 +612,9 @@ public class BackupJob extends CancellableJob {
 	
 	/**
 	 * Fetch 'include audits' value selected in UI.
-	 * 
+	 *
 	 * @param bean DataMaintenance bean
+	 * @return true if audit log should be included
 	 */
 	private static boolean getIncludeAuditLog(Bean bean) {
 		if (bean instanceof DataMaintenance dataMaintenance) {

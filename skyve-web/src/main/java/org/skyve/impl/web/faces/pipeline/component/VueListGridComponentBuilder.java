@@ -1,5 +1,8 @@
 package org.skyve.impl.web.faces.pipeline.component;
 
+import static java.lang.Boolean.FALSE;
+import static java.lang.Boolean.TRUE;
+
 import java.util.List;
 import java.util.function.UnaryOperator;
 
@@ -22,21 +25,25 @@ import jakarta.faces.component.html.HtmlPanelGroup;
 
 public class VueListGridComponentBuilder extends NoOpComponentBuilder {
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public UIComponent listGrid(UIComponent component,
 									String moduleName,
-									String modelDocumentName,
+									String documentName,
 									String modelName,
 									String uxui,
 									ListModel<Bean> model,
 									Document owningDocument,
-									String title,
 									ListGrid grid,
+									String stickyHeaderAnchorSelector,
 									boolean aggregateQuery) {
 		if (component != null) {
 			return component;
 		}
 
 		Document drivingDocument = model.getDrivingDocument();
+		String drivingModuleName = drivingDocument.getOwningModuleName();
+		String drivingDocumentName = drivingDocument.getName();
+
 		User user = CORE.getUser();
 		boolean canCreateDocument = user.canCreateDocument(drivingDocument);
 		
@@ -46,38 +53,16 @@ public class VueListGridComponentBuilder extends NoOpComponentBuilder {
 		String id = result.getId();
 		List<UIComponent> children = result.getChildren();
 
-		String finalModuleName = null;
-		String finalDocumentName = null;
 		String queryName = grid.getQueryName();
-		String finalModelName = null;
-		String contextId = null;
-		boolean showAdd = canCreateDocument && (! aggregateQuery) && (! Boolean.FALSE.equals(grid.getShowAdd()));
-		boolean showZoom = (! aggregateQuery) && (! Boolean.FALSE.equals(grid.getShowZoom()));
-		boolean showFilter = (! aggregateQuery) && (! Boolean.FALSE.equals(grid.getShowFilter()));
-		boolean showSummary = (! aggregateQuery) && (! Boolean.FALSE.equals(grid.getShowSummary()));
-		boolean showSnap = (! Boolean.FALSE.equals(grid.getShowSnap()));
+		String owningDocumentName = (documentName == null) ? drivingDocumentName : documentName;
+		// For a model we need the model name defined - finalModelname
+		String finalModelName = (queryName == null) ? modelName : null;
+		boolean showAdd = canCreateDocument && (! aggregateQuery) && (! FALSE.equals(grid.getShowAdd()));
+		boolean showZoom = (! aggregateQuery) && (! FALSE.equals(grid.getShowZoom()));
+		boolean showFilter = (! aggregateQuery) && (! FALSE.equals(grid.getShowFilter()));
+		boolean showSummary = (! aggregateQuery) && (! FALSE.equals(grid.getShowSummary()));
+		boolean showSnap = (! FALSE.equals(grid.getShowSnap()));
 		String selectedRemoteCommand = null;
-
-		final Document docToUse;
-
-		// Only set one of "query" or "model", preferring query
-		if (queryName != null) {
-			docToUse = model.getDrivingDocument();
-		}
-		else {
-			finalModelName = modelName;
-			docToUse = owningDocument;
-		}
-
-		finalModuleName = docToUse.getOwningModuleName();
-		finalDocumentName = docToUse.getName();
-
-		if (managedBean != null) {
-			WebContext webContext = managedBean.getWebContext();
-			if (webContext != null) {
-				contextId = webContext.getWebId();
-			}
-		}
 
 		String selectedIdBinding = grid.getSelectedIdBinding();
 		if (selectedIdBinding != null) {
@@ -110,12 +95,23 @@ public class VueListGridComponentBuilder extends NoOpComponentBuilder {
 			children.add(selectedCommand);
 		}
 
+		// Determine the web Id
+		String contextId = null;
+		if (managedBean != null) {
+			WebContext webContext = managedBean.getWebContext();
+			if (webContext != null) {
+				contextId = webContext.getWebId();
+			}
+		}
+
 		// TODO edited
 		// TODO deleted
 
 		VueListGridScript script = new VueListGridScript(id,
-															finalModuleName,
-															finalDocumentName,
+															moduleName,
+															owningDocumentName,
+															drivingModuleName,
+															drivingDocumentName,
 															queryName,
 															finalModelName,
 															contextId,
@@ -124,7 +120,8 @@ public class VueListGridComponentBuilder extends NoOpComponentBuilder {
 															showFilter,
 															showSummary,
 															showSnap,
-															selectedRemoteCommand);
+															selectedRemoteCommand,
+															stickyHeaderAnchorSelector);
 		children.add(script);
 
 		return result;
@@ -140,7 +137,7 @@ public class VueListGridComponentBuilder extends NoOpComponentBuilder {
 	private MethodExpression createSelectedExpression(String selectedIdBinding, String actionName, String modelName) {
 		// Note source should only be defined when this is a rerender
 		String source = null;
-		if (Boolean.TRUE.toString().equals(actionName) || Boolean.FALSE.toString().equals(actionName)) {
+		if (TRUE.toString().equals(actionName) || FALSE.toString().equals(actionName)) {
 			source = modelName;
 		}
 

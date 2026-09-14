@@ -14,15 +14,14 @@ import org.skyve.domain.PersistentBean;
 import org.skyve.impl.metadata.customer.CustomerImpl;
 import org.skyve.impl.metadata.customer.ExportedReference;
 import org.skyve.metadata.model.Persistent;
-import org.skyve.metadata.model.Persistent.ExtensionStrategy;
 import org.skyve.metadata.model.document.Collection.CollectionType;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.model.document.Reference.ReferenceType;
 import org.skyve.metadata.module.Module;
 import org.skyve.persistence.SQL;
-import org.skyve.impl.util.ExportedReferenceVisitor;
+import org.skyve.util.logging.Category;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 /**
  * Provide a depth-first traversal of references as defined in the skyve metadata.
@@ -39,20 +38,25 @@ import org.slf4j.LoggerFactory;
  * The Dereferencer convenience class does just this.
  */
 public abstract class ExportedReferenceVisitor {
-	public void visit(Bean bean)
-	throws Exception {
+
+    private static final Logger QUERY_LOGGER = Category.QUERY.logger();
+
+    private static final String UPDATE_SQL = "update ";
+	private static final String SET_SQL = " set ";
+	private static final String WHERE_SQL = " where ";
+	private static final String PARAMETER_EQUALS_SQL = " = :";
+
+	public void visit(Bean bean) {
 		CustomerImpl c = (CustomerImpl) CORE.getUser().getCustomer();
 		visit(c, c.getModule(bean.getBizModule()).getDocument(c, bean.getBizDocument()), bean);
 	}
 	
-	public void visit(Document document, Bean bean)
-	throws Exception {
+	public void visit(Document document, Bean bean) {
 		CustomerImpl c = (CustomerImpl) CORE.getUser().getCustomer();
 		visit(c, document, bean);
 	}
 
-	private void visit(final CustomerImpl customer, Document document, Bean bean) 
-	throws Exception {
+	private void visit(final CustomerImpl customer, Document document, Bean bean) {
 		final Set<String> bizIdsVisited = new TreeSet<>();
 		
 		new CascadeDeleteBeanVisitor() {
@@ -70,8 +74,7 @@ public abstract class ExportedReferenceVisitor {
 							Document document, 
 							String bizId, 
 							Set<String> documentsVisited,
-							Set<String> bizIdsVisited)
-	throws Exception {
+							Set<String> bizIdsVisited) {
 		if (bizIdsVisited.contains(bizId)) {
 			return;
 		}
@@ -123,10 +126,9 @@ public abstract class ExportedReferenceVisitor {
 									Document document,
 									String bizId,
 									ExportedReference ref,
-									Document referenceDocument)
-	throws Exception {
+									Document referenceDocument) {
 		Persistent referencePersistent = referenceDocument.getPersistent();
-		if ((referencePersistent != null) && ExtensionStrategy.mapped.equals(referencePersistent.getStrategy())) {
+		if ((referencePersistent != null) && referencePersistent.isPolymorphicallyMapped()) {
 			// Find all implementations below the mapped and check these instead
 			Set<Document> derivations = new HashSet<>();
 			populateImmediateMapImplementingDerivations(customer, referenceDocument, derivations);
@@ -168,8 +170,7 @@ public abstract class ExportedReferenceVisitor {
 	protected abstract void acceptReference(Document document,
 												String bizId,
 												ExportedReference exportedReference,
-												Document referenceDocument)
-	throws Exception;
+												Document referenceDocument);
 
 	/**
 	 * Process the parent reference.
@@ -181,12 +182,11 @@ public abstract class ExportedReferenceVisitor {
 	 */
 	protected abstract void acceptParent(Document document,
 											String bizId,
-											Document parentDocument)
-	throws Exception;
+											Document parentDocument);
 	
 	public static final class Dereferencer extends ExportedReferenceVisitor {
 		
-		private static final Logger logger = LoggerFactory.getLogger(Dereferencer.class);
+		private static final Logger logger = SkyveLoggerFactory.getLogger(Dereferencer.class);
 		
 		// Replace any mandatory references to be nulled out with this value
 		// module.Document -> bizId
@@ -221,11 +221,11 @@ public abstract class ExportedReferenceVisitor {
 		}
 
 		@Override
+		@SuppressWarnings("java:S3776") // Complexity OK
 		protected void acceptReference(Document document,
 										String bizId,
 										ExportedReference exportedReference, 
-										Document referenceDocument)
-		throws Exception {
+										Document referenceDocument) {
 			// This thing processes aggregated and composed associations
 			// It doesn't really matter if we unlink the object graph we are traversing
 			// as hibernate just issues the SQL based on the object in memory.
@@ -240,16 +240,16 @@ public abstract class ExportedReferenceVisitor {
 				if (! CollectionType.child.equals(referenceType)) {
 					StringBuilder statement = new StringBuilder(64);
 					if ((newBizId != null) && (exportedReference.isRequired())) {
-						statement.append("update ");
+						statement.append(UPDATE_SQL);
 						@SuppressWarnings("null") // tested early in CascadeDeleteBeanVisitor
 						String persistentIdentifier = referenceDocument.getPersistent().getPersistentIdentifier();
 						statement.append(persistentIdentifier);
 						statement.append('_').append(exportedReference.getReferenceFieldName());
-						statement.append(" set ").append(PersistentBean.OWNER_COLUMN_NAME);
-						statement.append(" = :").append(PersistentBean.OWNER_COLUMN_NAME);
-						statement.append(" where ").append(PersistentBean.ELEMENT_COLUMN_NAME);
-						statement.append(" = :").append(Bean.DOCUMENT_ID);
-						if (UtilImpl.QUERY_TRACE) UtilImpl.LOGGER.info(statement.toString());
+						statement.append(SET_SQL).append(PersistentBean.OWNER_COLUMN_NAME);
+						statement.append(PARAMETER_EQUALS_SQL).append(PersistentBean.OWNER_COLUMN_NAME);
+						statement.append(WHERE_SQL).append(PersistentBean.ELEMENT_COLUMN_NAME);
+						statement.append(PARAMETER_EQUALS_SQL).append(Bean.DOCUMENT_ID);
+						if (UtilImpl.QUERY_TRACE) QUERY_LOGGER.info(statement.toString());
 						logger.debug(statement.toString());
 						SQL sql = CORE.getPersistence().newSQL(statement.toString());
 						sql.putParameter(Bean.DOCUMENT_ID, bizId, false);
@@ -262,8 +262,8 @@ public abstract class ExportedReferenceVisitor {
 						String persistentIdentifier = referenceDocument.getPersistent().getPersistentIdentifier();
 						statement.append(persistentIdentifier);
 						statement.append('_').append(exportedReference.getReferenceFieldName());
-						statement.append(" where ").append(PersistentBean.ELEMENT_COLUMN_NAME).append(" = :").append(Bean.DOCUMENT_ID);
-						if (UtilImpl.QUERY_TRACE) UtilImpl.LOGGER.info(statement.toString());
+						statement.append(WHERE_SQL).append(PersistentBean.ELEMENT_COLUMN_NAME).append(PARAMETER_EQUALS_SQL).append(Bean.DOCUMENT_ID);
+						if (UtilImpl.QUERY_TRACE) QUERY_LOGGER.info(statement.toString());
 						logger.debug(statement.toString());
 						CORE.getPersistence().newSQL(statement.toString()).putParameter(Bean.DOCUMENT_ID, bizId, false).execute();
 					}
@@ -274,10 +274,10 @@ public abstract class ExportedReferenceVisitor {
 				StringBuilder statement = new StringBuilder(64);
 				@SuppressWarnings("null") // tested early in CascadeDeleteBeanVisitor
 				String persistentIdentifier = referenceDocument.getPersistent().getPersistentIdentifier();
-				statement.append("update ").append(persistentIdentifier);
-				statement.append(" set ").append(referenceFieldName).append("_id = :newBizId");
-				statement.append(" where ").append(referenceFieldName).append("_id = :").append(Bean.DOCUMENT_ID);
-				if (UtilImpl.QUERY_TRACE) UtilImpl.LOGGER.info(statement.toString());
+				statement.append(UPDATE_SQL).append(persistentIdentifier);
+				statement.append(SET_SQL).append(referenceFieldName).append("_id = :newBizId");
+				statement.append(WHERE_SQL).append(referenceFieldName).append("_id = :").append(Bean.DOCUMENT_ID);
+				if (UtilImpl.QUERY_TRACE) QUERY_LOGGER.info(statement.toString());
 				logger.debug(statement.toString());
 				SQL sql = CORE.getPersistence().newSQL(statement.toString());
 				sql.putParameter(Bean.DOCUMENT_ID, bizId, false);
@@ -289,18 +289,17 @@ public abstract class ExportedReferenceVisitor {
 		@Override
 		protected void acceptParent(Document document,
 										String bizId,
-										Document parentDocument)
-		throws Exception {
+										Document parentDocument) {
 			if (document.equals(parentDocument)) { // hierarchical
 				String newBizId = newBizIds.get(parentDocument.getOwningModuleName() + '.' + parentDocument.getName());
 
 				StringBuilder statement = new StringBuilder(64);
 				@SuppressWarnings("null") // tested early in CascadeDeleteBeanVisitor if hierarchical
 				String persistentIdentifier = document.getPersistent().getPersistentIdentifier();
-				statement.append("update ").append(persistentIdentifier);
-				statement.append(" set ").append(HierarchicalBean.PARENT_ID).append(" = :newBizId");
-				statement.append(" where ").append(HierarchicalBean.PARENT_ID).append(" = :").append(Bean.DOCUMENT_ID);
-				if (UtilImpl.QUERY_TRACE) UtilImpl.LOGGER.info(statement.toString());
+				statement.append(UPDATE_SQL).append(persistentIdentifier);
+				statement.append(SET_SQL).append(HierarchicalBean.PARENT_ID).append(" = :newBizId");
+				statement.append(WHERE_SQL).append(HierarchicalBean.PARENT_ID).append(PARAMETER_EQUALS_SQL).append(Bean.DOCUMENT_ID);
+				if (UtilImpl.QUERY_TRACE) QUERY_LOGGER.info(statement.toString());
 				logger.debug(statement.toString());
 				SQL sql = CORE.getPersistence().newSQL(statement.toString());
 				sql.putParameter(Bean.DOCUMENT_ID, bizId, false);

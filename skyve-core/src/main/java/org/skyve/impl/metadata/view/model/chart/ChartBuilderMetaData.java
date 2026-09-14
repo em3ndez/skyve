@@ -1,6 +1,7 @@
 package org.skyve.impl.metadata.view.model.chart;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 import org.skyve.impl.metadata.view.model.ModelMetaData;
@@ -10,7 +11,6 @@ import org.skyve.metadata.MetaDataException;
 import org.skyve.metadata.view.model.chart.Bucket;
 import org.skyve.persistence.DocumentQuery.AggregateFunction;
 import org.skyve.util.JSON;
-import org.skyve.util.Util;
 
 import jakarta.xml.bind.annotation.XmlAttribute;
 import jakarta.xml.bind.annotation.XmlElement;
@@ -20,6 +20,16 @@ import jakarta.xml.bind.annotation.XmlRootElement;
 import jakarta.xml.bind.annotation.XmlTransient;
 import jakarta.xml.bind.annotation.XmlType;
 
+/**
+ * JAXB root descriptor for a chart model definition used by the
+ * {@link org.skyve.impl.metadata.view.widget.Chart} widget.
+ *
+ * <p>Declares the data model name, chart type, bucket strategy, optional
+ * ordering/top selection, and other model parameters used to generate chart
+ * series at runtime.
+ *
+ * <p>Threading: not thread-safe.  Read-only after JAXB unmarshalling.
+ */
 @XmlRootElement(namespace = XMLMetaData.VIEW_NAMESPACE)
 @XmlType(namespace = XMLMetaData.VIEW_NAMESPACE,
 			propOrder = {"title",
@@ -58,9 +68,10 @@ public class ChartBuilderMetaData implements ModelMetaData {
 	public String getModelName() {
 		if (modelName == null) {
 			try {
+		    	@SuppressWarnings("java:S4790") // Just to make a unique name within the character limit - not for security purposes
 				final MessageDigest md = MessageDigest.getInstance("MD5");
 				String hash = JSON.marshall(this);
-				md.update(hash.getBytes(Util.UTF8));
+				md.update(hash.getBytes(StandardCharsets.UTF_8));
 				modelName = "M" + new BigInteger(1, md.digest()).toString(36);
 			}
 			catch (Exception e) {
@@ -130,8 +141,8 @@ public class ChartBuilderMetaData implements ModelMetaData {
 						@XmlElementRef(type = TextStartsWithBucketMetaData.class)})
 	public void setCategoryBucket(Bucket categoryBucket) {
 		this.categoryBucket = categoryBucket;
-		if (categoryBucket instanceof NumericRangeBucketMetaData) {
-			((NumericRangeBucketMetaData) categoryBucket).convert();
+		if (categoryBucket instanceof NumericRangeBucketMetaData range) {
+			range.convert();
 		}
 	}
 

@@ -16,18 +16,34 @@ import jakarta.xml.bind.annotation.XmlRootElement;
 import jakarta.xml.bind.annotation.XmlType;
 import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 
+/**
+ * JAXB-annotated descriptor for a {@code <query>} metadata query in a module.
+ *
+ * <p>Defines a structured query over a named document with optional polymorphic
+ * flag, aggregation mode, FROM clause override, filter, grouping, ordering, and
+ * an ordered list of column descriptors.  Converted to a runtime
+ * {@link org.skyve.metadata.module.query.MetaDataQueryDefinition} during
+ * repository bootstrap.
+ *
+ * <p>Threading: not thread-safe.  Read-only after JAXB unmarshalling.
+ *
+ * @see QueryDefinitionMetaData
+ * @see MetaDataQueryColumnMetaData
+ */
 @XmlRootElement(namespace = XMLMetaData.MODULE_NAMESPACE, name = "query")
 @XmlType(namespace = XMLMetaData.MODULE_NAMESPACE, 
 			name = "query",
-			propOrder = {"documentName", "polymorphic", "aggregate", "from", "filter", "columns"})
-public class MetaDataQueryMetaData extends QueryMetaData {
-	private static final long serialVersionUID = -7717015766195112054L;
+			propOrder = {"documentName", "polymorphic", "aggregate", "from", "filter", "grouping", "ordering", "columns"})
+public class MetaDataQueryMetaData extends QueryDefinitionMetaData {
+	private static final long serialVersionUID = -206376280538538040L;
 
 	private String documentName;
 	private Boolean polymorphic;
 	private Boolean aggregate;
 	private String from;
 	private String filter;
+	private String grouping;
+	private String ordering;
 	private List<MetaDataQueryColumnMetaData> columns = new ArrayList<>();
 
 	public String getDocumentName() {
@@ -75,6 +91,26 @@ public class MetaDataQueryMetaData extends QueryMetaData {
 	@XmlJavaTypeAdapter(CDATAAdapter.class)
 	public void setFilter(String filter) {
 		this.filter =  UtilImpl.processStringValue(filter);
+	}
+
+	public String getGrouping() {
+		return grouping;
+	}
+
+	@XmlElement(namespace = XMLMetaData.MODULE_NAMESPACE)
+	@XmlJavaTypeAdapter(CDATAAdapter.class)
+	public void setGrouping(String grouping) {
+		this.grouping =  UtilImpl.processStringValue(grouping);
+	}
+
+	public String getOrdering() {
+		return ordering;
+	}
+
+	@XmlElement(namespace = XMLMetaData.MODULE_NAMESPACE)
+	@XmlJavaTypeAdapter(CDATAAdapter.class)
+	public void setOrdering(String ordering) {
+		this.ordering =  UtilImpl.processStringValue(ordering);
 	}
 
 	@XmlElementWrapper(namespace = XMLMetaData.MODULE_NAMESPACE, name = "columns")

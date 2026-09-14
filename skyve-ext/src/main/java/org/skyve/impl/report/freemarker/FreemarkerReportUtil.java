@@ -9,7 +9,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.StringWriter;
-import java.nio.charset.Charset;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
@@ -20,6 +21,8 @@ import java.util.Map;
 import javax.annotation.ParametersAreNonnullByDefault;
 
 import org.apache.commons.beanutils.DynaBean;
+import org.jsoup.Jsoup;
+import org.jsoup.helper.W3CDom;
 import org.skyve.CORE;
 import org.skyve.content.MimeType;
 import org.skyve.domain.Bean;
@@ -38,13 +41,13 @@ import org.skyve.metadata.user.DocumentPermissionScope;
 import org.skyve.persistence.DocumentQuery;
 import org.skyve.report.ReportFormat;
 import org.skyve.util.Util;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.xhtmlrenderer.pdf.ITextOutputDevice;
 import org.xhtmlrenderer.pdf.ITextRenderer;
 import org.xhtmlrenderer.pdf.ITextUserAgent;
-import org.xhtmlrenderer.resource.XMLResource;
-import org.xml.sax.InputSource;
 
 import com.lowagie.text.DocumentException;
 import com.lowagie.text.pdf.BaseFont;
@@ -58,12 +61,20 @@ import freemarker.cache.StringTemplateLoader;
 import freemarker.cache.TemplateLoader;
 import freemarker.core.HTMLOutputFormat;
 import freemarker.core.TemplateConfiguration;
+import freemarker.core.TemplateClassResolver;
 import freemarker.template.Configuration;
 import freemarker.template.Template;
 import freemarker.template.TemplateException;
 import freemarker.template.TemplateExceptionHandler;
+import freemarker.template.TemplateModel;
+import jakarta.annotation.Nonnull;
 
+/**
+ * Central utility for executing FreeMarker report templates and rendering PDF output.
+ */
 public final class FreemarkerReportUtil {
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(FreemarkerReportUtil.class);
+
 	private static Configuration cfg;
 	private static PathMatchingResourcePatternResolver resolver;
 	private static StringTemplateLoader strl;
@@ -72,11 +83,20 @@ public final class FreemarkerReportUtil {
 		// disallow instantiation
 	}
 
+	/**
+	 * Initializes FreeMarker configuration, template loaders, and shared directives.
+	 */
 	public static void init() {
 		// Create your Configuration instance, and specify if up to what FreeMarker
 		// version (here 2.3.29) do you want to apply the fixes that are not 100%
 		// backward-compatible. See the Configuration JavaDoc for details.
 		cfg = new Configuration(Configuration.VERSION_2_3_29);
+
+		// Security: restrict the ?new built-in so attacker-controlled report templates
+		// (admin.ReportTemplate documents, editable by the BasicUser role) cannot
+		// instantiate arbitrary classes such as freemarker.template.utility.Execute
+		// and achieve remote code execution.
+		cfg.setNewBuiltinClassResolver(TemplateClassResolver.ALLOWS_NOTHING_RESOLVER);
 
 		// Specify the source where the template files come from
 		ClassLoader cl = Thread.currentThread().getContextClassLoader();
@@ -97,7 +117,7 @@ public final class FreemarkerReportUtil {
 
 		// Set the preferred charset template files are stored in. UTF-8 is
 		// a good choice in most applications:
-		cfg.setDefaultEncoding("UTF-8");
+		cfg.setDefaultEncoding(StandardCharsets.UTF_8.name());
 
 		// Sets how errors will appear.
 		// During web page *development* TemplateExceptionHandler.HTML_DEBUG_HANDLER is better.
@@ -152,6 +172,16 @@ public final class FreemarkerReportUtil {
 	 */
 	public static void addTemplate(final String templateName, final String templateMarkup) {
 		strl.putTemplate(templateName, templateMarkup);
+	}
+
+	/**
+	 * Adds a new directive to the named TemplateModels already defined in the Freemarker configuration.
+	 * 
+	 * @param directiveName The name of the directive, e.g. <code>image</code>
+	 * @param directive The TemplateModel directive instantiated implementation.
+	 */
+	public static void addDirective(@Nonnull final String directiveName, @Nonnull final TemplateModel directive) {
+		cfg.setSharedVariable(directiveName, directive);
 	}
 
 	/**
@@ -266,7 +296,7 @@ public final class FreemarkerReportUtil {
 		final String reportOutput = runReport(reportName, reportParameters);
 
 		// convert merged report output from String to an InputStream
-		byte[] content = reportOutput.getBytes(Util.UTF8);
+		byte[] content = reportOutput.getBytes(StandardCharsets.UTF_8);
 
 		// if CSV, return the stream
 		if (format == ReportFormat.csv) {
@@ -310,7 +340,7 @@ public final class FreemarkerReportUtil {
 
 		loadFonts(renderer);
 
-		org.w3c.dom.Document doc = XMLResource.load(in).getDocument();
+		org.w3c.dom.Document doc = html5ParseDocument(in);
 
 		renderer.createPDF(doc, outputStream);
 	}
@@ -323,8 +353,8 @@ public final class FreemarkerReportUtil {
 	 * @throws Exception
 	 */
 	public static void generatePDFFromHTML(String url, File outputFile)
-	throws Exception {
-		try (OutputStream os = new FileOutputStream(outputFile)) {
+			throws Exception {
+		try (OutputStream os = new FileOutputStream(outputFile); InputStream in = new URL(url).openStream()) {
 			ITextRenderer renderer = new ITextRenderer();
 			ResourceLoaderUserAgent callback = new ResourceLoaderUserAgent(renderer.getOutputDevice(),
 					renderer.getSharedContext().getDotsPerPixel());
@@ -332,20 +362,52 @@ public final class FreemarkerReportUtil {
 
 			loadFonts(renderer);
 
-			org.w3c.dom.Document doc = XMLResource.load(new InputSource(url)).getDocument();
+			org.w3c.dom.Document doc = html5ParseDocument(in);
 
 			renderer.createPDF(doc, os);
 		}
 	}
+	
+	/**
+	 * Takes in an input stream and pases it through Jsoup so as to parse and clean up the html content.
+	 * @param in
+	 * @return a W3C Document
+	 * @throws IOException
+	 */
+	private static org.w3c.dom.Document html5ParseDocument(final InputStream in) throws IOException {
+		if (in == null) {
+			throw new IllegalArgumentException("InputStream cannot be null");
+		}
+		org.jsoup.nodes.Document doc;
 
+		doc = Jsoup.parse(in, StandardCharsets.UTF_8.name(), "");
+
+		// Should reuse W3CDom instance if converting multiple documents.
+		return new W3CDom().fromJsoup(doc);
+	}
+
+	/**
+	 * Retrieves a document-scoped report template by module, document, and report name.
+	 *
+	 * @param bean Bean providing module/document context.
+	 * @param reportName Report template name.
+	 * @return The resolved FreeMarker template.
+	 * @throws Exception If template lookup fails.
+	 */
 	public static Template getBeanReport(final Bean bean, final String reportName)
 	throws Exception {
 		final String templateName = String.format("%s/%s/reports/%s", bean.getBizModule(), bean.getBizDocument(), reportName);
 		return cfg.getTemplate(templateName);
 	}
 
-	public static Template getTemplate(final String templateName)
-	throws Exception {
+	/**
+	 * Retrieves a template by name with customer permission scope applied.
+	 *
+	 * @param templateName Template name/path.
+	 * @return The resolved template.
+	 * @throws Exception If template lookup fails.
+	 */
+	public static Template getTemplate(final String templateName) {
 		return CORE.getPersistence().withDocumentPermissionScopes(DocumentPermissionScope.customer, p -> {
 			try {
 				return cfg.getTemplate(templateName);
@@ -381,6 +443,7 @@ public final class FreemarkerReportUtil {
 	 * @return A String with the merged output of the template with the report parameters
 	 * @throws Exception
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public static String runReport(final String reportName, final Map<String, Object> reportParameters)
 	throws Exception {
 		// get the report template with the specified name
@@ -461,7 +524,7 @@ public final class FreemarkerReportUtil {
 				template.process(reportParameters, sw);
 
 				// write the output string to an input stream
-				InputStream inputStream = new ByteArrayInputStream(sw.toString().getBytes(Charset.forName("UTF-8")));
+				InputStream inputStream = new ByteArrayInputStream(sw.toString().getBytes(StandardCharsets.UTF_8));
 
 				Path tempDir = Paths.get(Util.getContentDirectory(), "temp");
 				tempDir.toFile().mkdirs();
@@ -512,11 +575,10 @@ public final class FreemarkerReportUtil {
 						try {
 							File f = r.getFile();
 							renderer.getFontResolver().addFont(f.toString(), true);
-							Util.LOGGER.info("Loaded font for PDF: " + r.getFilename());
+							LOGGER.info("Loaded font for PDF: {}", r.getFilename());
 						}
 						catch (DocumentException | IOException e) {
-							Util.LOGGER.warning("Error loading font file: " + r.getFilename());
-							e.printStackTrace();
+							LOGGER.warn("Error loading font file: {}", r.getFilename(), e);
 						}
 					});
 
@@ -527,17 +589,16 @@ public final class FreemarkerReportUtil {
 							File f = r.getFile();
 							// required to load unicode fonts
 							renderer.getFontResolver().addFont(f.toString(), BaseFont.IDENTITY_H, true);
-							Util.LOGGER.info("Loaded unicode font for PDF: " + r.getFilename());
+							LOGGER.info("Loaded unicode font for PDF: {}", r.getFilename());
 						}
 						catch (DocumentException | IOException e) {
-							Util.LOGGER.warning("Error loading unicode font file: " + r.getFilename());
-							e.printStackTrace();
+							LOGGER.warn("Error loading unicode font file: {}", r.getFilename(), e);
 						}
 					});
 		}
 		catch (FileNotFoundException fnfe) {
 			// fonts directory not defined or empty
-			Util.LOGGER.warning("Error loading fonts for report: " + fnfe.getMessage());
+			LOGGER.warn("Error loading fonts for report: {}", fnfe.getMessage());
 		}
 	}
 
@@ -563,6 +624,10 @@ public final class FreemarkerReportUtil {
 		});
 	}
 
+	/**
+	 * User-agent bridge used by Flying Saucer PDF rendering to resolve external resources
+	 * (for example images and stylesheets) via the configured classpath and URL handling.
+	 */
 	@ParametersAreNonnullByDefault
 	private static class ResourceLoaderUserAgent extends ITextUserAgent {
 		private ResourceLoaderUserAgent(ITextOutputDevice outputDevice, int dotsPerPixel) {

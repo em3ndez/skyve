@@ -7,11 +7,16 @@ import org.pf4j.DefaultPluginManager;
 import org.pf4j.PluginManager;
 import org.pf4j.PluginWrapper;
 import org.skyve.addin.AddInManager;
-import org.skyve.impl.util.UtilImpl;
 import org.skyve.util.Util;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
+/**
+ * Manages PF4J-based add-in lifecycle and extension lookup for Skyve runtime.
+ */
 public class PF4JAddInManager implements AddInManager {
 	private static final PF4JAddInManager INSTANCE = new PF4JAddInManager();
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(PF4JAddInManager.class);
 
 	private PluginManager plugInManager;
 
@@ -19,30 +24,39 @@ public class PF4JAddInManager implements AddInManager {
 		// nothing to see here
 	}
 
+	/**
+	 * Returns the singleton instance.
+	 */
 	public static PF4JAddInManager get() {
 		return INSTANCE;
 	}
 	
+	/**
+	 * Loads and starts add-ins from the configured add-ins directory.
+	 */
 	@Override
 	public void startup() {
 		String addinsDirectory = Util.getAddinsDirectory();
-		UtilImpl.LOGGER.info("Add-Ins directory = " + addinsDirectory);
+		LOGGER.info("Add-Ins directory = {}", addinsDirectory);
 		plugInManager = new DefaultPluginManager(Paths.get(Util.getAddinsDirectory()));
 		plugInManager.loadPlugins();
 		plugInManager.startPlugins();
 		
 		for (PluginWrapper plugin : plugInManager.getStartedPlugins()) {
-			UtilImpl.LOGGER.info("Add-in " + plugin.getPluginId() + " : " + plugin.getDescriptor() + " has started.");
+			LOGGER.info("Add-in {} : {} has started.", plugin.getPluginId(), plugin.getDescriptor());
 			for (Class<?> extension : plugInManager.getExtensionClasses(plugin.getPluginId())) {
-				UtilImpl.LOGGER.info("    Extension " + extension + " has been registered.");
+				LOGGER.info("    Extension {} has been registered.", extension);
 			}
 		}
 
 		for (PluginWrapper plugin : plugInManager.getUnresolvedPlugins()) {
-			UtilImpl.LOGGER.warning("Add-in " + plugin.getPluginId() + " : " + plugin.getDescriptor() + " is unresolved.");
+			LOGGER.warn("Add-in {} : {} is unresolved.", plugin.getPluginId(), plugin.getDescriptor());
 		}
 	}
 	
+	/**
+	 * Performs shutdown.
+	 */
 	@Override
 	public void shutdown() {
 		if (plugInManager != null) {
@@ -51,6 +65,12 @@ public class PF4JAddInManager implements AddInManager {
 		}
 	}
 	
+	/**
+	 * Returns the first registered extension that matches the requested type.
+	 *
+	 * @param type The extension contract type.
+	 * @return The matching extension instance, or {@code null} when none are available.
+	 */
 	@Override
 	public <T extends Object> T getExtension(Class<T> type) {
 		if (plugInManager != null) {

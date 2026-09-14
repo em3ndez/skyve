@@ -14,6 +14,8 @@ import org.skyve.impl.domain.ChangeTrackingArrayList;
 
 /**
  * Users
+ * <br/>
+ * Non-persistent view for viewing the list of users in the system, as well as providing the ability for bulk user creation and invitation.
  * 
  * @navhas n userInvitationGroups 0..n Group
  * @stereotype "transient"
@@ -107,12 +109,6 @@ Provide a list separated by either comma or semicolon.
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof UserList) && 
-					this.getBizId().equals(((UserList) o).getBizId()));
 	}
 
 	/**

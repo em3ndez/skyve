@@ -17,14 +17,25 @@ import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.persistence.hibernate.AbstractHibernatePersistence;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.persistence.Persistence;
+import org.skyve.util.logging.Category;
+import org.slf4j.Logger;
 
+/**
+ * Utility class for emptying all Skyve customer tables in the correct order
+ * (observing foreign-key constraints) prior to a restore operation.
+ */
 public class Truncate {
+    private static final Logger COMMAND_LOGGER = Category.COMMAND.logger();
+
+    private static final String DELETE_FROM = "delete from ";
+
 	public static void truncate(String schemaName, boolean database, boolean content) 
 	throws Exception {
 		Collection<Table> tables = getTables(schemaName);
 		truncate(tables, CORE.getUser().getCustomerName(), database, content);
 	}
 	
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private static void truncate(Collection<Table> tables, 
 									String customerName, 
 									boolean database,
@@ -50,7 +61,7 @@ public class Truncate {
 					sql.setLength(sql.length() - 1); // remove the comma
 
 					BackupUtil.secureSQL(sql, table, customerName);
-					if (UtilImpl.COMMAND_TRACE) UtilImpl.LOGGER.info("unlink table " + table.persistentIdentifier);
+					if (UtilImpl.COMMAND_TRACE) COMMAND_LOGGER.info("unlink table {}", table.persistentIdentifier);
 					persistence.newSQL(sql.toString()).noTimeout().execute();
 					persistence.commit(false);
 					persistence.begin();
@@ -61,9 +72,9 @@ public class Truncate {
 			for (Table table : tables) {
 				if (table instanceof JoinTable) {
 					sql.setLength(0);
-					sql.append("delete from ").append(table.persistentIdentifier);
+					sql.append(DELETE_FROM).append(table.persistentIdentifier);
 					BackupUtil.secureSQL(sql, table, customerName);
-					if (UtilImpl.COMMAND_TRACE) UtilImpl.LOGGER.info("delete joining table " + table.persistentIdentifier);
+					if (UtilImpl.COMMAND_TRACE) COMMAND_LOGGER.info("delete joining table {}", table.persistentIdentifier);
 					persistence.newSQL(sql.toString()).noTimeout().execute();
 					persistence.commit(false);
 					persistence.begin();
@@ -79,9 +90,9 @@ public class Truncate {
 					continue;
 				}
 				sql.setLength(0);
-				sql.append("delete from ").append(table.persistentIdentifier);
+				sql.append(DELETE_FROM).append(table.persistentIdentifier);
 				BackupUtil.secureSQL(sql, table, customerName);
-				if (UtilImpl.COMMAND_TRACE) UtilImpl.LOGGER.info("delete extension table " + table.persistentIdentifier);
+				if (UtilImpl.COMMAND_TRACE) COMMAND_LOGGER.info("delete extension table {}", table.persistentIdentifier);
 				persistence.newSQL(sql.toString()).noTimeout().execute();
 				persistence.commit(false);
 				persistence.begin();
@@ -96,9 +107,9 @@ public class Truncate {
 					continue;
 				}
 				sql.setLength(0);
-				sql.append("delete from ").append(table.persistentIdentifier);
+				sql.append(DELETE_FROM).append(table.persistentIdentifier);
 				BackupUtil.secureSQL(sql, table, customerName);
-				if (UtilImpl.COMMAND_TRACE) UtilImpl.LOGGER.info("delete table " + table.persistentIdentifier);
+				if (UtilImpl.COMMAND_TRACE) COMMAND_LOGGER.info("delete table {}", table.persistentIdentifier);
 				persistence.newSQL(sql.toString()).noTimeout().execute();
 				persistence.commit(false);
 				persistence.begin();
@@ -107,7 +118,7 @@ public class Truncate {
 		
 		if (content) {
 			try (ContentManager cm = EXT.newContentManager()) {
-				cm.truncate(customerName);
+				cm.truncateIndexing(customerName);
 			}
 		}
 	}
@@ -115,7 +126,7 @@ public class Truncate {
 	// table types for getting table database metadata from JDBC
 	private static final String[] TABLE_TYPES = new String[] {"TABLE"};
 	
-	@SuppressWarnings("resource")
+	@SuppressWarnings({"resource", "java:S3776"}) // Complexity OK
 	private static Collection<Table> getTables(String schema)
 	throws SQLException {
 		Collection<Table> result = new ArrayList<>();
@@ -191,8 +202,7 @@ public class Truncate {
 			// Resolve join tables that have collections on joined extension persistence table strategies
 			// The owner Table name should be the ultimate base table (the one that has the bizCustomer column)
 			for (Table table : result) {
-				if (table instanceof JoinTable) {
-					JoinTable joinTable = (JoinTable) table;
+				if (table instanceof JoinTable joinTable) {
 					String ownerPersistentIdentifier = joinTable.ownerPersistentIdentifier;
 
 					// Determine if the owner table has the bizCustomer field or not

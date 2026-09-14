@@ -11,13 +11,15 @@ import org.skyve.content.BeanContent;
 import org.skyve.content.ContentManager;
 import org.skyve.impl.cache.StateUtil;
 import org.skyve.impl.util.UtilImpl;
-import org.skyve.util.Util;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 /**
- * This class is used to expose the content server via JDBC to another skyve server.
- * To use this, the contentManager property of the factories property 
- * in the JSON file should be set to this class name and a "CONTENT" data store should be defined
- * as a local in-memory database.
+ * Exposes content-manager operations as JDBC aliases for remote Skyve instances.
+ *
+ * <p>Configure this class as the active content manager on the serving node with a local
+ * in-memory {@code CONTENT} datastore. A remote node can then call these aliases via
+ * {@link JDBCRemoteContentManagerClient}.
  * 
  *  JSON
  *  		...
@@ -48,7 +50,7 @@ import org.skyve.util.Util;
  * 
  * 		<connection-url>jdbc:h2:mem:content;IGNORECASE=TRUE;DB_CLOSE_DELAY=-1</connection-url>
  * 
- * @author mike
+ * <p>Threading: static utility style; server lifecycle is process-scoped.
  */
 public class JDBCRemoteContentManagerServer {
 	static final String CONTENT_DATA_STORE_NAME = "CONTENT";
@@ -60,13 +62,25 @@ public class JDBCRemoteContentManagerServer {
 	static final String REMOVE_ATTACHMENT_FUNCTION_NAME = "REMOVE_ATTACHMENT";
 	static final String GOOGLE_SEARCH_FUNCTION_NAME = "GOOGLE_SEARCH";
 
+	private static final String DROP_ALIAS_SQL = "DROP ALIAS IF EXISTS %s";
+	private static final String CREATE_ALIAS_SQL = "CREATE ALIAS %s FOR \"%s\"";
+
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(JDBCRemoteContentManagerServer.class);
+
 	private static Server server = null;
 
-	// Disallow instantiation
+	/**
+	 * Prevents instantiation.
+	 */
 	private JDBCRemoteContentManagerServer() {
 		// nothing to do here
 	}
 	
+	/**
+	 * Starts the H2 TCP server and registers content-manager aliases.
+	 *
+	 * @throws IllegalStateException if startup or alias registration fails
+	 */
 	public static void startup() {
 		// Start TCP server
 		if (UtilImpl.CONTENT_JDBC_SERVER_ARGS == null) {
@@ -77,79 +91,82 @@ public class JDBCRemoteContentManagerServer {
 			server = Server.createTcpServer(UtilImpl.CONTENT_JDBC_SERVER_ARGS.split("\\s+")).start();
 			
 			// register the database functions
-			Util.LOGGER.info("REGISTER DATABASE FUNCTIONS FOR REMOTE CONTENT CALLS");
-			try (Connection c = EXT.getDataStoreConnection(UtilImpl.DATA_STORES.get(CONTENT_DATA_STORE_NAME))) {
-				try (CallableStatement s = c.prepareCall(String.format("DROP ALIAS IF EXISTS %s",
+			LOGGER.info("REGISTER DATABASE FUNCTIONS FOR REMOTE CONTENT CALLS");
+			try (Connection c = EXT.getDataStoreConnection(UtilImpl.DATA_STORES.get(CONTENT_DATA_STORE_NAME), false)) {
+				try (CallableStatement s = c.prepareCall(String.format(DROP_ALIAS_SQL,
 																		PUT_BEAN_FUNCTION_NAME))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("CREATE ALIAS %s FOR \"%s\"",
+				try (CallableStatement s = c.prepareCall(String.format(CREATE_ALIAS_SQL,
 																		PUT_BEAN_FUNCTION_NAME,
 																		"org.skyve.impl.content.jdbc.JDBCRemoteContentManagerServer.putBeanFunction"))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("DROP ALIAS IF EXISTS %s",
+				try (CallableStatement s = c.prepareCall(String.format(DROP_ALIAS_SQL,
 																		PUT_ATTACHMENT_FUNCTION_NAME))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("CREATE ALIAS %s FOR \"%s\"",
+				try (CallableStatement s = c.prepareCall(String.format(CREATE_ALIAS_SQL,
 																		PUT_ATTACHMENT_FUNCTION_NAME,
 																		"org.skyve.impl.content.jdbc.JDBCRemoteContentManagerServer.putAttachmentFunction"))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("DROP ALIAS IF EXISTS %s",
+				try (CallableStatement s = c.prepareCall(String.format(DROP_ALIAS_SQL,
 																		UPDATE_ATTACHMENT_FUNCTION_NAME))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("CREATE ALIAS %s FOR \"%s\"",
+				try (CallableStatement s = c.prepareCall(String.format(CREATE_ALIAS_SQL,
 																		UPDATE_ATTACHMENT_FUNCTION_NAME,
 																		"org.skyve.impl.content.jdbc.JDBCRemoteContentManagerServer.updateAttachmentFunction"))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("DROP ALIAS IF EXISTS %s",
+				try (CallableStatement s = c.prepareCall(String.format(DROP_ALIAS_SQL,
 																		GET_ATTACHMENT_FUNCTION_NAME))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("CREATE ALIAS %s FOR \"%s\"",
+				try (CallableStatement s = c.prepareCall(String.format(CREATE_ALIAS_SQL,
 																		GET_ATTACHMENT_FUNCTION_NAME,
 																		"org.skyve.impl.content.jdbc.JDBCRemoteContentManagerServer.getAttachmentFunction"))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("DROP ALIAS IF EXISTS %s",
+				try (CallableStatement s = c.prepareCall(String.format(DROP_ALIAS_SQL,
 																		REMOVE_BEAN_FUNCTION_NAME))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("CREATE ALIAS %s FOR \"%s\"",
+				try (CallableStatement s = c.prepareCall(String.format(CREATE_ALIAS_SQL,
 																		REMOVE_BEAN_FUNCTION_NAME,
 																		"org.skyve.impl.content.jdbc.JDBCRemoteContentManagerServer.removeBeanFunction"))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("DROP ALIAS IF EXISTS %s",
+				try (CallableStatement s = c.prepareCall(String.format(DROP_ALIAS_SQL,
 																		REMOVE_ATTACHMENT_FUNCTION_NAME))) {
 					s.execute();	
 				}
-				try (CallableStatement s = c.prepareCall(String.format("CREATE ALIAS %s FOR \"%s\"",
+				try (CallableStatement s = c.prepareCall(String.format(CREATE_ALIAS_SQL,
 																		REMOVE_ATTACHMENT_FUNCTION_NAME,
 																		"org.skyve.impl.content.jdbc.JDBCRemoteContentManagerServer.removeAttachmentFunction"))) {
 					s.execute();
 				}
-				try (CallableStatement s = c.prepareCall(String.format("DROP ALIAS IF EXISTS %s",
+				try (CallableStatement s = c.prepareCall(String.format(DROP_ALIAS_SQL,
 																		GOOGLE_SEARCH_FUNCTION_NAME))) {
 					s.execute();	
 				}
-				try (CallableStatement s = c.prepareCall(String.format("CREATE ALIAS %s FOR \"%s\"",
+				try (CallableStatement s = c.prepareCall(String.format(CREATE_ALIAS_SQL,
 																		GOOGLE_SEARCH_FUNCTION_NAME,
 																		"org.skyve.impl.content.jdbc.JDBCRemoteContentManagerServer.googleSearchFunction"))) {
 					s.execute();
 				}
 			}
-			Util.LOGGER.info("REGISTERED DATABASE FUNCTIONS FOR REMOTE CONTENT CALLS");
+			LOGGER.info("REGISTERED DATABASE FUNCTIONS FOR REMOTE CONTENT CALLS");
 		}
 		catch (SQLException e) {
 			throw new IllegalStateException("Could not startup JDBCRemoteContentManagerServer", e);
 		}
 	}
 
+	/**
+	 * Stops the H2 TCP server if it is running.
+	 */
 	public static void shutdown() {
 		// close the database if it wont automatically close
 		if (server != null) {
@@ -162,6 +179,12 @@ public class JDBCRemoteContentManagerServer {
 	 * Data functions
 	 */
 	
+	/**
+	 * Decodes and stores bean content from a remote caller.
+	 *
+	 * @param content base64 encoded serialized {@link BeanContent}
+	 * @throws Exception if decoding or storage fails
+	 */
 	public static void putBeanFunction(String content) throws Exception {
 		try (ContentManager cm = EXT.newContentManager()) {
 			cm.put((BeanContent) StateUtil.decode64(content));
@@ -169,11 +192,12 @@ public class JDBCRemoteContentManagerServer {
 	}
 	
 	/**
-	 * 
-	 * @param content The base64 serialized versions of the AttachmentContent to put.
-	 * @param index	whether to index of not
-	 * @return	The contentId.
-	 * @throws Exception
+	 * Decodes and stores attachment content from a remote caller.
+	 *
+	 * @param content base64 encoded serialized {@link AttachmentContent}
+	 * @param index whether textual indexing should be performed
+	 * @return the assigned content identifier
+	 * @throws Exception if decoding or storage fails
 	 */
 	public static String putAttachmentFunction(String content, boolean index) throws Exception {
 		try (ContentManager cm = EXT.newContentManager()) {
@@ -184,9 +208,10 @@ public class JDBCRemoteContentManagerServer {
 	}
 
 	/**
-	 * 
-	 * @param content The base64 serialized versions of the AttachmentContent to put.
-	 * @throws Exception
+	 * Decodes and updates existing attachment content from a remote caller.
+	 *
+	 * @param content base64 encoded serialized {@link AttachmentContent} update
+	 * @throws Exception if decoding or update fails
 	 */
 	public static void updateAttachmentFunction(String content) throws Exception {
 		try (ContentManager cm = EXT.newContentManager()) {
@@ -195,6 +220,13 @@ public class JDBCRemoteContentManagerServer {
 		}
 	}
 
+	/**
+	 * Retrieves and serializes attachment content for a remote caller.
+	 *
+	 * @param contentId the content identifier
+	 * @return base64 encoded serialized {@link AttachmentContent}, or {@code null} when absent
+	 * @throws Exception if retrieval or serialization fails
+	 */
 	public static String getAttachmentFunction(String contentId) throws Exception {
 		String result = null;
 		
@@ -208,18 +240,38 @@ public class JDBCRemoteContentManagerServer {
 		return result;
 	}
 
+	/**
+	 * Removes all bean-scoped indexed content for the supplied business identifier.
+	 *
+	 * @param bizId the business identifier
+	 * @throws Exception if removal fails
+	 */
 	public static void removeBeanFunction(String bizId) throws Exception {
 		try (ContentManager cm = EXT.newContentManager()) {
 			cm.removeBean(bizId);
 		}
 	}
 
+	/**
+	 * Removes an attachment content record by content identifier.
+	 *
+	 * @param contentId the content identifier
+	 * @throws Exception if removal fails
+	 */
 	public static void removeAttachmentFunction(String contentId) throws Exception {
 		try (ContentManager cm = EXT.newContentManager()) {
 			cm.removeAttachment(contentId);
 		}
 	}
 	
+	/**
+	 * Executes full-text search and serializes results for remote callers.
+	 *
+	 * @param search the search expression
+	 * @param maxResults maximum number of results to return
+	 * @return base64 encoded serialized search results
+	 * @throws Exception if query execution or serialization fails
+	 */
 	public static String googleSearchFunction(String search, int maxResults) throws Exception {
 		try (ContentManager cm = EXT.newContentManager()) {
 			return StateUtil.encode64(cm.google(search, maxResults));

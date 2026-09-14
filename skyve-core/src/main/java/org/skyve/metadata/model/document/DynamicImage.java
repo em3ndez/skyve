@@ -1,11 +1,15 @@
 package org.skyve.metadata.model.document;
 
 import java.awt.image.BufferedImage;
+import java.time.Duration;
 
 import org.skyve.content.MimeType;
 import org.skyve.domain.Bean;
 import org.skyve.metadata.MetaData;
 import org.skyve.metadata.user.User;
+
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 
 /**
  * Creates a dynamic image programmatically.
@@ -13,7 +17,7 @@ import org.skyve.metadata.user.User;
  */
 public interface DynamicImage<T extends Bean> extends MetaData {
 	/**
-	 * 
+	 * Produce a BufferedImage to send to the client.
 	 * @param bean
 	 * @param width
 	 * @param height
@@ -21,9 +25,14 @@ public interface DynamicImage<T extends Bean> extends MetaData {
 	 * @return
 	 * @throws Exception
 	 */
-	public BufferedImage getImage(T bean, int width, int height, User user) throws Exception;
+	public @Nonnull BufferedImage getImage(@Nonnull T bean, int width, int height, @Nonnull User user)
+	throws Exception;
 
-	public static enum ImageFormat {
+	/**
+	 * Defines the ImageFormat enumeration.
+	 */
+	@SuppressWarnings("java:S115") // Enum names are MIME/image format identifiers.
+	public enum ImageFormat {
 		png(MimeType.png) , jpeg(MimeType.jpeg), gif(MimeType.gif);
 
 		private MimeType mimeType;
@@ -32,6 +41,10 @@ public interface DynamicImage<T extends Bean> extends MetaData {
 			this.mimeType = mimeType;
 		}
 		
+		/**
+		 * Returns the mimeType.
+		 * @return the result
+		 */
 		public MimeType getMimeType() {
 			return mimeType;
 		}
@@ -46,12 +59,26 @@ public interface DynamicImage<T extends Bean> extends MetaData {
 	 * 
 	 * @return null for default (png)
 	 */
-	public ImageFormat getFormat();
+	default @Nullable ImageFormat getFormat() {
+		return null;
+	}
 
 	/**
 	 * Set to a number between 0.0 and 1.0.
 	 * 
 	 * @return null for default quality
 	 */
-	public Float getCompressionQuality();
+	default @Nullable Float getCompressionQuality() {
+		return null;
+	}
+	
+	/**
+	 * The duration of time to cache the image for or null for no caching.
+	 * The duration value is used to generate the number of millis to add to current time
+	 * for the cache header so certain Duration values are incompatible with this usage.
+	 * @return null for no caching
+	 */
+	default Duration getCacheTime() {
+		return null;
+	}
 }

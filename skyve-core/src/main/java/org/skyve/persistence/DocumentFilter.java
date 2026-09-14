@@ -1,671 +1,968 @@
 package org.skyve.persistence;
 
 import org.locationtech.jts.geom.Geometry;
+import org.skyve.domain.Bean;
+
+import jakarta.annotation.Nonnull;
 
 /**
- * 
+ * Fluent predicate builder for {@link DocumentQuery}.
+ *
+ * <p>Each {@code add*} method appends a condition that is ANDed into the query's WHERE
+ * clause by default. Sub-filters obtained via {@link DocumentQuery#newDocumentFilter()}
+ * can be composed using {@link #addAnd(DocumentFilter)} and {@link #addOr(DocumentFilter)}
+ * to express more complex boolean logic.
+ *
+ * <h2>Method naming conventions</h2>
+ * <ul>
+ *   <li>Methods accepting a {@code binding} parameter operate against the root entity alias
+ *       ({@link DocumentQuery#THIS_ALIAS}). The binding is a dot-separated Skyve attribute
+ *       path (e.g. {@code "address.suburb"}).
+ *   <li>Methods accepting an additional {@code entityAlias} parameter operate against a
+ *       specific entity alias introduced by a join on the driving query
+ *       (e.g. from {@link DocumentQuery#addInnerJoin(String, String)}).
+ *   <li>{@code NullOr} variants evaluate as <em>true</em> when the field value is SQL NULL
+ *       as well as when it satisfies the stated condition. Use these when {@code null} means
+ *       "not excluded" rather than "unknown".
+ * </ul>
+ *
+ * <h2>Spatial predicates</h2>
+ * <p>The geometry overloads ({@link #addDisjoint}, {@link #addIntersects},
+ * {@link #addTouches}, {@link #addCrosses}, {@link #addWithin}, {@link #addContains},
+ * {@link #addOverlaps}) implement the OGC Simple Features spatial relations and are
+ * translated to the appropriate database spatial functions at runtime. The target binding
+ * must refer to a geometry-typed attribute.
+ *
+ * <h2>Collection-size predicates</h2>
+ * <p>{@code addCollectionSize*} methods filter on the number of elements in a collection
+ * attribute. Useful for finding beans with empty or non-empty child collections without
+ * performing a subquery manually.
+ *
+ * <h2>Fluent chaining</h2>
+ * <p>All methods return {@code this} for fluent chaining:
+ * <pre>{@code
+ * query.getFilter()
+ *      .addEquals("status", Status.ACTIVE)
+ *      .addGreaterThanOrEqualTo("startDate", today)
+ *      .addNotNull("assignedTo");
+ * }</pre>
+ *
+ * @see DocumentQuery#getFilter()
+ * @see DocumentQuery#newDocumentFilter()
  */
 public interface DocumentFilter {
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds an equality filter: the value at {@code binding} must equal {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the value to compare against; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addEquals(String binding, Object operand);
+	@Nonnull DocumentFilter addEquals(@Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds an equality filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the value to compare against; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedEquals(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedEquals(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operands
+	 * Adds an IN filter: the value at {@code binding} must be one of the given operands.
+	 *
+	 * @param binding  the attribute binding path on the root entity; must not be {@code null}
+	 * @param operands the candidate values; an empty array matches nothing
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addIn(String binding, Object...operands);
+	@Nonnull DocumentFilter addIn(@Nonnull String binding, Object...operands);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operands
+	 * Adds an IN filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operands    the candidate values; an empty array matches nothing
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedIn(String entityAlias, String binding, Object...operands);
+	@Nonnull DocumentFilter addAliasedIn (@Nonnull String entityAlias, @Nonnull String binding, Object...operands);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operands
+	 * Adds a NOT IN filter: the value at {@code binding} must not be any of the given operands.
+	 *
+	 * @param binding  the attribute binding path on the root entity; must not be {@code null}
+	 * @param operands the excluded values; an empty array matches everything
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNotIn(String binding, Object... operands);
+	@Nonnull DocumentFilter addNotIn(@Nonnull String binding, Object... operands);
 
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operands
+	 * Adds a NOT IN filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operands    the excluded values; an empty array matches everything
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNotIn(String entityAlias, String binding, Object... operands);
+	@Nonnull DocumentFilter addAliasedNotIn(@Nonnull String entityAlias, @Nonnull String binding, Object... operands);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds an inequality filter: the value at {@code binding} must not equal {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the value to exclude; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNotEquals(String binding, Object operand);
+	@Nonnull DocumentFilter addNotEquals(@Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds an inequality filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the value to exclude; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNotEquals(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedNotEquals(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a greater-than filter: the value at {@code binding} must be strictly greater than {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the lower-exclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addGreaterThan(String binding, Object operand);
+	@Nonnull DocumentFilter addGreaterThan(@Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a greater-than filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the lower-exclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedGreaterThan(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedGreaterThan(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a greater-than-or-equal-to filter: the value at {@code binding} must be &ge; {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the lower-inclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addGreaterThanOrEqualTo(String binding, Object operand);
+	@Nonnull DocumentFilter addGreaterThanOrEqualTo(@Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a greater-than-or-equal-to filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the lower-inclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedGreaterThanOrEqualTo(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedGreaterThanOrEqualTo(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a less-than filter: the value at {@code binding} must be strictly less than {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the upper-exclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addLessThan(String binding, Object operand);
+	@Nonnull DocumentFilter addLessThan(@Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a less-than filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the upper-exclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedLessThan(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedLessThan(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a less-than-or-equal-to filter: the value at {@code binding} must be &le; {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the upper-inclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addLessThanOrEqualTo(String binding, Object operand);
+	@Nonnull DocumentFilter addLessThanOrEqualTo(@Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a less-than-or-equal-to filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the upper-inclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedLessThanOrEqualTo(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedLessThanOrEqualTo(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a LIKE filter using SQL LIKE syntax ({@code %} and {@code _} wildcards).
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the LIKE pattern (may include {@code %} and {@code _} wildcards); must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addLike(String binding, String operand);
+	@Nonnull DocumentFilter addLike(@Nonnull String binding, @Nonnull String operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a LIKE filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the LIKE pattern; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedLike(String entityAlias, String binding, String operand);
+	@Nonnull DocumentFilter addAliasedLike(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull String operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a NOT LIKE filter: the value at {@code binding} must not match the LIKE pattern.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the LIKE pattern to exclude (may include {@code %} and {@code _}); must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNotLike(String binding, String operand);
+	@Nonnull DocumentFilter addNotLike(@Nonnull String binding, @Nonnull String operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a NOT LIKE filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the LIKE pattern to exclude; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNotLike(String entityAlias, String binding, String operand);
+	@Nonnull DocumentFilter addAliasedNotLike(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull String operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds a geometric equality filter (OGC ST_Equals): the geometry at {@code binding} must
+	 * be topologically equal to {@code geometry}.
+	 *
+	 * @param binding  the attribute binding path to a geometry attribute; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addEquals(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addEquals(@Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds a geometric equality filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path to a geometry attribute; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedEquals(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedEquals(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Disjoint spatial filter: the geometry at {@code binding} must have no points
+	 * in common with {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addDisjoint(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addDisjoint(@Nonnull String binding, @Nonnull Geometry geometry);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Disjoint filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedDisjoint(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedDisjoint(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Intersects spatial filter: the geometry at {@code binding} must intersect
+	 * (share at least one point with) {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addIntersects(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addIntersects(@Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Intersects filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedIntersects(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedIntersects(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Touches spatial filter: the geometry at {@code binding} must touch
+	 * (share boundary points but not interior points with) {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addTouches(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addTouches(@Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Touches filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedTouches(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedTouches(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Crosses spatial filter: the geometry at {@code binding} must cross
+	 * (interiors share points but neither contains the other) {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addCrosses(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addCrosses(@Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Crosses filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedCrosses(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedCrosses(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Within spatial filter: the geometry at {@code binding} must be entirely
+	 * within {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addWithin(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addWithin(@Nonnull String binding, @Nonnull Geometry geometry);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Within filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedWithin(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedWithin(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Contains spatial filter: the geometry at {@code binding} must entirely
+	 * contain {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the geometry that must be contained; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addContains(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addContains(@Nonnull String binding, @Nonnull Geometry geometry);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Contains filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the geometry that must be contained; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedContains(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedContains(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Overlaps spatial filter: the geometry at {@code binding} must overlap
+	 * (have the same dimension and intersect but neither contain the other) {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addOverlaps(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addOverlaps(@Nonnull String binding, @Nonnull Geometry geometry);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds an ST_Overlaps filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedOverlaps(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedOverlaps(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant equality filter: passes when the value at {@code binding} is SQL NULL
+	 * or equals {@code operand}. Useful when {@code null} means "not set" rather than "unknown".
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the value to compare against; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrEquals(String binding, Object operand);
+	@Nonnull DocumentFilter addNullOrEquals(@Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant equality filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the value to compare against; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrEquals(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedNullOrEquals(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant inequality filter: passes when the value at {@code binding} is SQL NULL
+	 * or is not equal to {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the value to exclude; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrNotEquals(String binding, Object operand);
+	@Nonnull DocumentFilter addNullOrNotEquals(@Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant inequality filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the value to exclude; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrNotEquals(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedNullOrNotEquals(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant greater-than filter: passes when the value is NULL or &gt; {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the lower-exclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrGreaterThan(String binding, Object operand);
+	@Nonnull DocumentFilter addNullOrGreaterThan(@Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant greater-than filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the lower-exclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrGreaterThan(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedNullOrGreaterThan(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant greater-than-or-equal-to filter: passes when the value is NULL or &ge; {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the lower-inclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrGreaterThanOrEqualTo(String binding, Object operand);
+	@Nonnull DocumentFilter addNullOrGreaterThanOrEqualTo(@Nonnull String binding, @Nonnull Object operand);
+
+	/**
+	 * Adds a NULL-tolerant &ge; filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the lower-inclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addAliasedNullOrGreaterThanOrEqualTo(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
+
+	/**
+	 * Adds a NULL-tolerant less-than filter: passes when the value is NULL or &lt; {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the upper-exclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addNullOrLessThan(@Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant less-than filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the upper-exclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrGreaterThanOrEqualTo(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedNullOrLessThan(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant less-than-or-equal-to filter: passes when the value is NULL or &le; {@code operand}.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the upper-inclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrLessThan(String binding, Object operand);
+	@Nonnull DocumentFilter addNullOrLessThanOrEqualTo(@Nonnull String binding, @Nonnull Object operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant &le; filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the upper-inclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrLessThan(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedNullOrLessThanOrEqualTo(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant LIKE filter: passes when the value is NULL or matches the LIKE pattern.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the LIKE pattern; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrLessThanOrEqualTo(String binding, Object operand);
+	@Nonnull DocumentFilter addNullOrLike(@Nonnull String binding, @Nonnull String operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant LIKE filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the LIKE pattern; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrLessThanOrEqualTo(String entityAlias, String binding, Object operand);
+	@Nonnull DocumentFilter addAliasedNullOrLike(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull String operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant NOT LIKE filter: passes when the value is NULL or does not match the LIKE pattern.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the LIKE pattern to exclude; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrLike(String binding, String operand);
+	@Nonnull DocumentFilter addNullOrNotLike(@Nonnull String binding, @Nonnull String operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant NOT LIKE filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param operand     the LIKE pattern to exclude; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrLike(String entityAlias, String binding, String operand);
+	@Nonnull DocumentFilter addAliasedNullOrNotLike(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull String operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant geometric equality filter (ST_Equals): passes when the geometry is NULL
+	 * or is topologically equal to {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrNotLike(String binding, String operand);
+	@Nonnull DocumentFilter addNullOrEquals(@Nonnull String binding, @Nonnull Geometry geometry);
+
+	/**
+	 * Adds a NULL-tolerant ST_Equals filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addAliasedNullOrEquals(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
+
+	/**
+	 * Adds a NULL-tolerant ST_Disjoint filter: passes when the geometry is NULL or disjoint.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addNullOrDisjoint(@Nonnull String binding, @Nonnull Geometry geometry);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a NULL-tolerant ST_Disjoint filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrNotLike(String entityAlias, String binding, String operand);
+	@Nonnull DocumentFilter addAliasedNullOrDisjoint(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds a NULL-tolerant ST_Intersects filter: passes when the geometry is NULL or intersects.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrEquals(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addNullOrIntersects(@Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds a NULL-tolerant ST_Intersects filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrEquals(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedNullOrIntersects(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds a NULL-tolerant ST_Touches filter: passes when the geometry is NULL or touches.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrDisjoint(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addNullOrTouches(@Nonnull String binding, @Nonnull Geometry geometry);
+
+	/**
+	 * Adds a NULL-tolerant ST_Touches filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addAliasedNullOrTouches(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
+
+	/**
+	 * Adds a NULL-tolerant ST_Crosses filter: passes when the geometry is NULL or crosses.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addNullOrCrosses(@Nonnull String binding, @Nonnull Geometry geometry);
+
+	/**
+	 * Adds a NULL-tolerant ST_Crosses filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addAliasedNullOrCrosses(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
+
+	/**
+	 * Adds a NULL-tolerant ST_Within filter: passes when the geometry is NULL or is within
+	 * {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addNullOrWithin(@Nonnull String binding, @Nonnull Geometry geometry);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds a NULL-tolerant ST_Within filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrDisjoint(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedNullOrWithin(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds a NULL-tolerant ST_Contains filter: passes when the geometry is NULL or contains
+	 * {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the geometry to contain; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrIntersects(String binding, Geometry geometry);
-
-	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
-	 */
-	public DocumentFilter addAliasedNullOrIntersects(String entityAlias, String binding, Geometry geometry);
-
-	/**
-	 * 
-	 * @param binding
-	 * @param geometry
-	 */
-	public DocumentFilter addNullOrTouches(String binding, Geometry geometry);
-
-	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
-	 */
-	public DocumentFilter addAliasedNullOrTouches(String entityAlias, String binding, Geometry geometry);
-
-	/**
-	 * 
-	 * @param binding
-	 * @param geometry
-	 */
-	public DocumentFilter addNullOrCrosses(String binding, Geometry geometry);
-
-	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
-	 */
-	public DocumentFilter addAliasedNullOrCrosses(String entityAlias, String binding, Geometry geometry);
-
-	/**
-	 * 
-	 * @param binding
-	 * @param geometry
-	 */
-	public DocumentFilter addNullOrWithin(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addNullOrContains(@Nonnull String binding, @Nonnull Geometry geometry);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds a NULL-tolerant ST_Contains filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the geometry to contain; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrWithin(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedNullOrContains(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds a NULL-tolerant ST_Overlaps filter: passes when the geometry is NULL or overlaps
+	 * {@code geometry}.
+	 *
+	 * @param binding  the geometry attribute binding; must not be {@code null}
+	 * @param geometry the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrContains(String binding, Geometry geometry);
+	@Nonnull DocumentFilter addNullOrOverlaps(@Nonnull String binding, @Nonnull Geometry geometry);
+
+	/**
+	 * Adds a NULL-tolerant ST_Overlaps filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the geometry attribute binding; must not be {@code null}
+	 * @param geometry    the reference geometry; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addAliasedNullOrOverlaps(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Geometry geometry);
+
+	/**
+	 * Adds an IS NULL filter: the value at {@code binding} must be SQL NULL.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addNull(@Nonnull String binding);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
+	 * Adds an IS NULL filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNullOrContains(String entityAlias, String binding, Geometry geometry);
+	@Nonnull DocumentFilter addAliasedNull(@Nonnull String entityAlias, @Nonnull String binding);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param geometry
+	 * Adds an IS NOT NULL filter: the value at {@code binding} must not be SQL NULL.
+	 *
+	 * @param binding the attribute binding path on the root entity; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNullOrOverlaps(String binding, Geometry geometry);
-
-	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param geometry
-	 */
-	public DocumentFilter addAliasedNullOrOverlaps(String entityAlias, String binding, Geometry geometry);
-
-	/**
-	 * 
-	 * @param binding
-	 */
-	public DocumentFilter addNull(String binding);
+	@Nonnull DocumentFilter addNotNull(@Nonnull String binding);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
+	 * Adds an IS NOT NULL filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNull(String entityAlias, String binding);
+	@Nonnull DocumentFilter addAliasedNotNull(@Nonnull String entityAlias, @Nonnull String binding);
 
 	/**
-	 * 
-	 * @param binding
+	 * Adds a BETWEEN filter: the value at {@code binding} must be &ge; {@code minOperand}
+	 * and &le; {@code maxOperand}.
+	 *
+	 * @param binding    the attribute binding path on the root entity; must not be {@code null}
+	 * @param minOperand the lower inclusive bound; must not be {@code null}
+	 * @param maxOperand the upper inclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addNotNull(String binding);
+	@Nonnull DocumentFilter addBetween(@Nonnull String binding, @Nonnull Object minOperand, @Nonnull Object maxOperand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
+	 * Adds a BETWEEN filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the attribute binding path; must not be {@code null}
+	 * @param minOperand  the lower inclusive bound; must not be {@code null}
+	 * @param maxOperand  the upper inclusive bound; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedNotNull(String entityAlias, String binding);
+	@Nonnull DocumentFilter addAliasedBetween(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Object minOperand, @Nonnull Object maxOperand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param minOperand
-	 * @param maxOperand
+	 * Adds a collection-size equality filter: the number of elements in the collection at
+	 * {@code binding} must equal {@code operand}.
+	 *
+	 * @param binding the collection attribute binding path on the root entity; must not be {@code null}
+	 * @param operand the expected element count
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addBetween(String binding, Object minOperand, Object maxOperand);
+	@Nonnull DocumentFilter addCollectionSizeEquals(@Nonnull String binding, int operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param minOperand
-	 * @param maxOperand
+	 * Adds a collection-size equality filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the collection attribute binding path; must not be {@code null}
+	 * @param operand     the expected element count
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedBetween(String entityAlias, String binding, Object minOperand, Object maxOperand);
+	@Nonnull DocumentFilter addAliasedCollectionSizeEquals(@Nonnull String entityAlias, @Nonnull String binding, int operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-size inequality filter: the number of elements must not equal {@code operand}.
+	 *
+	 * @param binding the collection attribute binding path; must not be {@code null}
+	 * @param operand the excluded element count
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addCollectionSizeEquals(String binding, int operand);
+	@Nonnull DocumentFilter addCollectionSizeNotEquals(@Nonnull String binding, int operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-size inequality filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the collection attribute binding path; must not be {@code null}
+	 * @param operand     the excluded element count
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedCollectionSizeEquals(String entityAlias, String binding, int operand);
+	@Nonnull DocumentFilter addAliasedCollectionSizeNotEquals(@Nonnull String entityAlias, @Nonnull String binding, int operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-size greater-than filter: the number of elements must be &gt; {@code operand}.
+	 *
+	 * @param binding the collection attribute binding path; must not be {@code null}
+	 * @param operand the lower-exclusive bound
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addCollectionSizeNotEquals(String binding, int operand);
+	@Nonnull DocumentFilter addCollectionSizeGreaterThan(@Nonnull String binding, int operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-size &gt; filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the collection attribute binding path; must not be {@code null}
+	 * @param operand     the lower-exclusive bound
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedCollectionSizeNotEquals(String entityAlias, String binding, int operand);
+	@Nonnull DocumentFilter addAliasedCollectionSizeGreaterThan(@Nonnull String entityAlias, @Nonnull String binding, int operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-size &ge; filter: the number of elements must be &ge; {@code operand}.
+	 *
+	 * @param binding the collection attribute binding path; must not be {@code null}
+	 * @param operand the lower-inclusive bound
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addCollectionSizeGreaterThan(String binding, int operand);
+	@Nonnull DocumentFilter addCollectionSizeGreaterThanOrEqualTo(@Nonnull String binding, int operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-size &ge; filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the collection attribute binding path; must not be {@code null}
+	 * @param operand     the lower-inclusive bound
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedCollectionSizeGreaterThan(String entityAlias, String binding, int operand);
+	@Nonnull DocumentFilter addAliasedCollectionSizeGreaterThanOrEqualTo(@Nonnull String entityAlias, @Nonnull String binding, int operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-size &lt; filter: the number of elements must be &lt; {@code operand}.
+	 *
+	 * @param binding the collection attribute binding path; must not be {@code null}
+	 * @param operand the upper-exclusive bound
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addCollectionSizeGreaterThanOrEqualTo(String binding, int operand);
+	@Nonnull DocumentFilter addCollectionSizeLessThan(@Nonnull String binding, int operand);
 	
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-size &lt; filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the collection attribute binding path; must not be {@code null}
+	 * @param operand     the upper-exclusive bound
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedCollectionSizeGreaterThanOrEqualTo(String entityAlias, String binding, int operand);
+	@Nonnull DocumentFilter addAliasedCollectionSizeLessThan(@Nonnull String entityAlias, @Nonnull String binding, int operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-size &le; filter: the number of elements must be &le; {@code operand}.
+	 *
+	 * @param binding the collection attribute binding path; must not be {@code null}
+	 * @param operand the upper-inclusive bound
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addCollectionSizeLessThan(String binding, int operand);
-	
-	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
-	 */
-	public DocumentFilter addAliasedCollectionSizeLessThan(String entityAlias, String binding, int operand);
+	@Nonnull DocumentFilter addCollectionSizeLessThanOrEqualTo(@Nonnull String binding, int operand);
 
 	/**
-	 * 
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-size &le; filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the collection attribute binding path; must not be {@code null}
+	 * @param operand     the upper-inclusive bound
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addCollectionSizeLessThanOrEqualTo(String binding, int operand);
+	@Nonnull DocumentFilter addAliasedCollectionSizeLessThanOrEqualTo(@Nonnull String entityAlias, @Nonnull String binding, int operand);
 
 	/**
-	 * 
-	 * @param entityAlias
-	 * @param binding
-	 * @param operand
+	 * Adds a collection-membership filter: the given {@code operand} bean must be a member
+	 * of the collection at {@code binding}.
+	 *
+	 * @param binding the collection attribute binding path; must not be {@code null}
+	 * @param operand the bean that must be present in the collection; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addAliasedCollectionSizeLessThanOrEqualTo(String entityAlias, String binding, int operand);
-
-	/**
-	 * 
-	 * @param filter
-	 */
-	public DocumentFilter addAnd(DocumentFilter filter);
+	@Nonnull DocumentFilter addMemberOfCollection(@Nonnull String binding, @Nonnull Bean operand);
 	
 	/**
-	 * 
-	 * @param filter
+	 * Adds a NOT MEMBER OF collection filter: the given {@code operand} bean must not be a
+	 * member of the collection at {@code binding}.
+	 *
+	 * @param binding the collection attribute binding path; must not be {@code null}
+	 * @param operand the bean that must not be present in the collection; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addOr(DocumentFilter filter);
+	@Nonnull DocumentFilter addNotMemberOfCollection(@Nonnull String binding, @Nonnull Bean operand);
 	
 	/**
-	 * 
-	 * @param expression
+	 * Adds a collection-membership filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the collection attribute binding path; must not be {@code null}
+	 * @param operand     the bean that must be present; must not be {@code null}
+	 * @return this filter for fluent chaining
 	 */
-	public DocumentFilter addExpression(String expression);
+	@Nonnull DocumentFilter addAliasedMemberOfCollection(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Bean operand);
 	
-	public boolean isEmpty();
+	/**
+	 * Adds a NOT MEMBER OF collection filter from the specified entity alias.
+	 *
+	 * @param entityAlias the JPQL alias of the joined entity; must not be {@code null}
+	 * @param binding     the collection attribute binding path; must not be {@code null}
+	 * @param operand     the bean that must not be present; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addAliasedNotMemberOfCollection(@Nonnull String entityAlias, @Nonnull String binding, @Nonnull Bean operand);
+	
+	/**
+	 * Appends the conditions of {@code filter} combined with AND.
+	 *
+	 * <p>Use this together with {@link DocumentQuery#newDocumentFilter()} to build
+	 * complex boolean expressions:
+	 * <pre>{@code
+	 * DocumentFilter orFilter = query.newDocumentFilter();
+	 * orFilter.addEquals("status", Status.PENDING);
+	 * orFilter.addEquals("status", Status.ACTIVE);
+	 * query.getFilter().addOr(orFilter);
+	 * }</pre>
+	 *
+	 * @param filter the sub-filter to AND in; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addAnd(@Nonnull DocumentFilter filter);
+	
+	/**
+	 * Appends the conditions of {@code filter} combined with OR.
+	 *
+	 * @param filter the sub-filter to OR in; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addOr(@Nonnull DocumentFilter filter);
+	
+	/**
+	 * Appends a raw JPQL expression to the filter.
+	 *
+	 * <p>Use as an escape hatch for predicates not expressible through the typed methods,
+	 * such as subqueries or vendor-specific functions.
+	 *
+	 * @param expression a valid JPQL predicate expression; must not be {@code null}
+	 * @return this filter for fluent chaining
+	 */
+	@Nonnull DocumentFilter addExpression(@Nonnull String expression);
+	
+	/**
+	 * Returns whether this filter has no conditions.
+	 *
+	 * @return {@code true} if no conditions have been added; {@code false} if at least one exists
+	 */
+	boolean isEmpty();
 }
+

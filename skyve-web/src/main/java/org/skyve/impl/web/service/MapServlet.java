@@ -3,6 +3,7 @@ package org.skyve.impl.web.service;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 
 import org.locationtech.jts.geom.Coordinate;
@@ -36,17 +37,30 @@ import org.skyve.metadata.view.model.map.MapResult;
 import org.skyve.metadata.view.model.map.ReferenceMapModel;
 import org.skyve.util.JSON;
 import org.skyve.util.Util;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
 
+import org.slf4j.Logger;
+
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
- * Map Servlet - supplies map data to a map display.
- * 
- * there are 3 usage modes:-
- * 
+ * Serves map overlay data as JSON for query, collection, and named map-model views.
+ *
+ * <p>The servlet supports three request shapes:
+ * <ol>
+ *   <li>query mode: execute a metadata query and extract geometry by binding,</li>
+ *   <li>collection mode: read geometry from a collection on the current conversation bean,</li>
+ *   <li>model mode: execute a named {@link MapModel} declared on the current document.</li>
+ * </ol>
+ *
+ * Three modes...
  * 1) This mode executes the query and then gets each geometry object using qeometryBinding.
  * 		parameters
  * 			query
@@ -61,20 +75,36 @@ import jakarta.servlet.http.HttpServletResponse;
  * 		parameters
  * 			webContext
  * 			modelName
+ *
+ * <p>Side effects: establishes persistence context, resolves user/session state from the web conversation,
+ * applies Skyve access checks, and records monitoring metrics for the selected model path.
  */
-// TODO This should support continue conversation
+//TODO This should support continue conversation
 public class MapServlet extends HttpServlet {
 	private static final long serialVersionUID = 1L;
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(MapServlet.class);
 	
 	private static final String GEOMETRY_BINDING_NAME = "_geo";
 	private static final String NORTH_EAST_NAME = "_ne";
 	private static final String SOUTH_WEST_NAME = "_sw";
 	
+	/**
+	 * Resolves map request mode and returns the corresponding geometry payload as JSON.
+	 *
+	 * <p>Request routing: when {@code query} is present it executes query mode; otherwise when
+	 * {@code modelName} is present it executes model mode; otherwise it executes collection mode.
+	 *
+	 * @param request inbound servlet request containing map model/query parameters
+	 * @param response outbound servlet response receiving geometry JSON
+	 * @throws ServletException when servlet container processing fails
+	 * @throws IOException when writing to the response stream fails
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doGet(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		response.setContentType(MimeType.json.toString());
-		response.setCharacterEncoding(Util.UTF8);
+		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 		response.addHeader("Cache-control", "private,no-cache,no-store"); // never
 		response.addDateHeader("Expires", 0); // never
 
@@ -106,7 +136,7 @@ public class MapServlet extends HttpServlet {
 					}
 
 					if (result != null) {
-						pw.print(result);
+						Util.chunkCharsToWriter(result, pw);
 					}
 					else {
 						pw.print(emptyResponse());
@@ -117,14 +147,12 @@ public class MapServlet extends HttpServlet {
 				}
 			}
 			catch (Throwable t) {
-				t.printStackTrace();
+				LOGGER.error(t.getMessage(), t);
 				persistence.rollback();
 				pw.print(emptyResponse());
 			}
 			finally {
-				if (persistence != null) {
-					persistence.commit(true);
-				}
+				persistence.commit(true);
 			}
 		}
 	}
@@ -140,16 +168,16 @@ public class MapServlet extends HttpServlet {
 		Customer customer = user.getCustomer();
 		Module module = customer.getModule(moduleName);
 		MetaDataQueryDefinition query = module.getMetaDataQuery(documentOrQueryName);
-		UxUi uxui = UserAgent.getUxUi(request);
+		UxUi uxui = UserAgent.getSelection(request).getUxUi();
+		final RequestKey key;
 		if (query == null) {
 			EXT.checkAccess(user, UserAccess.documentAggregate(moduleName, documentOrQueryName), uxui.getName());
 			query = module.getDocumentDefaultQuery(customer, documentOrQueryName);
+			key = RequestKey.documentListModel(moduleName, documentOrQueryName);
 		}
 		else {
 			EXT.checkAccess(user, UserAccess.queryAggregate(moduleName, documentOrQueryName), uxui.getName());
-		}
-		if (query == null) {
-			throw new ServletException(documentOrQueryName + " does not reference a valid query");
+			key = RequestKey.queryListModel(moduleName, documentOrQueryName);
 		}
 
 		// Check document permissions
@@ -161,7 +189,9 @@ public class MapServlet extends HttpServlet {
 		// Run the query map model and convert to JSON
 		DocumentQueryMapModel<Bean> model = new DocumentQueryMapModel<>(query);
 		model.setGeometryBinding(geometryBinding);
-		return JSON.marshall(customer, model.getResult(mapBounds(request)));
+		String result = JSON.marshall(customer, model.getResult(mapBounds(request)));
+		Monitoring.measure(key);
+		return result;
 	}
 	
 	private static String processCollection(HttpServletRequest request)
@@ -171,6 +201,9 @@ public class MapServlet extends HttpServlet {
 		String contextKey = request.getParameter(AbstractWebContext.CONTEXT_NAME);
 		AbstractWebContext webContext = StateUtil.getCachedConversation(contextKey, request);
 		Bean bean = WebUtil.getConversationBeanFromRequest(webContext, request);
+		if (bean == null) {
+			return null;
+		}
 		
 		// Run a ReferenceMapModel on the given collection and convert to JSON
 		String collectionBinding = request.getParameter(AbstractWebContext.GRID_BINDING_NAME);
@@ -178,22 +211,27 @@ public class MapServlet extends HttpServlet {
 		ReferenceMapModel<Bean> model = new ReferenceMapModel<>(collectionBinding);
 		model.setGeometryBinding(geometryBinding);
 		model.setBean(bean);
-		return JSON.marshall(customer, model.getResult(mapBounds(request)));
+		String result = JSON.marshall(customer, model.getResult(mapBounds(request)));
+		Monitoring.measure(RequestKey.model(bean.getDocumentMetaData(), collectionBinding + '.' + geometryBinding));
+		return result;
 	}
 
-	private static String processModel(HttpServletRequest request)
+	private static @Nullable String processModel(@Nonnull HttpServletRequest request)
 	throws Exception {
 		// Get the bean from the conversation
 		String contextKey = request.getParameter(AbstractWebContext.CONTEXT_NAME);
 		AbstractWebContext webContext = StateUtil.getCachedConversation(contextKey, request);
 		Bean bean = WebUtil.getConversationBeanFromRequest(webContext, request);
-
+		if (bean == null) {
+			return null;
+		}
+		
 		// Check if we have access
 		User user = CORE.getUser();
 		final String moduleName = bean.getBizModule();
 		final String documentName = bean.getBizDocument();
 		final String modelName = request.getParameter(AbstractWebContext.MODEL_NAME);
-		UxUi uxui = UserAgent.getUxUi(request);
+		UxUi uxui = UserAgent.getSelection(request).getUxUi();
 		EXT.checkAccess(user, UserAccess.modelAggregate(moduleName, documentName, modelName), uxui.getName());
 
 		// Invoke the model
@@ -208,8 +246,10 @@ public class MapServlet extends HttpServlet {
 		String json = JSON.marshall(customer, result);
 		
 		// Add _doc property to json response for resources such as images for map pins.
-		String _doc = bean.getBizModule() + '.' + bean.getBizDocument();
-		return json.substring(0, json.length() - 1) + ",\"_doc\":\"" + _doc + "\"}";
+		String doc = bean.getBizModule() + '.' + bean.getBizDocument();
+		json = json.substring(0, json.length() - 1) + ",\"_doc\":\"" + doc + "\"}";
+		Monitoring.measure(RequestKey.model(document, modelName));
+		return json;
 	}
 	
 	private static Geometry mapBounds(HttpServletRequest request) throws ParseException {

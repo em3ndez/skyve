@@ -20,10 +20,10 @@
 		<property name="bizFlagComment" length="1024" />
 		<property name="bizDataGroupId" length="36" />
 		<property name="bizUserId" length="36" not-null="true" />
-		<property name="auditModuleName" length="128" />
-		<property name="auditDocumentName" length="128" />
+		<property name="auditModuleName" length="128" index="IDX_auditModuleName" />
+		<property name="auditDocumentName" length="128" index="IDX_auditDocumentName" />
 		<property name="auditBizId" length="36" index="IDX_auditBizId" />
-		<property name="auditBizKey" length="1024" />
+		<property name="auditBizKey" length="1024" index="IDX_auditBizKey" />
 		<property name="operation" length="1">
 			<type name="Enum">
 				<param name="enumClass">modules.admin.domain.Audit$Operation</param>
@@ -33,6 +33,8 @@
 		<property name="millis" index="IDX_millis" />
 		<property name="userName" length="254" />
 		<property name="auditDetail" type="text" />
+		<property name="archiveTimestamp" type="Timestamp" />
+		<property name="archiveFilename" length="500" />
 		<filter name="adminAuditNoneFilter" condition="1=0"/>
 		<filter name="adminAuditCustomerFilter" condition="bizCustomer=:customerParam"/>
 		<filter name="adminAuditDataGroupIdFilter" condition="bizDataGroupId=:dataGroupIdParam"/>
@@ -145,7 +147,7 @@
 		<filter name="adminConfigurationUserIdFilter" condition="bizUserId=:userIdParam"/>
 	</class>
 
-	<class name="modules.admin.domain.Contact" table="ADM_Contact" entity-name="adminContact">
+	<class name="modules.admin.Contact.ContactExtension" table="ADM_Contact" entity-name="adminContact">
 		<cache usage="read-write" region="reference" />
 		<id name="bizId" length="36" />
 		<version name="bizVersion" unsaved-value="null" />
@@ -170,6 +172,30 @@
 		<filter name="adminContactUserIdFilter" condition="bizUserId=:userIdParam"/>
 	</class>
 
+	<class name="modules.admin.domain.CorruptArchiveError" table="ADM_CorruptArchiveError" entity-name="adminCorruptArchiveError">
+		<id name="bizId" length="36" />
+		<version name="bizVersion" unsaved-value="null" />
+		<property name="bizLock" type="OptimisticLock" length="271" not-null="true" />
+		<property name="bizKey" length="1024" not-null="true" />
+		<property name="bizCustomer" length="50" not-null="true" />
+		<property name="bizFlagComment" length="1024" />
+		<property name="bizDataGroupId" length="36" />
+		<property name="bizUserId" length="36" not-null="true" />
+		<property name="filename" length="500" />
+		<property name="archiveTypeModule" length="500" />
+		<property name="archiveTypeDocument" length="500" />
+		<property name="timestamp" type="Timestamp" />
+		<property name="resolution" length="11">
+			<type name="Enum">
+				<param name="enumClass">org.skyve.archive.support.CorruptArchiveError$Resolution</param>
+			</type>
+		</property>
+		<filter name="adminCorruptArchiveErrorNoneFilter" condition="1=0"/>
+		<filter name="adminCorruptArchiveErrorCustomerFilter" condition="bizCustomer=:customerParam"/>
+		<filter name="adminCorruptArchiveErrorDataGroupIdFilter" condition="bizDataGroupId=:dataGroupIdParam"/>
+		<filter name="adminCorruptArchiveErrorUserIdFilter" condition="bizUserId=:userIdParam"/>
+	</class>
+
 	<class name="modules.admin.domain.DataGroup" table="ADM_DataGroup" entity-name="adminDataGroup">
 		<id name="bizId" length="36" />
 		<version name="bizVersion" unsaved-value="null" />
@@ -179,7 +205,7 @@
 		<property name="bizFlagComment" length="1024" />
 		<property name="bizDataGroupId" length="36" />
 		<property name="bizUserId" length="36" not-null="true" />
-		<property name="name" length="30" />
+		<property name="name" length="60" />
 		<property name="description" type="text" />
 		<filter name="adminDataGroupNoneFilter" condition="1=0"/>
 		<filter name="adminDataGroupCustomerFilter" condition="bizCustomer=:customerParam"/>
@@ -341,11 +367,7 @@
 				<param name="enumClass">modules.admin.domain.ImportExport$RollbackErrors</param>
 			</type>
 		</property>
-		<property name="loadType" length="10">
-			<type name="Enum">
-				<param name="enumClass">modules.admin.domain.ImportExport$LoadType</param>
-			</type>
-		</property>
+		<property name="loadType" length="100" />
 		<filter name="adminImportExportNoneFilter" condition="1=0"/>
 		<filter name="adminImportExportCustomerFilter" condition="bizCustomer=:customerParam"/>
 		<filter name="adminImportExportDataGroupIdFilter" condition="bizDataGroupId=:dataGroupIdParam"/>
@@ -420,6 +442,104 @@
 		<filter name="adminJobScheduleCustomerFilter" condition="bizCustomer=:customerParam"/>
 		<filter name="adminJobScheduleDataGroupIdFilter" condition="bizDataGroupId=:dataGroupIdParam"/>
 		<filter name="adminJobScheduleUserIdFilter" condition="bizUserId=:userIdParam"/>
+	</class>
+
+	<class name="modules.admin.domain.MailLog" table="ADM_MailLog" entity-name="adminMailLog">
+		<id name="bizId" length="36" />
+		<version name="bizVersion" unsaved-value="null" />
+		<property name="bizLock" type="OptimisticLock" length="271" not-null="true" />
+		<property name="bizKey" length="1024" not-null="true" />
+		<property name="bizCustomer" length="50" not-null="true" />
+		<property name="bizFlagComment" length="1024" />
+		<property name="bizDataGroupId" length="36" />
+		<property name="bizUserId" length="36" not-null="true" />
+		<property name="timestamp" type="Timestamp" />
+		<property name="toRecipients" type="text" />
+		<property name="ccRecipients" type="text" />
+		<property name="bccRecipients" type="text" />
+		<property name="subject" length="500" />
+		<property name="bodyExcerpt" length="255" />
+		<property name="attachmentFileNames" type="text" />
+		<property name="dispatchStatus" length="50" />
+		<property name="provider" length="100" />
+		<property name="providerMessageId" length="255" />
+		<property name="relayStatus" length="255" />
+		<property name="relayDetail" type="text" />
+		<property name="errorDetail" type="text" />
+		<property name="isBulk" />
+		<property name="mailCount" />
+		<property name="recipientCount" />
+		<property name="hasMultipleSubjects" />
+		<property name="subjectVariantCount" />
+		<property name="hasMultipleBodies" />
+		<property name="bodyVariantCount" />
+		<property name="archiveTimestamp" type="Timestamp" />
+		<property name="archiveFilename" length="500" />
+		<filter name="adminMailLogNoneFilter" condition="1=0"/>
+		<filter name="adminMailLogCustomerFilter" condition="bizCustomer=:customerParam"/>
+		<filter name="adminMailLogDataGroupIdFilter" condition="bizDataGroupId=:dataGroupIdParam"/>
+		<filter name="adminMailLogUserIdFilter" condition="bizUserId=:userIdParam"/>
+	</class>
+
+	<class name="modules.admin.domain.MonitoringDashboard" table="ADM_MonitoringDashboard" entity-name="adminMonitoringDashboard">
+		<id name="bizId" length="36" />
+		<version name="bizVersion" unsaved-value="null" />
+		<property name="bizLock" type="OptimisticLock" length="271" not-null="true" />
+		<property name="bizKey" length="1024" not-null="true" />
+		<property name="bizCustomer" length="50" not-null="true" />
+		<property name="bizFlagComment" length="1024" />
+		<property name="bizDataGroupId" length="36" />
+		<property name="bizUserId" length="36" not-null="true" />
+		<property name="topN" />
+		<property name="requestType" length="3">
+			<type name="Enum">
+				<param name="enumClass">modules.admin.domain.MonitoringDashboard$RequestType</param>
+			</type>
+		</property>
+		<property name="metric" length="1">
+			<type name="Enum">
+				<param name="enumClass">modules.admin.domain.MonitoringDashboard$Metric</param>
+			</type>
+		</property>
+		<property name="period" length="1">
+			<type name="Enum">
+				<param name="enumClass">modules.admin.domain.MonitoringDashboard$Period</param>
+			</type>
+		</property>
+		<property name="rsRequestType" length="3">
+			<type name="Enum">
+				<param name="enumClass">modules.admin.domain.MonitoringDashboard$RequestType</param>
+			</type>
+		</property>
+		<property name="rsModuleName" length="100" />
+		<property name="rsDocumentName" length="100" />
+		<property name="rsComponentName" length="100" />
+		<property name="rsPeriod" length="1">
+			<type name="Enum">
+				<param name="enumClass">modules.admin.domain.MonitoringDashboard$Period</param>
+			</type>
+		</property>
+		<property name="documentStatsPeriod" length="1">
+			<type name="Enum">
+				<param name="enumClass">modules.admin.domain.MonitoringDashboard$Period</param>
+			</type>
+		</property>
+		<property name="documentName" length="100" />
+		<property name="queryStatsPeriod" length="1">
+			<type name="Enum">
+				<param name="enumClass">modules.admin.domain.MonitoringDashboard$Period</param>
+			</type>
+		</property>
+		<property name="queryName" length="100" />
+		<property name="systemResourcesPeriod" length="1">
+			<type name="Enum">
+				<param name="enumClass">modules.admin.domain.MonitoringDashboard$Period</param>
+			</type>
+		</property>
+		<filter name="adminMonitoringDashboardNoneFilter" condition="1=0"/>
+		<filter name="adminMonitoringDashboardCustomerFilter" condition="bizCustomer=:customerParam"/>
+		<filter name="adminMonitoringDashboardDataGroupIdFilter" condition="bizDataGroupId=:dataGroupIdParam"/>
+		<filter name="adminMonitoringDashboardUserIdFilter" condition="bizUserId=:userIdParam"/>
 	</class>
 
 	<class name="modules.admin.ReportDataset.ReportDatasetExtension" table="ADM_ReportDataset" entity-name="adminReportDataset">
@@ -533,7 +653,7 @@
 		<filter name="adminReportTemplateUserIdFilter" condition="bizUserId=:userIdParam"/>
 	</class>
 
-	<class name="modules.admin.domain.SecurityLog" table="ADM_SecurityLog" entity-name="adminSecurityLog">
+	<class name="modules.admin.SecurityLog.SecurityLogExtension" table="ADM_SecurityLog" entity-name="adminSecurityLog">
 		<id name="bizId" length="36" />
 		<version name="bizVersion" unsaved-value="null" />
 		<property name="bizLock" type="OptimisticLock" length="271" not-null="true" />
@@ -653,52 +773,6 @@
 		<filter name="adminTaggedUserIdFilter" condition="bizUserId=:userIdParam"/>
 	</class>
 
-	<class name="modules.admin.User.UserExtension" table="ADM_SecurityUser" entity-name="adminUser">
-		<id name="bizId" length="36" />
-		<version name="bizVersion" unsaved-value="null" />
-		<property name="bizLock" type="OptimisticLock" length="271" not-null="true" />
-		<property name="bizKey" length="1024" not-null="true" />
-		<property name="bizCustomer" length="50" not-null="true" />
-		<property name="bizFlagComment" length="1024" />
-		<property name="bizDataGroupId" length="36" />
-		<property name="bizUserId" length="36" not-null="true" />
-		<property name="userName" length="254" />
-		<property name="password" length="255" />
-		<property name="createdDateTime" type="DateTime" />
-		<property name="homeModule" length="30" />
-		<property name="legacyId" length="100" />
-		<property name="passwordExpired" />
-		<property name="passwordLastChanged" type="DateTime" />
-		<property name="passwordLastChangedIP" length="45" />
-		<property name="passwordLastChangedRegion" length="2" />
-		<property name="passwordResetToken" length="56" />
-		<property name="passwordResetTokenCreationTimestamp" type="Timestamp" />
-		<property name="passwordHistory" type="text" />
-		<property name="authenticationFailures" />
-		<property name="lastAuthenticationFailure" type="Timestamp" />
-		<many-to-one name="contact" entity-name="adminContact" column="contact_id" cascade="persist,save-update,refresh,merge" foreign-key="FK_ADM_SecurityUser_contact"/>
-		<many-to-one name="dataGroup" entity-name="adminDataGroup" column="dataGroup_id" cascade="persist,save-update,refresh,merge" foreign-key="FK_ADM_SecurityUser_dataGroup"/>
-		<bag name="groups" table="ADM_SecurityUser_groups" cascade="persist,save-update,refresh,merge">
-			<key column="owner_id" foreign-key="FK_ADM_SecurityUser_groups_owner_id" />
-			<many-to-many entity-name="adminGroup" order-by="name asc" foreign-key="FK_ADM_SecurityUser_groups_element_id" column="element_id" />
-		</bag>
-		<bag name="roles" order-by="roleName asc" cascade="all-delete-orphan">
-			<key column="parent_id" />
-			<one-to-many entity-name="adminUserRole" />
-		</bag>
-		<property name="inactive" />
-		<property name="activated" />
-		<property name="activationCode" length="36" />
-		<property name="activationCodeCreationDateTime" type="DateTime" />
-		<property name="twoFactorCode" length="100" />
-		<property name="twoFactorCodeGeneratedTimestamp" type="Timestamp" />
-		<property name="twoFactorToken" length="100" />
-		<filter name="adminUserNoneFilter" condition="1=0"/>
-		<filter name="adminUserCustomerFilter" condition="bizCustomer=:customerParam"/>
-		<filter name="adminUserDataGroupIdFilter" condition="bizDataGroupId=:dataGroupIdParam"/>
-		<filter name="adminUserUserIdFilter" condition="bizUserId=:userIdParam"/>
-	</class>
-
 	<class name="modules.admin.UserLoginRecord.UserLoginRecordExtension" table="ADM_UserLoginRecord" entity-name="adminUserLoginRecord">
 		<id name="bizId" length="36" />
 		<version name="bizVersion" unsaved-value="null" />
@@ -711,6 +785,8 @@
 		<property name="userName" length="254" />
 		<property name="loginDateTime" type="DateTime" />
 		<property name="failed" />
+		<property name="ipAddress" length="254" />
+		<property name="countryCode" length="2" />
 		<filter name="adminUserLoginRecordNoneFilter" condition="1=0"/>
 		<filter name="adminUserLoginRecordCustomerFilter" condition="bizCustomer=:customerParam"/>
 		<filter name="adminUserLoginRecordDataGroupIdFilter" condition="bizDataGroupId=:dataGroupIdParam"/>
@@ -760,6 +836,52 @@
 		<filter name="adminUserProxyCustomerFilter" condition="bizCustomer=:customerParam"/>
 		<filter name="adminUserProxyDataGroupIdFilter" condition="bizDataGroupId=:dataGroupIdParam"/>
 		<filter name="adminUserProxyUserIdFilter" condition="bizUserId=:userIdParam"/>
+	</class>
+
+	<class name="modules.admin.User.UserExtension" table="ADM_SecurityUser" entity-name="adminUser">
+		<id name="bizId" length="36" />
+		<version name="bizVersion" unsaved-value="null" />
+		<property name="bizLock" type="OptimisticLock" length="271" not-null="true" />
+		<property name="bizKey" length="1024" not-null="true" />
+		<property name="bizCustomer" length="50" not-null="true" />
+		<property name="bizFlagComment" length="1024" />
+		<property name="bizDataGroupId" length="36" />
+		<property name="bizUserId" length="36" not-null="true" />
+		<property name="userName" length="254" />
+		<property name="createdDateTime" type="DateTime" />
+		<many-to-one name="contact" entity-name="adminContact" column="contact_id" cascade="persist,save-update,refresh,merge" foreign-key="FK_ADM_SecurityUser_contact"/>
+		<property name="inactive" />
+		<property name="password" length="255" />
+		<property name="homeModule" length="30" />
+		<property name="legacyId" length="100" />
+		<property name="passwordExpired" />
+		<property name="passwordLastChanged" type="DateTime" />
+		<property name="passwordLastChangedIP" length="45" />
+		<property name="passwordLastChangedCountryCode" length="2" />
+		<property name="passwordResetToken" length="56" />
+		<property name="passwordResetTokenCreationTimestamp" type="Timestamp" />
+		<property name="passwordHistory" type="text" />
+		<property name="authenticationFailures" />
+		<property name="lastAuthenticationFailure" type="Timestamp" />
+		<many-to-one name="dataGroup" entity-name="adminDataGroup" column="dataGroup_id" cascade="persist,save-update,refresh,merge" foreign-key="FK_ADM_SecurityUser_dataGroup"/>
+		<bag name="groups" table="ADM_SecurityUser_groups" cascade="persist,save-update,refresh,merge">
+			<key column="owner_id" foreign-key="FK_ADM_SecurityUser_groups_owner_id" />
+			<many-to-many entity-name="adminGroup" order-by="name asc" foreign-key="FK_ADM_SecurityUser_groups_element_id" column="element_id" />
+		</bag>
+		<bag name="roles" order-by="roleName asc" cascade="all-delete-orphan">
+			<key column="parent_id" />
+			<one-to-many entity-name="adminUserRole" />
+		</bag>
+		<property name="activated" />
+		<property name="activationCode" length="36" />
+		<property name="activationCodeCreationDateTime" type="DateTime" />
+		<property name="twoFactorCode" length="255" />
+		<property name="twoFactorCodeGeneratedTimestamp" type="Timestamp" />
+		<property name="twoFactorToken" length="100" />
+		<filter name="adminUserNoneFilter" condition="1=0"/>
+		<filter name="adminUserCustomerFilter" condition="bizCustomer=:customerParam"/>
+		<filter name="adminUserDataGroupIdFilter" condition="bizDataGroupId=:dataGroupIdParam"/>
+		<filter name="adminUserUserIdFilter" condition="bizUserId=:userIdParam"/>
 	</class>
 
 	<class name="modules.admin.domain.UserRole" table="ADM_SecurityUserRole" entity-name="adminUserRole">
@@ -846,6 +968,16 @@
 		<filter-param name="dataGroupIdParam" type="string"/>
 	</filter-def>
 	<filter-def name="adminContactUserIdFilter">
+		<filter-param name="userIdParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminCorruptArchiveErrorNoneFilter" />
+	<filter-def name="adminCorruptArchiveErrorCustomerFilter">
+		<filter-param name="customerParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminCorruptArchiveErrorDataGroupIdFilter">
+		<filter-param name="dataGroupIdParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminCorruptArchiveErrorUserIdFilter">
 		<filter-param name="userIdParam" type="string"/>
 	</filter-def>
 	<filter-def name="adminDataGroupNoneFilter" />
@@ -958,6 +1090,26 @@
 	<filter-def name="adminJobScheduleUserIdFilter">
 		<filter-param name="userIdParam" type="string"/>
 	</filter-def>
+	<filter-def name="adminMailLogNoneFilter" />
+	<filter-def name="adminMailLogCustomerFilter">
+		<filter-param name="customerParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminMailLogDataGroupIdFilter">
+		<filter-param name="dataGroupIdParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminMailLogUserIdFilter">
+		<filter-param name="userIdParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminMonitoringDashboardNoneFilter" />
+	<filter-def name="adminMonitoringDashboardCustomerFilter">
+		<filter-param name="customerParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminMonitoringDashboardDataGroupIdFilter">
+		<filter-param name="dataGroupIdParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminMonitoringDashboardUserIdFilter">
+		<filter-param name="userIdParam" type="string"/>
+	</filter-def>
 	<filter-def name="adminReportDatasetNoneFilter" />
 	<filter-def name="adminReportDatasetCustomerFilter">
 		<filter-param name="customerParam" type="string"/>
@@ -1038,16 +1190,6 @@
 	<filter-def name="adminTaggedUserIdFilter">
 		<filter-param name="userIdParam" type="string"/>
 	</filter-def>
-	<filter-def name="adminUserNoneFilter" />
-	<filter-def name="adminUserCustomerFilter">
-		<filter-param name="customerParam" type="string"/>
-	</filter-def>
-	<filter-def name="adminUserDataGroupIdFilter">
-		<filter-param name="dataGroupIdParam" type="string"/>
-	</filter-def>
-	<filter-def name="adminUserUserIdFilter">
-		<filter-param name="userIdParam" type="string"/>
-	</filter-def>
 	<filter-def name="adminUserLoginRecordNoneFilter" />
 	<filter-def name="adminUserLoginRecordCustomerFilter">
 		<filter-param name="customerParam" type="string"/>
@@ -1076,6 +1218,16 @@
 		<filter-param name="dataGroupIdParam" type="string"/>
 	</filter-def>
 	<filter-def name="adminUserProxyUserIdFilter">
+		<filter-param name="userIdParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminUserNoneFilter" />
+	<filter-def name="adminUserCustomerFilter">
+		<filter-param name="customerParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminUserDataGroupIdFilter">
+		<filter-param name="dataGroupIdParam" type="string"/>
+	</filter-def>
+	<filter-def name="adminUserUserIdFilter">
 		<filter-param name="userIdParam" type="string"/>
 	</filter-def>
 	<filter-def name="adminUserRoleNoneFilter" />

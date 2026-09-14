@@ -15,6 +15,8 @@ import org.skyve.impl.domain.types.jaxb.TimestampMapper;
 
 /**
  * User Token
+ * <br/>
+ * Persistent authentication token for "Remember Me" login functionality, allowing users to stay logged in across browser sessions.
  * 
  * @stereotype "persistent"
  */
@@ -101,12 +103,6 @@ public class UserToken extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof UserToken) && 
-					this.getBizId().equals(((UserToken) o).getBizId()));
 	}
 
 	/**

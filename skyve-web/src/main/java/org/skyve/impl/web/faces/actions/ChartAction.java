@@ -41,15 +41,29 @@ import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
 import org.skyve.metadata.user.User;
 import org.skyve.metadata.view.model.chart.MetaDataChartModel;
+import org.skyve.util.logging.Category;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
+import org.slf4j.Logger;
 
 /**
  * Create a PF chart model from a Skyve model.
  */
 public class ChartAction extends FacesAction<ChartModel> {
+
+    private static final Logger FACES_LOGGER = Category.FACES.logger();
+
 	private FacesView facesView;
 	private Object model;
 	private ChartType type;
 	
+	/**
+	 * Creates an action that resolves and renders a chart model for the current view.
+	 *
+	 * @param facesView the current Faces view context
+	 * @param model the chart model name or metadata definition
+	 * @param type the target chart type
+	 */
 	public ChartAction(FacesView facesView, Object model, ChartType type) {
 		this.facesView = facesView;
 		this.model = model;
@@ -58,7 +72,7 @@ public class ChartAction extends FacesAction<ChartModel> {
 
 	@Override
 	public ChartModel callback() throws Exception {
-		if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.info("ChartAction - CHART " + model);
+		if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("ChartAction - CHART {}", model);
 
 		AbstractPersistence persistence = AbstractPersistence.get();
 		Bean targetBean = ActionUtil.getTargetBeanForView(facesView);
@@ -67,20 +81,33 @@ public class ChartAction extends FacesAction<ChartModel> {
     	Module targetModule = customer.getModule(targetBean.getBizModule());
 		Document targetDocument = targetModule.getDocument(customer, targetBean.getBizDocument());
 		org.skyve.metadata.view.model.chart.ChartModel<Bean> chartModel = null;
-		if (model instanceof String) {
-			chartModel = targetDocument.getChartModel(customer, (String) model, true);
+		RequestKey key = null;
+		if (model instanceof String string) {
+			chartModel = targetDocument.getChartModel(customer, string, true);
+			key = RequestKey.model(targetDocument, string);
 		}
 		else {
-			chartModel = new MetaDataChartModel((ChartBuilderMetaData) model);
+			ChartBuilderMetaData meta = (ChartBuilderMetaData) model;
+			chartModel = new MetaDataChartModel(meta);
+			key = RequestKey.chart(meta);
 		}
 		chartModel.setBean(targetBean);
 		org.skyve.metadata.view.model.chart.ChartData data = chartModel.getChartData();
 
 		ChartModel result = pfChartModel(type, data);
 		result.setExtender("SKYVE.PF.chartExtender");
+		Monitoring.measure(key);
 		return result;
 	}
 	
+	/**
+	 * Converts Skyve chart data into the PrimeFaces chart model for the selected chart type.
+	 *
+	 * @param type the chart type to build
+	 * @param data the chart data values and labels
+	 * @return the PrimeFaces chart model
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public static ChartModel pfChartModel(ChartType type, org.skyve.metadata.view.model.chart.ChartData data) {
 		Title title = title(data);
 
@@ -225,6 +252,12 @@ public class ChartAction extends FacesAction<ChartModel> {
 		return result;
 	}
 	
+	/**
+	 * Builds PrimeFaces title metadata when the source chart data defines a title.
+	 *
+	 * @param data the source chart data
+	 * @return the title configuration, or {@code null} when no title is defined
+	 */
 	private static Title title(org.skyve.metadata.view.model.chart.ChartData data) {
 		Title result = null;
 		String text = data.getTitle();
@@ -236,6 +269,12 @@ public class ChartAction extends FacesAction<ChartModel> {
 		return result;
 	}
 	
+	/**
+	 * Converts an AWT color to CSS rgb/rgba syntax.
+	 *
+	 * @param colour the color to convert
+	 * @return the CSS color string, or {@code null} when the color is {@code null}
+	 */
 	private static String web(Color colour) {
 		if (colour == null) {
 			return null;
@@ -251,6 +290,12 @@ public class ChartAction extends FacesAction<ChartModel> {
 		return new StringBuilder(16).append("rgb(").append(colour.getRed()).append(',').append(colour.getGreen()).append(',').append(colour.getBlue()).append(')').toString();
 	}
 	
+	/**
+	 * Converts a list of AWT colors to CSS rgb/rgba strings.
+	 *
+	 * @param colours the colors to convert
+	 * @return the converted list, or {@code null} when the source list is {@code null}
+	 */
 	private static List<String> web(List<Color> colours) {
 		if (colours == null) {
 			return null;
@@ -262,6 +307,12 @@ public class ChartAction extends FacesAction<ChartModel> {
 		return result;
 	}
 	
+	/**
+	 * Applies optional customer-configured chart post-processing.
+	 *
+	 * @param model the PrimeFaces model to post-process
+	 * @param data the source chart data that may specify a post-processor class
+	 */
 	private static void postProcess(ChartModel model,
 										org.skyve.metadata.view.model.chart.ChartData data) {
 		String postProcessor = data.getPrimeFacesChartPostProcessorClassName();

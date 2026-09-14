@@ -8,49 +8,58 @@ import org.skyve.util.DataBuilder;
 import org.skyve.util.test.SkyveFixture;
 import org.skyve.util.test.SkyveFixture.FixtureType;
 
+import modules.admin.Contact.ContactExtension;
 import modules.admin.domain.Contact;
 import modules.admin.domain.Contact.ContactType;
 import modules.whosin.domain.Office;
 import modules.whosin.domain.Staff;
 
+/**
+ * Generates seeded {@link Staff} fixtures for Who's In demonstration data.
+ */
 public class StaffFactory {
+	@SuppressWarnings("java:S2245") // It's ok that this is not cryptographically strong as it's only used for generating test data
+	private static final Random random = new Random();
 
+	/**
+	 * Creates a seeded staff instance with a person contact and either an existing or new office.
+	 *
+	 * @return a seeded staff instance suitable for fixture loading
+	 */
 	@SkyveFixture(types = FixtureType.seed)
 	public static Staff seedInstance() {
-		
-		Staff bean = new DataBuilder().build(Staff.MODULE_NAME, Staff.DOCUMENT_NAME);
-		
-		//create a new person type contact
-		Contact contact = new DataBuilder().build(Contact.MODULE_NAME, Contact.DOCUMENT_NAME);
+
+		Staff bean = new DataBuilder().factoryBuild(Staff.MODULE_NAME, Staff.DOCUMENT_NAME);
+
+		// create a new person type contact
+		ContactExtension contact = new DataBuilder().fixture(FixtureType.seed).build(Contact.MODULE_NAME, Contact.DOCUMENT_NAME);
 		contact.setContactType(ContactType.person);
 		bean.setContact(contact);
 
-		//throw the dice to see whether to create a new office, or re-use an existing one
-		int dice = new Random().nextInt(50);
-		if(dice<49) {
-			
-			//re-use a random existing office
+		// throw the dice to see whether to create a new office, or re-use an existing one
+		int dice = random.nextInt(50);
+		if (dice < 49) {
+			// re-use a random existing office
 			DocumentQuery qOffice = CORE.getPersistence().newDocumentQuery(Office.MODULE_NAME, Office.DOCUMENT_NAME);
-			
+
 			int officeCount = qOffice.beanResults().size();
-			if(officeCount>0) {
-				int randomOfficeIndex = new Random().nextInt(officeCount);
+			if (officeCount > 0) {
+				int randomOfficeIndex = random.nextInt(officeCount);
 				qOffice.setFirstResult(randomOfficeIndex);
-				
+
 				Office office = qOffice.beanResult();
-				if(office!=null) {
+				if (office != null) {
 					bean.setBaseOffice(office);
 				}
 			}
-			
-		} 
-		if(bean.getBaseOffice()==null) {
+
+		}
+		if (bean.getBaseOffice() == null) {
 			// create a new office
-			Office office = new DataBuilder().build(Office.MODULE_NAME, Office.DOCUMENT_NAME);
+			Office office = new DataBuilder().fixture(FixtureType.seed).build(Office.MODULE_NAME, Office.DOCUMENT_NAME);
 			bean.setBaseOffice(office);
 		}
 
 		return bean;
 	}
-
 }

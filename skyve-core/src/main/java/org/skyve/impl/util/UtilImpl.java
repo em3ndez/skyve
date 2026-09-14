@@ -1,38 +1,47 @@
 package org.skyve.impl.util;
 
+import static java.util.Collections.emptyList;
+
 import java.io.InputStream;
 import java.io.Serializable;
-import java.io.UnsupportedEncodingException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Scanner;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.logging.Logger;
+import java.util.concurrent.CopyOnWriteArraySet;
 
+import org.apache.commons.lang3.StringUtils;
+import org.apache.deltaspike.core.api.provider.BeanProvider;
 import org.hibernate.internal.util.SerializationHelper;
 import org.hibernate.proxy.HibernateProxy;
 import org.skyve.CORE;
+import org.skyve.cache.ArchivedDocumentCacheConfig;
 import org.skyve.cache.CSRFTokenCacheConfig;
 import org.skyve.cache.CacheConfig;
 import org.skyve.cache.ConversationCacheConfig;
+import org.skyve.cache.GeoIPCacheConfig;
 import org.skyve.cache.HibernateCacheConfig;
+import org.skyve.cache.SessionCacheConfig;
 import org.skyve.domain.Bean;
 import org.skyve.impl.bind.BindUtil;
 import org.skyve.impl.domain.AbstractPersistentBean;
-import org.skyve.impl.metadata.model.document.AssociationImpl;
+import org.skyve.impl.metadata.user.SuperUser;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.json.Minifier;
 import org.skyve.metadata.customer.Customer;
+import org.skyve.metadata.model.document.Association;
 import org.skyve.metadata.model.document.Association.AssociationType;
 import org.skyve.metadata.model.document.Collection;
 import org.skyve.metadata.model.document.Collection.CollectionType;
 import org.skyve.metadata.model.document.Document;
-import org.skyve.metadata.model.document.Inverse;
 import org.skyve.metadata.model.document.Reference;
 import org.skyve.metadata.model.document.Relation;
 import org.skyve.metadata.module.Module;
@@ -40,17 +49,32 @@ import org.skyve.metadata.user.User;
 import org.skyve.persistence.DataStore;
 import org.skyve.util.BeanVisitor;
 import org.skyve.util.JSON;
-import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
 
-import jakarta.enterprise.context.spi.CreationalContext;
-import jakarta.enterprise.inject.spi.AnnotatedType;
-import jakarta.enterprise.inject.spi.BeanAttributes;
-import jakarta.enterprise.inject.spi.BeanManager;
-import jakarta.enterprise.inject.spi.CDI;
-import jakarta.enterprise.inject.spi.InjectionTarget;
-import jakarta.enterprise.inject.spi.InjectionTargetFactory;
 import net.gcardone.junidecode.Junidecode;
 
+/**
+ * Primary framework configuration façade and miscellaneous utility class.
+ *
+ * <p>All fields are public and mutable because they are set once during application
+ * bootstrap (typically from {@code skyve.json}) and then treated as read-only for the
+ * lifetime of the application.
+ *
+ * <p>Key responsibilities:
+ * <ul>
+ *   <li>Holds global configuration: application name, data-store settings,
+ *       environment name, cache configs, bootstrap user credentials, etc.
+ *   <li>Provides deep-clone, serialisation, and Hibernate-proxy utilities via
+ *       {@link #cloneToTransientBeanFromPersistentBean} and {@link #cloneToTransientBeanFromPersistentBean}.
+ *   <li>Provides bean-graph traversal helpers used throughout the framework.
+ * </ul>
+ *
+ * <p>Threading: configuration fields are read after bootstrap without synchronisation;
+ * callers must not modify these fields outside of the bootstrap phase.
+ */
+@SuppressWarnings({"java:S3008", "java:S1104", "java:S1444", "java:S2386"})
 public class UtilImpl {
 	/**
 	 * Disallow instantiation
@@ -71,8 +95,8 @@ public class UtilImpl {
 	public static Map<String, Object> OVERRIDE_CONFIGURATION;
 
 	// For versioning javascript/css etc for web site
-	public static final String WEB_RESOURCE_FILE_VERSION = "56";
-	public static final String SKYVE_VERSION = "9.2.0-SNAPSHOT";
+	public static final String WEB_RESOURCE_FILE_VERSION = "59";
+	public static final String SKYVE_VERSION = "10.0.0-SNAPSHOT";
 	public static final String SMART_CLIENT_DIR = "isomorphic130";
 
 	public static boolean XML_TRACE = false;
@@ -86,7 +110,26 @@ public class UtilImpl {
 	public static boolean BIZLET_TRACE = false;
 	public static boolean DIRTY_TRACE = false;
 	public static boolean PRETTY_SQL_OUTPUT = false;
-	public static final Logger LOGGER = Logger.getLogger("SKYVE");
+
+    /**
+     * Skyve's framework logger
+     * <p>
+     * Replace with someting like this:
+     * <p>
+     * <code>
+     * private final org.slf4j.Logger logger = org.skyve.util.logging.SkyveLoggerFactory.getLogger(MyClass.class);
+     * </code>
+     * 
+     * @deprecated This logger will be removed; please switch to using
+     *             a logger named appropriately for the class doing the logging.
+     *             For example <a href="https://www.slf4j.org/manual.html#typical_usage">
+     *             see the Typical usage pattern suggested by slf4j</a>.
+     * 
+     */
+    @Deprecated(since = "9.3.0", forRemoval = true)
+    public static final java.util.logging.Logger LOGGER = java.util.logging.Logger.getLogger(Category.LEGACY.getName());
+
+    private static final Logger utilLogger = SkyveLoggerFactory.getLogger(UtilImpl.class);
 
 	// the name of the application archive, e.g. typically projectName.war or projectName.ear
 	public static String ARCHIVE_NAME;
@@ -112,6 +155,10 @@ public class UtilImpl {
 	// Should the attachments be stored on the file system or inline.
 	public static boolean CONTENT_FILE_STORAGE = true;
 
+	// Should the attachments be stored on the file system with file suffixes or not.
+	// This makes the content files more accessible if on an accessible file system.
+	public static boolean CONTENT_FILE_SUFFIXES = false;
+
 	// The arguments to send to the JDBC TCP server when running the content management in server mode.
 	public static String CONTENT_JDBC_SERVER_ARGS = null;
 
@@ -127,8 +174,13 @@ public class UtilImpl {
 	
 	// Properties required to connect to a cloud provider for backup storage
 	public static Map<String, Object> BACKUP_PROPERTIES = null;
-	
-	
+
+	// Maximum number of zip entries to extract from a backup archive before aborting (zip bomb protection)
+	public static int BACKUP_RESTORE_MAX_EXTRACT_ENTRIES = 10_000;
+
+	// Maximum total uncompressed size in MB to extract from a backup archive before aborting (zip bomb protection)
+	public static int BACKUP_RESTORE_MAX_EXTRACT_SIZE_MB = 500;
+
 	// Allowed file upload file names - default is a blacklist of harmful "executable" files
 	public static String UPLOADS_FILE_WHITELIST_REGEX = "^.+\\.(?!(ADE|ADP|APP|ASA|ASP|BAS|BAT|CAB|CER|CHM|CMD|COM|CPL|CRT|CSH|DLL|DOCM|DOTM|EXE|FXP|HLP|HTA|HTR|INF|INS|ISP|ITS|JS|JSE|KSH|LNK|MAD|MAF|MAG|MAM|MAQ|MAR|MAS|MAT|MAU|MAV|MAW|MDA|MDB|MDE|MDT|MDW|MDZ|MSC|MSI|MSP|MST|OCX|OPS|PCD|PIF|POTM|PPAM|PPSM|PPTM|PRF|PRG|REG|SCF|SO|SCR|SCT|SHB|SHS|TMP|URL|VB|VBE|VBS|VBX|VSMACROS|VSS|VST|VSW|WS|WSC|WSF|WSH|XLAM|XLSB|XLSM|XSTM|XSL)$)([^.]+$)";
 	
@@ -147,14 +199,44 @@ public class UtilImpl {
 	// Max image upload size - default is 10MB the same as wildfly default
 	public static int UPLOADS_IMAGE_MAXIMUM_SIZE_IN_MB = UPLOADS_FILE_MAXIMUM_SIZE_IN_MB;
 
+	// Allowed video upload file names - default is common browser/mobile video containers
+	public static String UPLOADS_VIDEO_WHITELIST_REGEX = "^.+\\.(MP4|WEBM|MOV|M4V|OGV|AVI)$";
+
+	// Max video upload size - default is 100MB for about one minute of typical mobile video
+	public static int UPLOADS_VIDEO_MAXIMUM_SIZE_IN_MB = 100;
+
 	// Allowed bizport upload file names - default is a XLS and XLSX files
 	public static String UPLOADS_BIZPORT_WHITELIST_REGEX = "^.+\\.(XLS|XLSX)$";
 	
 	// Max bizport upload size - default is 10MB the same as wildfly default
 	public static int UPLOADS_BIZPORT_MAXIMUM_SIZE_IN_MB = UPLOADS_FILE_MAXIMUM_SIZE_IN_MB;
 
+	// Timeout (in seconds) to wait for a new PushMessage before sending a keep-alive.
+	public static int PUSH_KEEP_ALIVE_TIME_IN_SECONDS = 20;
+
+	// Maximum number of pending push messages to buffer per SSE client before dropping the oldest.
+	public static int PUSH_MESSAGE_QUEUE_SIZE = 256;
+
+	// Timeout (in seconds) to wait for a single SSE send to complete before treating the client as stale.
+	public static int PUSH_SEND_TIMEOUT_IN_SECONDS = 30;
+
+	// Maximum number of concurrent SSE receivers (browser tabs/connections) allowed per user.
+	// When exceeded, the oldest receiver for that user is evicted. 0 means no limit.
+	public static int PUSH_MAX_RECEIVERS_PER_USER = 5;
+
+	// Maximum number of concurrent push receivers across all users.
+	// 0 means no global limit.
+	public static int PUSH_MAX_RECEIVERS_TOTAL = 0;
+
+	// How long (in seconds) since the last successful send before a receiver is considered stale.
+	// The reaper runs on this same interval. 0 means no reaper.
+	public static int PUSH_STALE_RECEIVER_TIMEOUT_IN_SECONDS = 60;
+
 	// Where to look for add-ins - defaults to <content.directory>/addins/
 	public static String ADDINS_DIRECTORY = null;
+
+    // Where to store/retrieve archive documents (Audits, etc)
+    public static ArchiveConfig ARCHIVE_CONFIG = ArchiveConfig.DISABLED;
 
 	// The number of threads that are allowed to serve thumb nails at once.
 	// Too many threads can cause out of memory errors.
@@ -211,18 +293,27 @@ public class UtilImpl {
 	public static String SKYVE_CONTENT_MANAGER_CLASS = null;
 	public static String SKYVE_NUMBER_GENERATOR_CLASS = null;
 	public static String SKYVE_CUSTOMISATIONS_CLASS = null;
+	public static String SKYVE_GEOIP_SERVICE_CLASS = null;
+	public static String SKYVE_MAIL_SERVICE_CLASS = null;
+	public static String SKYVE_SMS_SERVICE_CLASS = null;
 
 	// The directory used for temp files for file uploads etc
 	public static final String TEMP_DIRECTORY = System.getProperty("java.io.tmpdir");
-
-	public static boolean USING_JPA = false;
 
 	// For caches
 	// Cache folder - defaults to <content.directory>/SKYVE_CACHE/
 	// Skyve will create this folder at startup but if defined it must exist at startup.
 	public static String CACHE_DIRECTORY = null;
+	// Determines if caches will create a random folder under the cache folder per Skyve instance
+	// This is useful for clustered Skyve servers using the same volume and blue/green deployments
+	// but can only be used if no caches are set as persistent
+	public static boolean CACHE_MULTIPLE = false;
+	// Set in test classes to ensure EHCaches are never set to be persistent when testing
+	public static boolean FORCE_NON_PERSISTENT_CACHING = false; 
 	public static ConversationCacheConfig CONVERSATION_CACHE = null;
 	public static CSRFTokenCacheConfig CSRF_TOKEN_CACHE = null;
+	public static SessionCacheConfig SESSION_CACHE = null;
+	public static GeoIPCacheConfig GEO_IP_CACHE = null;
 	public static List<HibernateCacheConfig> HIBERNATE_CACHES = new ArrayList<>();
 	public static boolean HIBERNATE_FAIL_ON_MISSING_CACHE = false;
 	public static List<CacheConfig<? extends Serializable, ? extends Serializable>> APP_CACHES = new ArrayList<>();
@@ -250,7 +341,8 @@ public class UtilImpl {
 	public static boolean SMTP_TEST_BOGUS_SEND = false;
 
 	// Map Keys
-	public static enum MapType {
+	@SuppressWarnings("java:S115") // Suppress "Constant names should comply with a naming convention" as these are not constants but enum values
+	public enum MapType {
 		gmap, leaflet;
 	}
 	public static MapType MAP_TYPE = MapType.leaflet;
@@ -268,9 +360,11 @@ public class UtilImpl {
 	public static String CLOUDFLARE_TURNSTILE_SITE_KEY = null;
 	public static String CLOUDFLARE_TURNSTILE_SECRET_KEY = null;
 	public static String CKEDITOR_CONFIG_FILE_URL = "";
-	public static String COUNTRY_CODES = null;
-	public static String COUNTRY_LIST_TYPE = null;
-	public static String IP_INFO_TOKEN = null;
+	public static String GEO_IP_KEY = null;
+	// NB This is a thread-safe set because it can be changed in setup UI on the fly
+	@SuppressWarnings("java:S1319") // Expose the thread-safe implementation
+	public static CopyOnWriteArraySet<String> GEO_IP_COUNTRY_CODES = null;
+	public static boolean GEO_IP_WHITELIST = true;
 
 	// null = prod, could be dev, test, uat or another arbitrary environment
 	public static String ENVIRONMENT_IDENTIFIER = null;
@@ -281,8 +375,9 @@ public class UtilImpl {
 	// Should scheduled jobs be manipulated by the database.
 	public static boolean JOB_SCHEDULER = true;
 
-	// Password hashing algorithm - usually bcrypt, pbkdf2, scrypt. MD5 and SHA1 are unsalted and obsolete.
-	public static String PASSWORD_HASHING_ALGORITHM = "bcrypt";
+	// Password hashing algorithm - usually argon2, bcrypt, pbkdf2, scrypt.
+	@SuppressWarnings("java:S2068") // false positive - this is not a hard coded password, it's a hashing algorithm that we need to specify for security purposes
+	public static String PASSWORD_HASHING_ALGORITHM = "argon2";
 	// Number of days until a password change is required - Use null to indicate no password aging
 	public static int PASSWORD_EXPIRY_IN_DAYS = 0;
 	// Number of previous passwords to check for duplicates - Use null to indicate no password history
@@ -336,9 +431,25 @@ public class UtilImpl {
 	public static String BOOTSTRAP_EMAIL = null;
 	public static String BOOTSTRAP_PASSWORD = null;
 	
+	// IP tracking configurations
+	public static boolean IP_ADDRESS_CHECKS = true;
+	public static int IP_ADDRESS_HISTORY_CHECK_COUNT = 1;
+
+	// Security notifications configurations
+	public static String SECURITY_NOTIFICATIONS_EMAIL_ADDRESS = null;
+	public static boolean GEO_IP_BLOCK_NOTIFICATIONS = true;
+	public static boolean PASSWORD_CHANGE_NOTIFICATIONS = true;
+	public static boolean DIFFERENT_COUNTRY_LOGIN_NOTIFICATIONS = true;
+	public static boolean IP_ADDRESS_CHANGE_NOTIFICATIONS = true;
+	public static boolean ACCESS_EXCEPTION_NOTIFICATIONS = true;
+	public static boolean SECURITY_EXCEPTION_NOTIFICATIONS = true;
+	public static boolean CONCURRENT_SESSION_WARNINGS = true;
+	public static boolean CONCURRENT_SESSION_NOTIFICATIONS = true;
+
 	public static boolean PRIMEFLEX = false;
 	
 	public static Set<String> TWO_FACTOR_AUTH_CUSTOMERS = null;
+	public static int TWO_FACTOR_AUTH_RESEND_COOLDOWN_SECONDS = 60;
 	
 	// for skyve script
 	/**
@@ -349,6 +460,7 @@ public class UtilImpl {
 
 	private static String absoluteBasePath;
 
+	@SuppressWarnings("java:S3776")
 	public static String getAbsoluteBasePath() {
 		if (absoluteBasePath == null) {
 			if (APPS_JAR_DIRECTORY != null) {
@@ -357,26 +469,20 @@ public class UtilImpl {
 			else {
 				URL url = Thread.currentThread().getContextClassLoader().getResource("schemas/common.xsd");
 				if (url == null) {
-					UtilImpl.LOGGER.severe("Cannot determine absolute base path. Where is schemas/common.xsd?");
+				    utilLogger.error("Cannot determine absolute base path. Where is schemas/common.xsd?");
 					ClassLoader cl = Thread.currentThread().getContextClassLoader();
-					if (cl instanceof URLClassLoader) {
-						UtilImpl.LOGGER.severe("The context classloader paths are:-");
-						for (URL entry : ((URLClassLoader) cl).getURLs()) {
-							UtilImpl.LOGGER.severe(entry.getFile());
+					if (cl instanceof URLClassLoader urlcl) {
+					    utilLogger.error("The context classloader paths are:-");
+						for (URL entry : urlcl.getURLs()) {
+						    utilLogger.error(entry.getFile());
 						}
 					}
 					else {
-						UtilImpl.LOGGER.severe("Cannot determine the context classloader paths...");
+					    utilLogger.error("Cannot determine the context classloader paths...");
 					}
 				}
 				else {
-					absoluteBasePath = url.getPath();
-					try {
-						absoluteBasePath = URLDecoder.decode(absoluteBasePath, Util.UTF8);
-					}
-					catch (UnsupportedEncodingException e) {
-						throw new IllegalStateException("UtilImpl.getAbsoluteBasePath() cannot URL decode " + absoluteBasePath, e);
-					}
+					absoluteBasePath = URLDecoder.decode(url.getPath(), StandardCharsets.UTF_8);
 					absoluteBasePath = absoluteBasePath.substring(0, absoluteBasePath.length() - 18); // remove schemas/common.xsd
 					absoluteBasePath = absoluteBasePath.replace('\\', '/');
 				}
@@ -396,34 +502,24 @@ public class UtilImpl {
 		// minify the file to remove any comments
 		json = Minifier.minify(json);
 
-		return (Map<String, Object>) JSON.unmarshall(null, json);
+		return (Map<String, Object>) JSON.unmarshall(json);
 	}
 
 	@SuppressWarnings("unchecked")
 	public static final <T extends Serializable> T cloneBySerialization(T object) {
 		return (T) SerializationHelper.clone(object);
-		// try {
-		// ByteArrayOutputStream baos = new ByteArrayOutputStream();
-		// new ObjectOutputStream(baos).writeObject(object);
-		// ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(baos.toByteArray()));
-		// return (T) ois.readObject();
-		// }
-		// catch (Exception e) {
-		// throw new IllegalArgumentException(e);
-		// }		
 	}
 
-	public static final <T extends Serializable> T cloneToTransientBySerialization(T object)
-	throws Exception {
-		if (object instanceof List<?>) {
-			for (Object element : (List<?>) object) {
-				if (element instanceof AbstractPersistentBean) {
-					populateFully((AbstractPersistentBean) element);
+	public static final <T extends Serializable> T cloneToTransientBySerialization(T object) {
+		if (object instanceof List<?> list) {
+			for (Object element : list) {
+				if (element instanceof AbstractPersistentBean bean) {
+					populateFully(bean);
 				}
 			}
 		}
-		else if (object instanceof AbstractPersistentBean) {
-			populateFully((AbstractPersistentBean) object);
+		else if (object instanceof AbstractPersistentBean bean) {
+			populateFully(bean);
 		}
 
 		T result = cloneBySerialization(object);
@@ -445,13 +541,13 @@ public class UtilImpl {
 		Document document = module.getDocument(customer, bean.getBizDocument());
 
 		// Ensure that everything is loaded
-		new BeanVisitor(false, true, false) {
+		new BeanVisitor(true, false) {
 			@Override
 			protected boolean accept(String binding,
-					Document documentAccepted,
-					Document owningDocument,
-					Relation owningRelation,
-					Bean beanAccepted) {
+										Document documentAccepted,
+										Document owningDocument,
+										Relation owningRelation,
+										Bean beanAccepted) {
 				// do nothing - just visiting loads the instance from the database
 				return true;
 			}
@@ -459,87 +555,11 @@ public class UtilImpl {
 	}
 
 	/**
-	 * Recurse a bean to determine if anything has changed
-	 */
-	private static class ChangedBeanVisitor extends BeanVisitor {
-		private boolean changed = false;
-
-		private ChangedBeanVisitor() {
-			// Check inverses for the cascade attribute
-			super(false, true, false);
-		}
-
-		@Override
-		protected boolean accept(String binding,
-									Document documentAccepted,
-									Document owningDocument,
-									Relation owningRelation,
-									Bean beanAccepted) {
-			// Process an inverse if the inverse is specified as cascading.
-			if ((owningRelation instanceof Inverse) && 
-					(! Boolean.TRUE.equals(((Inverse) owningRelation).getCascade()))) {
-				return false;
-			}
-
-			if (beanAccepted.isChanged()) {
-				changed = true;
-				if (UtilImpl.DIRTY_TRACE) {
-					UtilImpl.LOGGER.info("UtilImpl.hasChanged(): Bean " + beanAccepted.toString() + " with binding " + binding + " is DIRTY");
-				}
-				return false;
-			}
-			return true;
-		}
-
-		boolean isChanged() {
-			return changed;
-		}
-	}
-
-	/**
-	 * Recurse the bean to determine if anything has changed.
-	 * This is deprecated and has been moved to AbstractBean with the "changed" bean property.
-	 * This enables the method's result to be cached in Bean proxies.
-	 * 
-	 * @param bean The bean to test.
-	 * @return if the bean, its collections or its aggregated beans have mutated or not
-	 */
-	@Deprecated
-	public static boolean hasChanged(Bean bean) {
-		User user = CORE.getUser();
-		Customer customer = user.getCustomer();
-
-		Module module = customer.getModule(bean.getBizModule());
-		Document document = module.getDocument(customer, bean.getBizDocument());
-
-		ChangedBeanVisitor cbv = new ChangedBeanVisitor();
-		cbv.visit(document, bean, customer);
-		return cbv.isChanged();
-	}
-
-	/**
 	 * Utility method to ensure that CDI injects are performed on existing (newly created) objects.
 	 * @param target	The target object to inject dependencies into (recursively)
 	 */
 	public static void inject(Object target) {
-		@SuppressWarnings("unchecked")
-		Class<Object> type = (Class<Object>) target.getClass();
-		try {
-			type.getConstructor();
-		}
-		catch (@SuppressWarnings("unused") NoSuchMethodException e) {
-			// Can't inject unless the class has a public default constructor
-			return;
-		}
-
-		BeanManager bm = CDI.current().getBeanManager();
-        AnnotatedType<Object> at = bm.createAnnotatedType(type);
-		BeanAttributes<Object> ba = bm.createBeanAttributes(at);
-		InjectionTargetFactory<Object> itf = bm.getInjectionTargetFactory(at);
-		CreationalContext<Object> cc = bm.createCreationalContext(null);
-		jakarta.enterprise.inject.spi.Bean<Object> b = bm.createBean(ba, type, itf);
-		InjectionTarget<Object> it = itf.createInjectionTarget(b);
-		it.inject(target, cc);
+		BeanProvider.injectFields(target);
 	}
 	
 	/**
@@ -551,22 +571,21 @@ public class UtilImpl {
 	 */
 	@SuppressWarnings("unchecked")
 	public static <T> T deproxy(T possibleProxy) throws ClassCastException {
-		if (possibleProxy instanceof HibernateProxy) {
-			return (T) ((HibernateProxy) possibleProxy).getHibernateLazyInitializer().getImplementation();
+		if (possibleProxy instanceof HibernateProxy hibernateProxy) {
+			return (T) hibernateProxy.getHibernateLazyInitializer().getImplementation();
 		}
 
 		return possibleProxy;
 	}
 
-	public static void setTransient(Object object) throws Exception {
-		if (object instanceof List<?>) {
-			List<?> list = (List<?>) object;
+	@SuppressWarnings("java:S3776")
+	public static void setTransient(Object object) {
+		if (object instanceof List<?> list) {
 			for (Object element : list) {
 				setTransient(element);
 			}
 		}
-		else if (object instanceof AbstractPersistentBean) {
-			AbstractPersistentBean bean = (AbstractPersistentBean) object;
+		else if (object instanceof AbstractPersistentBean bean) {
 			bean.setBizId(UUIDv7.create().toString());
 			bean.setBizLock(null);
 			bean.setBizVersion(null);
@@ -579,18 +598,15 @@ public class UtilImpl {
 			for (String referenceName : document.getReferenceNames()) {
 				Reference reference = document.getReferenceByName(referenceName);
 				if (reference.isPersistent()) {
-					if (reference instanceof AssociationImpl) {
-						AssociationImpl association = (AssociationImpl) reference;
+					if (reference instanceof Association association) {
 						if (association.getType() != AssociationType.aggregation) {
 							setTransient(BindUtil.get(bean, referenceName));
 						}
 					}
-					else if (reference instanceof Collection) {
-						Collection collection = (Collection) reference;
-						if (collection.getType() != CollectionType.aggregation) {
-							// set each element of the collection transient
-							setTransient(BindUtil.get(bean, referenceName));
-						}
+					else if ((reference instanceof Collection collection) && 
+								(collection.getType() != CollectionType.aggregation)) {
+						// set each element of the collection transient
+						setTransient(BindUtil.get(bean, referenceName));
 					}
 				}
 			}
@@ -598,15 +614,14 @@ public class UtilImpl {
 	}
 
 	// set the data group of a bean and all its children
-	public static void setDataGroup(Object object, String bizDataGroupId) throws Exception {
-		if (object instanceof List<?>) {
-			List<?> list = (List<?>) object;
+	@SuppressWarnings("java:S3776")
+	public static void setDataGroup(Object object, String bizDataGroupId) {
+		if (object instanceof List<?> list) {
 			for (Object element : list) {
 				setDataGroup(element, bizDataGroupId);
 			}
 		}
-		else if (object instanceof AbstractPersistentBean) {
-			AbstractPersistentBean bean = (AbstractPersistentBean) object;
+		else if (object instanceof AbstractPersistentBean bean) {
 			bean.setBizDataGroupId(bizDataGroupId);
 
 			// set the bizDatagroup of references if applicable
@@ -617,18 +632,15 @@ public class UtilImpl {
 			for (String referenceName : document.getReferenceNames()) {
 				Reference reference = document.getReferenceByName(referenceName);
 				if (reference.isPersistent()) {
-					if (reference instanceof AssociationImpl) {
-						AssociationImpl association = (AssociationImpl) reference;
+					if (reference instanceof Association association) {
 						if (association.getType() != AssociationType.aggregation) {
 							setDataGroup(BindUtil.get(bean, referenceName), bizDataGroupId);
 						}
 					}
-					else if (reference instanceof Collection) {
-						Collection collection = (Collection) reference;
-						if (collection.getType() != CollectionType.aggregation) {
-							// set each element of the collection transient
-							setDataGroup(BindUtil.get(bean, referenceName), bizDataGroupId);
-						}
+					else if ((reference instanceof Collection collection) && 
+								(collection.getType() != CollectionType.aggregation)) {
+						// set each element of the collection transient
+						setDataGroup(BindUtil.get(bean, referenceName), bizDataGroupId);
 					}
 				}
 			}
@@ -671,8 +683,9 @@ public class UtilImpl {
 	 * @param path The supplied content path
 	 * @return The updated path if any slashes or <code>/modules</code> need to be added
 	 */
+	@SuppressWarnings("java:S1075") // always use *nix style slashes internally
 	public static String cleanupModuleDirectory(final String path) {
-		if (path != null && path.length() > 0) {
+		if ((path != null) && (! path.isEmpty())) {
 			String updatedPath = path;
 
 			// strip the trailing slash if any
@@ -680,11 +693,11 @@ public class UtilImpl {
 				updatedPath = path.substring(0, path.length() - 1);
 			}
 
-			if (!updatedPath.endsWith("modules")) {
+			if (! updatedPath.endsWith("modules")) {
 				updatedPath = updatedPath + "/modules/";
 			}
 
-			if (!updatedPath.endsWith("/") && !updatedPath.endsWith("\\")) {
+			if ((! updatedPath.endsWith("/")) && (! updatedPath.endsWith("\\"))) {
 				updatedPath = updatedPath + "/";
 			}
 
@@ -693,4 +706,254 @@ public class UtilImpl {
 
 		return path;
 	}
+
+    public static record ArchiveConfig(
+            int exportRuntimeSec,
+            int exportBatchSize,
+            List<ArchiveDocConfig> docConfigs,
+            ArchivedDocumentCacheConfig cacheConfig, 
+            ArchiveSchedule schedule) {
+
+        protected static final String ARCHIVE_DIR = "archive";
+        protected static final String INDEX_DIR = "index";
+
+        public static final ArchiveConfig DISABLED = new ArchiveConfig(-1, -1, emptyList(),
+                ArchivedDocumentCacheConfig.DEFAULT, ArchiveSchedule.DEFUALT);
+
+        /**
+         * Is the archiving process enabled to run on a cron schedule?
+         */
+        public boolean cronScheduleEnabled() {
+
+            return StringUtils.trimToNull(schedule().cron()) != null;
+        }
+
+        public Optional<ArchiveDocConfig> findArchiveDocConfig(String module, String document) {
+
+            if (docConfigs == null || module == null || document == null) {
+                return Optional.empty();
+            }
+
+            return docConfigs.stream()
+                             .filter(adc -> module.equals(adc.module()))
+                             .filter(adc -> document.equals(adc.document()))
+                             .findFirst();
+        }
+
+        public static record ArchiveDocConfig(String module, String document, String directory, int retainDeletedDocumentsDays) {
+
+            /**
+             * The directory we will store exported documents in <em>.archive</em> files
+             * 
+             * @return
+             */
+            public Path getArchiveDirectory() {
+                return Path.of(CONTENT_DIRECTORY, ARCHIVE_DIR, this.directory);
+            }
+
+            /**
+             * The directory (within the archive directory) where the lucene index is located.
+             * 
+             * @return
+             */
+            public Path getIndexDirectory() {
+                return getArchiveDirectory().resolve(INDEX_DIR);
+            }
+        }
+        
+        public static record ArchiveSchedule(String cron, String customerName, String userName) {
+
+            public static final ArchiveSchedule DEFUALT = new ArchiveSchedule("", "", "");
+
+            public User getUser() {
+                SuperUser u = new SuperUser();
+                u.setName(userName());
+                u.setId(userName());
+                u.setCustomerName(customerName());
+                return u;
+            }
+        }
+    }
+
+    @SuppressWarnings("java:S2068") // false positive - this is not a hard coded password, it's a hashing algorithm that we need to specify for security purposes
+    public static void clear() {
+    	// reset the state of this class (mostly static) to what it would be on JVM startup
+    	CONFIGURATION = null;
+    	OVERRIDE_CONFIGURATION = null;
+    	
+    	XML_TRACE = false;
+    	HTTP_TRACE = false;
+    	QUERY_TRACE = false;
+    	COMMAND_TRACE = false;
+    	FACES_TRACE = false;
+    	SQL_TRACE = false;
+    	CONTENT_TRACE = false;
+    	SECURITY_TRACE = false;
+    	BIZLET_TRACE = false;
+    	DIRTY_TRACE = false;
+    	PRETTY_SQL_OUTPUT = false;
+    	
+    	ARCHIVE_NAME = null;
+    	
+    	DEV_LOGIN_FILTER_USED = false;
+    	
+    	CONTENT_DIRECTORY = "/_/Apps/content/";
+    	CONTENT_GC_CRON = "0 7 0/1 1/1 * ? *";
+    	CONTENT_GC_ELIGIBLE_AGE_MINUTES = 720;
+    	STATE_EVICT_CRON = "0 37 0 1/1 * ? *";
+    	CONTENT_FILE_STORAGE = true;
+    	CONTENT_FILE_SUFFIXES = false;
+    	CONTENT_JDBC_SERVER_ARGS = null;
+    	CONTENT_REST_SERVER_URL = null;
+    	BACKUP_DIRECTORY = null;
+    	BACKUP_EXTERNAL_BACKUP_CLASS = null;
+    	BACKUP_PROPERTIES = null;
+    	BACKUP_RESTORE_MAX_EXTRACT_ENTRIES = 10_000;
+    	BACKUP_RESTORE_MAX_EXTRACT_SIZE_MB = 500;
+    	
+    	UPLOADS_FILE_WHITELIST_REGEX = "^.+\\.(?!(ADE|ADP|APP|ASA|ASP|BAS|BAT|CAB|CER|CHM|CMD|COM|CPL|CRT|CSH|DLL|DOCM|DOTM|EXE|FXP|HLP|HTA|HTR|INF|INS|ISP|ITS|JS|JSE|KSH|LNK|MAD|MAF|MAG|MAM|MAQ|MAR|MAS|MAT|MAU|MAV|MAW|MDA|MDB|MDE|MDT|MDW|MDZ|MSC|MSI|MSP|MST|OCX|OPS|PCD|PIF|POTM|PPAM|PPSM|PPTM|PRF|PRG|REG|SCF|SO|SCR|SCT|SHB|SHS|TMP|URL|VB|VBE|VBS|VBX|VSMACROS|VSS|VST|VSW|WS|WSC|WSF|WSH|XLAM|XLSB|XLSM|XSTM|XSL)$)([^.]+$)";
+    	UPLOADS_FILE_MAXIMUM_SIZE_IN_MB = 10;
+    	
+    	UPLOADS_CONTENT_WHITELIST_REGEX = UPLOADS_FILE_WHITELIST_REGEX;
+    	UPLOADS_CONTENT_MAXIMUM_SIZE_IN_MB = UPLOADS_FILE_MAXIMUM_SIZE_IN_MB;
+    	UPLOADS_IMAGE_WHITELIST_REGEX = UPLOADS_FILE_WHITELIST_REGEX;
+    	UPLOADS_IMAGE_MAXIMUM_SIZE_IN_MB = UPLOADS_FILE_MAXIMUM_SIZE_IN_MB;
+    	UPLOADS_VIDEO_WHITELIST_REGEX = "^.+\\.(MP4|WEBM|MOV|M4V|OGV|AVI)$";
+    	UPLOADS_VIDEO_MAXIMUM_SIZE_IN_MB = 100;
+    	UPLOADS_BIZPORT_WHITELIST_REGEX = "^.+\\.(XLS|XLSX)$";
+    	UPLOADS_BIZPORT_MAXIMUM_SIZE_IN_MB = UPLOADS_FILE_MAXIMUM_SIZE_IN_MB;
+    	
+    	PUSH_KEEP_ALIVE_TIME_IN_SECONDS = 20;
+    	PUSH_MESSAGE_QUEUE_SIZE = 256;
+    	PUSH_SEND_TIMEOUT_IN_SECONDS = 30;
+    	PUSH_MAX_RECEIVERS_PER_USER = 5;
+		PUSH_MAX_RECEIVERS_TOTAL = 0;
+    	PUSH_STALE_RECEIVER_TIMEOUT_IN_SECONDS = 60;
+
+    	ADDINS_DIRECTORY = null;
+        ARCHIVE_CONFIG = ArchiveConfig.DISABLED;
+
+    	THUMBNAIL_CONCURRENT_THREADS = 10;
+    	THUMBNAIL_SUBSAMPLING_MINIMUM_TARGET_SIZE = 512;
+    	THUMBNAIL_FILE_STORAGE = true;
+    	THUMBNAIL_DIRECTORY = null;
+    	
+    	APPS_JAR_DIRECTORY = null;
+
+    	DEV_MODE = false;
+    	ACCESS_CONTROL = true;
+    	CUSTOMER = null;
+    	SERVER_URL = null;
+    	SKYVE_CONTEXT = null;
+    	HOME_URI = null;
+    	SKYVE_CONTEXT_REAL_PATH = null;
+    	PROPERTIES_FILE_PATH = null;
+    	
+    	SKYVE_REPOSITORY_CLASS = null;
+    	SKYVE_PERSISTENCE_CLASS = null;
+    	SKYVE_DYNAMIC_PERSISTENCE_CLASS = null;
+    	SKYVE_CONTENT_MANAGER_CLASS = null;
+    	SKYVE_NUMBER_GENERATOR_CLASS = null;
+    	SKYVE_CUSTOMISATIONS_CLASS = null;
+    	SKYVE_GEOIP_SERVICE_CLASS = null;
+    	SKYVE_MAIL_SERVICE_CLASS = null;
+    	SKYVE_SMS_SERVICE_CLASS = null;
+
+    	CACHE_DIRECTORY = null;
+    	CACHE_MULTIPLE = false;
+    	FORCE_NON_PERSISTENT_CACHING = false; 
+    	CONVERSATION_CACHE = null;
+    	CSRF_TOKEN_CACHE = null;
+    	SESSION_CACHE = null;
+    	GEO_IP_CACHE = null;
+    	HIBERNATE_CACHES = new ArrayList<>();
+    	HIBERNATE_FAIL_ON_MISSING_CACHE = false;
+    	APP_CACHES = new ArrayList<>();
+
+    	DATA_STORES = new TreeMap<>();
+    	DATA_STORE = null;
+    	DDL_SYNC = true;
+    	CATALOG = null;
+    	SCHEMA = null;
+    	
+    	SMTP = null;
+    	SMTP_PORT = 0;
+    	SMTP_UID = null;
+    	SMTP_PWD = null;
+    	SMTP_PROPERTIES = null;
+    	SMTP_HEADERS = null;
+    	SMTP_SENDER = null;
+    	SMTP_TEST_RECIPIENT = null;
+    	SMTP_TEST_BOGUS_SEND = false;
+
+    	MAP_TYPE = MapType.leaflet;
+    	MAP_LAYERS = null;
+    	MAP_CENTRE = null;
+    	MAP_ZOOM = 1;
+
+    	GOOGLE_MAPS_V3_API_KEY = null;
+    	GOOGLE_RECAPTCHA_SITE_KEY = null;
+    	GOOGLE_RECAPTCHA_SECRET_KEY = null;
+    	CLOUDFLARE_TURNSTILE_SITE_KEY = null;
+    	CLOUDFLARE_TURNSTILE_SECRET_KEY = null;
+    	CKEDITOR_CONFIG_FILE_URL = "";
+    	GEO_IP_KEY = null;
+    	GEO_IP_COUNTRY_CODES = null;
+    	GEO_IP_WHITELIST = true;
+
+    	ENVIRONMENT_IDENTIFIER = null;
+    	
+    	SUPPORT_EMAIL_ADDRESS = null;
+
+    	JOB_SCHEDULER = true;
+
+    	PASSWORD_HASHING_ALGORITHM = "argon2";
+    	PASSWORD_EXPIRY_IN_DAYS = 0;
+    	PASSWORD_HISTORY_RETENTION = 0;
+    	ACCOUNT_LOCKOUT_THRESHOLD = 3;
+    	ACCOUNT_LOCKOUT_DURATION_MULTIPLE_IN_SECONDS = 10;
+    	REMEMBER_ME_TOKEN_TIMEOUT_HOURS = 336; // 336hrs = 14 days
+    	CHECK_FOR_BREACHED_PASSWORD = true;
+    	ACCOUNT_ALLOW_SELF_REGISTRATION = false;
+    	AUTHENTICATION_GOOGLE_CLIENT_ID = null;
+    	AUTHENTICATION_GOOGLE_SECRET = null;
+    	AUTHENTICATION_FACEBOOK_CLIENT_ID = null;
+    	AUTHENTICATION_FACEBOOK_SECRET = null;
+    	AUTHENTICATION_GITHUB_CLIENT_ID = null;
+    	AUTHENTICATION_GITHUB_SECRET = null;
+
+    	AUTHENTICATION_AZUREAD_CLIENT_ID = null;
+    	AUTHENTICATION_AZUREAD_TENANT_ID = null;
+    	AUTHENTICATION_AZUREAD_SECRET = null;
+
+    	AUTHENTICATION_LOGIN_URI = "/login";
+    	AUTHENTICATION_LOGGED_OUT_URI = "/loggedOut";
+
+    	SHOW_SETUP = false;
+    	
+    	HEALTH_CHECK = true;
+    	HEALTH_CACHE_TIME_IN_SECONDS = 60; // 1 min
+    	
+    	BOOTSTRAP_CUSTOMER = null;
+    	BOOTSTRAP_USER = null;
+    	BOOTSTRAP_EMAIL = null;
+    	BOOTSTRAP_PASSWORD = null;
+    	
+    	SECURITY_NOTIFICATIONS_EMAIL_ADDRESS = null;
+    	GEO_IP_BLOCK_NOTIFICATIONS = true;
+    	PASSWORD_CHANGE_NOTIFICATIONS = true;
+    	DIFFERENT_COUNTRY_LOGIN_NOTIFICATIONS = true;
+    	IP_ADDRESS_CHANGE_NOTIFICATIONS = true;
+    	ACCESS_EXCEPTION_NOTIFICATIONS = true;
+    	SECURITY_EXCEPTION_NOTIFICATIONS = true;
+
+	    	PRIMEFLEX = false;
+	    	
+	    	TWO_FACTOR_AUTH_CUSTOMERS = null;
+	    	TWO_FACTOR_AUTH_RESEND_COOLDOWN_SECONDS = 60;
+	    	
+	    	MODULE_DIRECTORY = null;
+
+    	absoluteBasePath = null;
+    }
 }

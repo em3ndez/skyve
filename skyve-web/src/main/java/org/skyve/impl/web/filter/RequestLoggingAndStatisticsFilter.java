@@ -10,14 +10,14 @@ import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.util.WebStatsUtil;
 import org.skyve.impl.web.UserAgent;
 import org.skyve.impl.web.WebContainer;
-import org.skyve.util.Monitoring;
-import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.skyve.util.monitoring.Measure;
+import org.skyve.util.monitoring.Monitoring;
 import org.skyve.web.UserAgentType;
 import org.skyve.web.WebContext;
+import org.slf4j.Logger;
 
-import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
-import jakarta.servlet.FilterConfig;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
@@ -25,106 +25,29 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 
-public class RequestLoggingAndStatisticsFilter implements Filter {
-    // A list of all excluded URL prefixes
-    private String[] excludedURLPrefixes;
+/**
+ * Log and collect stats on requests, if this is not a static resource.
+ */
+public class RequestLoggingAndStatisticsFilter extends ExcludeStaticFilter {
 
-	@Override
-	public void init(FilterConfig config) throws ServletException {
-		String urls = Util.processStringValue(config.getInitParameter("excluded"));
-		if (urls != null) {
-			excludedURLPrefixes = urls.split("\n");
-			for (int i = 0, l = excludedURLPrefixes.length; i < l; i++) {
-				excludedURLPrefixes[i] = Util.processStringValue(excludedURLPrefixes[i]);
-			}
-		}
-	}
-
-	@Override
-	public void destroy() {
-		excludedURLPrefixes = null;
-	}
+    private static final Logger HTTP_LOGGER = Category.HTTP.logger();
+    private static final Logger COMMAND_LOGGER = Category.COMMAND.logger();
 
     @Override
 	public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
 	throws IOException, ServletException {
 		HttpServletRequest httpRequest = (HttpServletRequest) request;
-		String servletPath = httpRequest.getServletPath();
-
-        // Test if this URL is unsecured in the web.xml, and bug out if so
-        // NB can't use queryString here as there could be AJAX posts etc in faces so not good practice
-        if (excludedURLPrefixes != null) {
-	        for (String excludedURLPrefix : excludedURLPrefixes) {
-	        	if ((excludedURLPrefix != null) && servletPath.startsWith(excludedURLPrefix)) {
-        			chain.doFilter(request, response);
-	        		return;
-	        	}
-	        }
-        }
+    	if (staticURLPrefix(httpRequest)) {
+    		chain.doFilter(request, response);
+    		return;
+    	}
 
 		try {
 			// Set the request and response in WebContainer
 			WebContainer.setHttpServletRequestResponse((HttpServletRequest) request, (HttpServletResponse) response);
 
 			if (UtilImpl.HTTP_TRACE) {
-				UtilImpl.LOGGER.info("*********************************** REQUEST ************************************");
-				UtilImpl.LOGGER.info("ContextPath=" + httpRequest.getContextPath());
-				UtilImpl.LOGGER.info("LocalAddr=" + request.getLocalAddr());
-				UtilImpl.LOGGER.info("LocalName=" + request.getLocalName());
-				UtilImpl.LOGGER.info("LocalPort=" + request.getLocalPort());
-				UtilImpl.LOGGER.info("Method=" + httpRequest.getMethod());
-				UtilImpl.LOGGER.info("PathInfo=" + httpRequest.getPathInfo());
-				UtilImpl.LOGGER.info("PathTranslated=" + httpRequest.getPathTranslated());
-				UtilImpl.LOGGER.info("Protocol=" + request.getProtocol());
-				UtilImpl.LOGGER.info("QueryString=" + httpRequest.getQueryString());
-				UtilImpl.LOGGER.info("RemoteAddr=" + request.getRemoteAddr());
-				UtilImpl.LOGGER.info("RemoteHost=" + request.getRemoteHost());
-				UtilImpl.LOGGER.info("RemotePort=" + request.getRemotePort());
-				UtilImpl.LOGGER.info("RemoteUser=" + httpRequest.getRemoteUser());
-				UtilImpl.LOGGER.info("RequestedSessionId=" + httpRequest.getRequestedSessionId());
-				UtilImpl.LOGGER.info("RequestURI=" + httpRequest.getRequestURI());
-				UtilImpl.LOGGER.info("RequestURL=" + httpRequest.getRequestURL().toString());
-				UtilImpl.LOGGER.info("Scheme=" + request.getScheme());
-				UtilImpl.LOGGER.info("ServerName=" + request.getServerName());
-				UtilImpl.LOGGER.info("ServerPort=" + request.getServerPort());
-				UtilImpl.LOGGER.info("ServletPath=" + servletPath);
-				Principal principal = httpRequest.getUserPrincipal();
-				UtilImpl.LOGGER.info("UserPrincipal=" + ((principal == null) ? "<null>" : principal.getName()));
-				UtilImpl.LOGGER.info("********************************** PARAMETERS **********************************");
-				Enumeration<String> parameterNames = request.getParameterNames();
-				while (parameterNames.hasMoreElements()) {
-					String parameterName = parameterNames.nextElement();
-					if (parameterName != null) {
-						if (parameterName.toLowerCase().contains("password")) {
-							UtilImpl.LOGGER.info(parameterName + "=***PASSWORD***");
-						}
-						else {
-							String[] parameterValues = request.getParameterValues(parameterName);
-							if (parameterValues != null) {
-								for (String parameterValue : parameterValues) {
-									int parameterValueLength = parameterValue.length();
-									if (parameterValueLength > 51200) { // 50K
-										UtilImpl.LOGGER.info(parameterName + "=***LENGTH " + (parameterValueLength / 1024) + "K***");
-									}
-									else if (parameterValue.toLowerCase().contains("password")) {
-										UtilImpl.LOGGER.info(parameterName + "=***CONTAINS PASSWORD***");
-									}
-									else {
-										UtilImpl.LOGGER.info(String.format("%s=%s", parameterName, parameterValue));
-									}
-								}
-							}
-						}
-					}
-				}
-				UtilImpl.LOGGER.info("*********************************** HEADERS ************************************");
-				Enumeration<String> headerNames = httpRequest.getHeaderNames();
-				while (headerNames.hasMoreElements()) {
-					String headerName = headerNames.nextElement();
-					UtilImpl.LOGGER.info(headerName + "=" + httpRequest.getHeader(headerName));
-				}
-				UtilImpl.LOGGER.info("***************************** SESSION/CONVERSATION *****************************");
-				StateUtil.logStateStats();
+				log(httpRequest);
 			}
 
 			HttpSession session = httpRequest.getSession(false);
@@ -136,40 +59,100 @@ public class RequestLoggingAndStatisticsFilter implements Filter {
 				// types of requests are few and far between.
 				if (user != null) {
 					String userAgentHeader = httpRequest.getHeader("User-Agent");
-					UserAgentType userAgentType = UserAgent.getType(httpRequest);
+					UserAgentType userAgentType = UserAgent.detectType(httpRequest);
 					WebStatsUtil.recordHit(user, userAgentHeader, userAgentType);
 				}
 				else {
-					if (UtilImpl.COMMAND_TRACE) UtilImpl.LOGGER.info("DIDNT RECORD HIT AS WE ARE NOT LOGGED IN");
+					if (UtilImpl.COMMAND_TRACE) COMMAND_LOGGER.info("DIDNT RECORD HIT AS WE ARE NOT LOGGED IN");
 				}
 			}
 			catch (Exception e) {
 				throw new ServletException(e);
 			}
 			finally {
-				// Determine CPU and MEM before
-				double loadPre = Monitoring.systemLoadAverage();
-				int memPctPre = Monitoring.percentageUsedMomory();
-				long millis = System.currentTimeMillis();
+				Monitoring.start();
 
 				// pass the request/response on
 				chain.doFilter(request, response);
 
-				// Determine CPU and MEM after
-				double loadPost = Monitoring.systemLoadAverage();
-				int memPctPost = Monitoring.percentageUsedMomory();
+				Measure measure = Monitoring.end();
 
-				UtilImpl.LOGGER.info("******************************* TIMING/RESOURCES *******************************");
-				UtilImpl.LOGGER.info(String.format("TIME=%,d PRE/POST(DELTA) CPU=%.2f/%.2f(%.2f) MEM=%d%%/%d%%(%d%%)",
-						Long.valueOf(System.currentTimeMillis() - millis),
-						Double.valueOf(loadPre), Double.valueOf(loadPost), Double.valueOf(loadPost - loadPre),
-						Integer.valueOf(memPctPre), Integer.valueOf(memPctPost), Integer.valueOf(memPctPost - memPctPre)));
-				if (UtilImpl.HTTP_TRACE)
-					UtilImpl.LOGGER.info("********************************************************************************");
+				if (UtilImpl.HTTP_TRACE) {
+					HTTP_LOGGER.info("******************************* TIMING/RESOURCES *******************************");
+					String log = String.format("TIME=%,d PRE/POST(DELTA) CPU=%,.2f/%,.2f(%,.2f) MEM=%.2f%%/%.2f%%(%.2f%%)",
+												Integer.valueOf(measure.getMillis()),
+												Float.valueOf(measure.getStartCpu()), Float.valueOf(measure.getEndCpu()), Float.valueOf(measure.getCpuUsage()),
+												Float.valueOf(measure.getStartMem()), Float.valueOf(measure.getEndMem()), Float.valueOf(measure.getMemUsage()));
+					HTTP_LOGGER.info(log);
+					HTTP_LOGGER.info("********************************************************************************");
+				}
 			}
-		} finally {
+		}
+		finally {
 			// Clear the request/response in WebContainer
 			WebContainer.clear();
 		}
 	}
+    
+    @SuppressWarnings({"java:S3776", "java:S2254", "java:S2629"})
+    private static void log(HttpServletRequest request) {
+		HTTP_LOGGER.info("*********************************** REQUEST ************************************");
+		HTTP_LOGGER.info("ContextPath={}", request.getContextPath());
+		HTTP_LOGGER.info("LocalAddr={}", request.getLocalAddr());
+		HTTP_LOGGER.info("LocalName={}", request.getLocalName());
+		HTTP_LOGGER.info("LocalPort={}", Integer.valueOf(request.getLocalPort()));
+		HTTP_LOGGER.info("Method={}", request.getMethod());
+		HTTP_LOGGER.info("PathInfo={}", request.getPathInfo());
+		HTTP_LOGGER.info("PathTranslated={}", request.getPathTranslated());
+		HTTP_LOGGER.info("Protocol={}", request.getProtocol());
+		HTTP_LOGGER.info("QueryString={}", request.getQueryString());
+		HTTP_LOGGER.info("RemoteAddr={}", request.getRemoteAddr());
+		HTTP_LOGGER.info("RemoteHost={}", request.getRemoteHost());
+		HTTP_LOGGER.info("RemotePort={}", Integer.valueOf(request.getRemotePort()));
+		HTTP_LOGGER.info("RemoteUser={}", request.getRemoteUser());
+		HTTP_LOGGER.info("RequestedSessionId={}", request.getRequestedSessionId());
+		HTTP_LOGGER.info("RequestURI={}", request.getRequestURI());
+		HTTP_LOGGER.info("RequestURL={}", request.getRequestURL());
+		HTTP_LOGGER.info("Scheme={}", request.getScheme());
+		HTTP_LOGGER.info("ServerName={}", request.getServerName());
+		HTTP_LOGGER.info("ServerPort={}", Integer.valueOf(request.getServerPort()));
+		HTTP_LOGGER.info("ServletPath={}", request.getServletPath());
+		Principal principal = request.getUserPrincipal();
+		HTTP_LOGGER.info("UserPrincipal={}", ((principal == null) ? "<null>" : principal.getName()));
+		HTTP_LOGGER.info("********************************** PARAMETERS **********************************");
+		Enumeration<String> parameterNames = request.getParameterNames();
+		while (parameterNames.hasMoreElements()) {
+			String parameterName = parameterNames.nextElement();
+			if (parameterName != null) {
+				if (parameterName.toLowerCase().contains("password")) {
+					HTTP_LOGGER.info("{}=***PASSWORD***", parameterName);
+				}
+				else {
+					String[] parameterValues = request.getParameterValues(parameterName);
+					if (parameterValues != null) {
+						for (String parameterValue : parameterValues) {
+							int parameterValueLength = parameterValue.length();
+							if (parameterValueLength > 51200) { // 50K
+								HTTP_LOGGER.info("{}=***LENGTH {}K***", parameterName, Integer.valueOf(parameterValueLength / 1024));
+							}
+							else if (parameterValue.toLowerCase().contains("password")) {
+								HTTP_LOGGER.info("{}=***CONTAINS PASSWORD***", parameterName);
+							}
+							else {
+								HTTP_LOGGER.info("{}={}", parameterName, parameterValue);
+							}
+						}
+					}
+				}
+			}
+		}
+		HTTP_LOGGER.info("*********************************** HEADERS ************************************");
+		Enumeration<String> headerNames = request.getHeaderNames();
+		while (headerNames.hasMoreElements()) {
+			String headerName = headerNames.nextElement();
+			HTTP_LOGGER.info("{}={}", headerName, request.getHeader(headerName));
+		}
+		HTTP_LOGGER.info("***************************** SESSION/CONVERSATION *****************************");
+		StateUtil.logStateStats();
+    }
 }

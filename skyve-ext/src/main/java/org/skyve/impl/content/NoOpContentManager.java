@@ -5,6 +5,13 @@ import org.skyve.content.BeanContent;
 import org.skyve.content.ContentIterable;
 import org.skyve.content.SearchResults;
 
+/**
+ * No-operation {@link AbstractContentManager} implementation that silently
+ * discards all content store operations.
+ *
+ * <p>Useful as a placeholder in environments where content indexing is not
+ * required or is handled externally.
+ */
 public class NoOpContentManager extends AbstractContentManager {
 	@Override
 	public void put(BeanContent content) throws Exception {
@@ -49,17 +56,22 @@ public class NoOpContentManager extends AbstractContentManager {
 	}
 
 	@Override
-	public void truncate(String customerName) throws Exception {
+	public void dropIndexing() throws Exception {
+		// no-op
+	}
+	
+	@Override
+	public void truncateIndexing(String customerName) throws Exception {
 		// no-op
 	}
 
 	@Override
-	public void truncateAttachments(String customerName) throws Exception {
+	public void truncateAttachmentIndexing(String customerName) throws Exception {
 		// no-op
 	}
 
 	@Override
-	public void truncateBeans(String customerName) throws Exception {
+	public void truncateBeanIndexing(String customerName) throws Exception {
 		// no-op
 	}
 

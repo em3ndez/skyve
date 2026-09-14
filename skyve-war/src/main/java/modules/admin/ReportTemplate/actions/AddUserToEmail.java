@@ -10,8 +10,18 @@ import org.skyve.web.WebContext;
 import modules.admin.domain.Generic;
 import modules.admin.domain.ReportTemplate;
 
+/**
+ * Adds a selected user to the report template's email distribution list,
+ * preventing duplicate additions and capturing the user's email address.
+ */
 public class AddUserToEmail implements ServerSideAction<ReportTemplate> {
-
+	/**
+	 * Executes execute.
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @return the result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public ServerSideActionResult<ReportTemplate> execute(ReportTemplate bean, WebContext webContext) throws Exception {
 		if (bean.getNewUserToEmail() == null) {

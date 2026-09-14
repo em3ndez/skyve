@@ -14,7 +14,9 @@ import org.skyve.impl.domain.AbstractTransientBean;
 import org.skyve.impl.domain.ChangeTrackingArrayList;
 
 /**
- * User Dashboard
+ * User Management
+ * <br/>
+ * Personalised dashboard showing user favorites and recent activity for quick access to commonly used features.
  * 
  * @navhas n currentUser 0..1 User
  * @navcomposed n favourites 0..n Generic
@@ -80,17 +82,11 @@ public abstract class UserDashboard extends AbstractTransientBean {
 	@XmlTransient
 	public String getBizKey() {
 		try {
-			return org.skyve.util.Binder.formatMessage("User Dashboard", this);
+			return org.skyve.util.Binder.formatMessage("User Management", this);
 		}
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof UserDashboard) && 
-					this.getBizId().equals(((UserDashboard) o).getBizId()));
 	}
 
 	/**

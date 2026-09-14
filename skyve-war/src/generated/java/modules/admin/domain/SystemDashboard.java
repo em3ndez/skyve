@@ -13,6 +13,8 @@ import org.skyve.impl.domain.ChangeTrackingArrayList;
 
 /**
  * System Dashboard
+ * <br/>
+ * Document that displays system health and configuration status including session count, email setup, backups, disk space, and feature availability.
  * 
  * @navhas n status 0..n Generic
  * @stereotype "transient"
@@ -70,12 +72,6 @@ public class SystemDashboard extends AbstractTransientBean {
 	public String getBizKey() {
 		return toString();
 
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof SystemDashboard) && 
-					this.getBizId().equals(((SystemDashboard) o).getBizId()));
 	}
 
 	/**

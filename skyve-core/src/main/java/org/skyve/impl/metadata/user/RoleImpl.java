@@ -12,6 +12,13 @@ import org.skyve.metadata.module.Module;
 import org.skyve.metadata.user.Role;
 import org.skyve.metadata.user.UserAccess;
 
+/**
+ * Runtime implementation of {@link org.skyve.metadata.user.Role} that carries
+ * the role's document and action privilege set, content restrictions and
+ * permissions, and named {@link org.skyve.metadata.user.UserAccess} grants.
+ *
+ * @see org.skyve.metadata.user.Role
+ */
 public class RoleImpl implements Role {
 	private static final long serialVersionUID = -2841351233211789543L;
 
@@ -23,6 +30,7 @@ public class RoleImpl implements Role {
 	private List<ContentPermission> contentPermissions = new ArrayList<>();
 	private Map<UserAccess, Set<String>> accesses = new TreeMap<>();
 	private String documentation;
+	private Map<String, String> properties = new TreeMap<>();
 	
 	@Override
 	public String getDescription() {
@@ -74,5 +82,10 @@ public class RoleImpl implements Role {
 
 	public void setDocumentation(String documentation) {
 		this.documentation = documentation;
+	}
+	
+	@Override
+	public Map<String, String> getProperties() {
+		return properties;
 	}
 }

@@ -14,15 +14,27 @@ import org.skyve.metadata.module.Module;
 import org.skyve.metadata.user.User;
 import org.skyve.persistence.Persistence;
 import org.skyve.util.BeanValidator;
+import org.skyve.util.Util;
 import org.skyve.web.WebContext;
 
 import modules.admin.Configuration.ConfigurationExtension;
 import modules.admin.domain.ChangePassword;
 import modules.admin.domain.Configuration;
 
+/**
+ * Applies a password change and triggers follow-up notification handling.
+ */
 public class MakePasswordChange implements ServerSideAction<ChangePassword> {
 	
+	/**
+	 * Performs the execute operation.
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public ServerSideActionResult<ChangePassword> execute(ChangePassword bean, WebContext webContext) throws Exception {
 		Persistence persistence = CORE.getPersistence();
 		User user = persistence.getUser();
@@ -38,7 +50,7 @@ public class MakePasswordChange implements ServerSideAction<ChangePassword> {
 		// check for suitable complexity
 		ConfigurationExtension configuration = Configuration.newInstance();
 
-		if (!configuration.meetsComplexity(newPassword)) {
+		if (! configuration.meetsComplexity(newPassword)) {
 			StringBuilder sb = new StringBuilder("The password you have entered is not sufficiently complex. ");
 			sb.append(configuration.getPasswordRuleDescription());
 			sb.append(" Please re-enter and confirm the password.");
@@ -109,7 +121,7 @@ public class MakePasswordChange implements ServerSideAction<ChangePassword> {
 				userBean.setPasswordHistory(newPasswordHistory.toString());
 			}
 		}
-		else { // zero password history if it is switched offS
+		else { // zero password history if it is switched off
 			userBean.setPasswordHistory(null);
 		}
 
@@ -126,11 +138,11 @@ public class MakePasswordChange implements ServerSideAction<ChangePassword> {
 		bean.setNewPassword(null);
 		bean.setConfirmPassword(null);
 
-		bean.setResponse("Your password has been changed.");
+		bean.setResponse(Util.i18n("admin.changePassword.passwordChanged", Util.getLoginUrl()));
 
 		// Ensure the user doesn't need to change their password any more.
 		((UserImpl) user).setPasswordChangeRequired(false);
-
+		
 		return new ServerSideActionResult<>(bean); // stay on the same form
 	}
 }

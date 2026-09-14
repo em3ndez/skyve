@@ -2,7 +2,7 @@ package org.skyve.impl.web.service;
 
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +16,9 @@ import org.skyve.domain.messages.SessionEndedException;
 import org.skyve.domain.types.converters.Format.TextCase;
 import org.skyve.impl.generate.ViewRenderer;
 import org.skyve.impl.metadata.Container;
-import org.skyve.impl.metadata.model.document.field.ConvertableField;
+import org.skyve.impl.metadata.MetadataIconResolver;
+import org.skyve.impl.metadata.MetadataIconResolver.ResolvedIcon;
+import org.skyve.impl.metadata.model.document.field.ConvertibleField;
 import org.skyve.impl.metadata.model.document.field.Date;
 import org.skyve.impl.metadata.model.document.field.DateTime;
 import org.skyve.impl.metadata.model.document.field.Decimal10;
@@ -125,9 +127,8 @@ import org.skyve.impl.metadata.view.widget.bound.input.ColourPicker;
 import org.skyve.impl.metadata.view.widget.bound.input.Combo;
 import org.skyve.impl.metadata.view.widget.bound.input.Comparison;
 import org.skyve.impl.metadata.view.widget.bound.input.CompleteType;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentImage;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentLink;
 import org.skyve.impl.metadata.view.widget.bound.input.ContentSignature;
+import org.skyve.impl.metadata.view.widget.bound.input.ContentUpload;
 import org.skyve.impl.metadata.view.widget.bound.input.Geometry;
 import org.skyve.impl.metadata.view.widget.bound.input.GeometryInputType;
 import org.skyve.impl.metadata.view.widget.bound.input.GeometryMap;
@@ -204,19 +205,41 @@ import org.skyve.util.Binder.TargetMetaData;
 import org.skyve.util.OWASP;
 import org.skyve.util.Util;
 
+import jakarta.annotation.Nonnull;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
+
+/**
+ * Produces SmartClient metadata payloads for module menus, data sources, and resolved document views.
+ *
+ * <p>Requests can target either full module metadata or a specific document view definition.
+ * The servlet resolves the authenticated user, applies access checks, and serializes runtime metadata
+ * to JSON for SmartClient bootstrap and view rendering.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate metadata JSON output fragments.
 public class MetaDataServlet extends HttpServlet {
 	private static final long serialVersionUID = -2160904569807647301L;
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(MetaDataServlet.class);
 
+	/**
+	 * Handles metadata retrieval requests and returns the computed JSON metadata payload.
+	 *
+	 * @param request inbound servlet request
+	 * @param response outbound servlet response
+	 * @throws ServletException when servlet processing fails
+	 * @throws IOException when metadata cannot be written to the response stream
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doGet(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
     	response.setContentType(MimeType.json.toString());
-        response.setCharacterEncoding(Util.UTF8);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 		response.addHeader("Cache-control", "private,no-cache,no-store"); // never
 		response.addDateHeader("Expires", 0); // never
 		
@@ -224,63 +247,65 @@ public class MetaDataServlet extends HttpServlet {
 			AbstractPersistence persistence = AbstractPersistence.get();
 			String documentName = null;
 			try {
-				try {
-					persistence.begin();
-			    	Principal userPrincipal = request.getUserPrincipal();
-			    	User user = WebUtil.processUserPrincipalForRequest(request, (userPrincipal == null) ? null : userPrincipal.getName());
-					if (user == null) {
-						throw new SessionEndedException(request.getLocale());
-					}
-					persistence.setUser(user);
-
-					String uxui = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.UXUI)));
-					if (uxui == null) {
-						uxui = UserAgent.getUxUi(request).getName();
-					}
-					String moduleName = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.MODULE_NAME)));
-					documentName = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.DOCUMENT_NAME)));
-					if (documentName != null) {
-						EXT.checkAccess(user, UserAccess.singular(moduleName, documentName), uxui);
-
-						String top = Util.processStringValue(request.getParameter(AbstractWebContext.TOP_FORM_LABELS_NAME));
-						pw.append(view(user, uxui, moduleName, documentName, Boolean.TRUE.toString().equals(top)));
-					}
-					else {
-						metadata(user, uxui, moduleName, pw);
-					}
+				persistence.begin();
+		    	Principal userPrincipal = request.getUserPrincipal();
+		    	User user = WebUtil.processUserPrincipalForRequest(request, (userPrincipal == null) ? null : userPrincipal.getName());
+				if (user == null) {
+					throw new SessionEndedException(request.getLocale());
 				}
-				catch (InvocationTargetException e) {
-					throw e.getTargetException();
+				persistence.setUser(user);
+
+				String uxui = UserAgent.getSelection(request).getUxUi().getName();
+				String moduleName = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.MODULE_NAME)));
+				documentName = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.DOCUMENT_NAME)));
+				if (documentName != null) {
+					EXT.checkAccess(user, UserAccess.singular(moduleName, documentName), uxui);
+
+					String top = Util.processStringValue(request.getParameter(AbstractWebContext.TOP_FORM_LABELS_NAME));
+					Util.chunkCharsToWriter(view(user, uxui, moduleName, documentName, Boolean.TRUE.toString().equals(top)), pw);
+				}
+				else {
+					metadata(user, uxui, moduleName, pw);
 				}
 			}
 			catch (Throwable t) {
-				t.printStackTrace();
+				LOGGER.error(t.getMessage(), t);
 				persistence.rollback();
 				pw.print(emptyResponse(documentName));
 			}
 			finally {
-				if (persistence != null) {
-					persistence.commit(true);
-				}
+				persistence.commit(true);
 			}
 		}
 	}
 	
+	/**
+	 * Delegates POST metadata requests to {@link #doGet(HttpServletRequest, HttpServletResponse)}.
+	 *
+	 * @param req inbound servlet request
+	 * @param resp outbound servlet response
+	 * @throws ServletException when servlet processing fails
+	 * @throws IOException when metadata cannot be written to the response stream
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
 		doGet(req, resp);
 	}
 
-	private static void metadata(User user, String uxui, String chosenModuleName, PrintWriter pw) {
+	private static void metadata(User user, String uxui, String chosenModuleName, PrintWriter pw) throws IOException {
 		StringBuilder menus = new StringBuilder(2048);
 		StringBuilder dataSources = new StringBuilder(2048);
 		processModules(uxui, user, chosenModuleName, menus, dataSources);
-		pw.append("{\"menus\":").append(menus).append(",\"dataSources\":").append(dataSources);
+		pw.write("{\"menus\":");
+		Util.chunkCharsToWriter(menus, pw);
+		pw.write(",\"dataSources\":");
+		Util.chunkCharsToWriter(dataSources, pw);
 		
-		pw.append(",\"userContactImageId\":");
+		pw.write(",\"userContactImageId\":");
 		String value = user.getContactImageId();
 		if (value == null) {
-			pw.append("null");
+			pw.write("null");
 		}
 		else {
 			pw.append('"').append(value).append('"');
@@ -289,6 +314,7 @@ public class MetaDataServlet extends HttpServlet {
 		pw.append(",\"userContactAvatarInitials\":\"").append(value).append("\"}");
 	}
 	
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private static void processModules(final String uxui, 
 										final User user,
 										final String chosenModuleName,
@@ -300,6 +326,7 @@ public class MetaDataServlet extends HttpServlet {
 		dataSourceJson.append("{");
 		
 		new MenuRenderer(uxui, chosenModuleName) {
+			/** {@inheritDoc} */
 			@Override
 			public void renderModuleMenu(Menu menu, Module menuModule, boolean open) {
 				menuJson.append("{\"module\":\"").append(OWASP.escapeJsonString(menuModule.getName()));
@@ -307,11 +334,13 @@ public class MetaDataServlet extends HttpServlet {
 				menuJson.append("\",\"open\":").append(open).append(",\"menu\":[");
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderMenuGroup(MenuGroup group, Module menuModule) {
 				menuJson.append("{\"group\":\"").append(OWASP.escapeJsonString(group.getLocalisedName())).append("\",\"items\":[");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderCalendarItem(CalendarItem item,
 											Module menuModule,
@@ -342,6 +371,7 @@ public class MetaDataServlet extends HttpServlet {
 				addDataSource(menuModule, itemDocument, item);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderEditItem(EditItem item,
 										Module menuModule,
@@ -359,12 +389,14 @@ public class MetaDataServlet extends HttpServlet {
 				menuJson.append("\",\"document\":\"").append(itemDocument.getName()).append("\"},");
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderLinkItem(LinkItem item, Module menuModule, boolean relative, String absoluteHref) {
 				menuJson.append("{\"link\":\"").append(OWASP.escapeJsonString(item.getLocalisedName()));
 				menuJson.append("\",\"href\":\"").append(absoluteHref).append("\"},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderListItem(ListItem item,
 										Module menuModule,
@@ -393,6 +425,7 @@ public class MetaDataServlet extends HttpServlet {
 				addDataSource(menuModule, itemDocument, item);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderMapItem(MapItem item,
 										Module menuModule,
@@ -422,6 +455,7 @@ public class MetaDataServlet extends HttpServlet {
 				addDataSource(menuModule, itemDocument, item);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderTreeItem(TreeItem item,
 										Module menuModule,
@@ -450,12 +484,14 @@ public class MetaDataServlet extends HttpServlet {
 				addDataSource(menuModule, itemDocument, item);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedMenuGroup(MenuGroup group, Module menuModule) {
 				menuJson.setLength(menuJson.length() - 1); // remove trailing comma
 				menuJson.append("]},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedModuleMenu(Menu menu, Module menuModule, boolean open) {
 				menuJson.setLength(menuJson.length() - 1); // remove trailing comma
@@ -472,7 +508,7 @@ public class MetaDataServlet extends HttpServlet {
 				String documentName = item.getDocumentName();
 				
 				if (queryName != null) { // its a query
-					MetaDataQueryDefinition query = menuModule.getMetaDataQuery(queryName);
+					MetaDataQueryDefinition query = menuModule.getNullSafeMetaDataQuery(queryName);
 					addQueryDataSource(query);
 				}
 				else {
@@ -512,16 +548,8 @@ public class MetaDataServlet extends HttpServlet {
 				dataSourceJson.append("\":{\"module\":\"").append(drivingDocumentModuleName);
 				dataSourceJson.append("\",\"document\":\"").append(drivingDocumentName);
 
-				String icon = drivingDocument.getIconStyleClass();
-				if (icon != null) {
-					dataSourceJson.append("\",\"fontIcon\":\"").append(icon);
-				}
-				else {
-					String icon32 = drivingDocument.getIcon32x32RelativeFileName();
-					if (icon32 != null) {
-						dataSourceJson.append("\",\"icon\":\"").append(icon32);
-					}
-				}
+				ResolvedIcon icon = MetadataIconResolver.resolve(drivingDocument, null);
+				appendDataSourceIcon(dataSourceJson, icon);
 				dataSourceJson.append("\",\"aggregate\":").append(query.isAggregate());
 				dataSourceJson.append(",\"canCreate\":").append(user.canCreateDocument(drivingDocument));
 				dataSourceJson.append(",\"canUpdate\":").append(user.canUpdateDocument(drivingDocument));
@@ -537,8 +565,8 @@ public class MetaDataServlet extends HttpServlet {
 				int cellHeight = 0; // fixed cell height of list grid (defined in data source)
 				
 				for (MetaDataQueryColumn column : query.getColumns()) {
-					if ((column instanceof MetaDataQueryProjectedColumn) && 
-							(! ((MetaDataQueryProjectedColumn) column).isProjected())) {
+					if ((column instanceof MetaDataQueryProjectedColumn projected) && 
+							(! projected.isProjected())) {
 						continue;
 					}
 
@@ -668,8 +696,8 @@ public class MetaDataServlet extends HttpServlet {
 				int cellHeight = 0; // fixed cell height of list grid (defined in data source)
 				
 				for (MetaDataQueryColumn column : query.getColumns()) {
-					if ((column instanceof MetaDataQueryProjectedColumn) && 
-							(! ((MetaDataQueryProjectedColumn) column).isProjected())) {
+					if ((column instanceof MetaDataQueryProjectedColumn projectedColumn) && 
+							(! projectedColumn.isProjected())) {
 						continue;
 					}
 
@@ -745,9 +773,54 @@ public class MetaDataServlet extends HttpServlet {
         menuJson.setLength(menuJson.length() - 1); // ,
         menuJson.append("]");
         dataSourceJson.setLength(dataSourceJson.length() - 1); // ,
-        dataSourceJson.append("}");
+		dataSourceJson.append("}");
+	}
+
+	/**
+	 * Appends the selected document icon to a metadata data-source JSON fragment.
+	 *
+	 * @param target target JSON fragment
+	 * @param icon resolved driving-document icon
+	 */
+	static void appendDataSourceIcon(@Nonnull StringBuilder target, @Nonnull ResolvedIcon icon) {
+		String iconStyleClass = icon.iconStyleClass();
+		if (iconStyleClass != null) {
+			target.append("\",\"fontIcon\":\"").append(OWASP.escapeJsonString(iconStyleClass));
+		}
+		else {
+			String iconFileName = icon.iconFileName();
+			if (iconFileName != null) {
+				target.append("\",\"icon\":\"").append(OWASP.escapeJsonString(iconFileName));
+			}
+		}
+	}
+
+	/**
+	 * Appends the selected root-view icon properties to a metadata JSON object.
+	 *
+	 * @param target target JSON object
+	 * @param icon resolved view/document icon
+	 * @param document document owning an optional image resource
+	 */
+	static void appendViewIcon(@Nonnull StringBuilder target,
+								@Nonnull ResolvedIcon icon,
+								@Nonnull Document document) {
+		String iconStyleClass = icon.iconStyleClass();
+		if (iconStyleClass != null) {
+			target.append(",\"iconStyleClass\":\"").append(OWASP.escapeJsonString(iconStyleClass)).append('"');
+		}
+		else {
+			String iconFileName = icon.iconFileName();
+			if (iconFileName != null) {
+				String iconUrl = new StringBuilder(96).append("resources?_doc=")
+						.append(document.getOwningModuleName()).append('.').append(document.getName())
+						.append("&_n=").append(iconFileName).toString();
+				target.append(",\"icon32x32Url\":\"").append(OWASP.escapeJsonString(iconUrl)).append('"');
+			}
+		}
 	}
 	
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private static StringBuilder view(User user,
 										String uxui,
 										String moduleName,
@@ -761,21 +834,14 @@ public class MetaDataServlet extends HttpServlet {
 		View editView = document.getView(uxui, c, ViewType.edit.toString());
 		
 		ViewRenderer vr = new ViewRenderer(user, module, document, editView, uxui) {
+			/** {@inheritDoc} */
 			@Override
-			public void renderView(String icon16x16Url, String icon32x32Url) {
+			public void renderView(@Nonnull ResolvedIcon resolvedIcon) {
 				result.append("{\"type\":\"view\",\"name\":\"");
-				result.append(view.getName()).append("\",\"title\":\"").append(view.getLocalisedTitle()).append('"');
-				String value = view.getIconStyleClass();
-				if (value != null) {
-					result.append(",\"iconStyleClass\":\"").append(value).append('"');
-				}
-				if (icon16x16Url != null) {
-					result.append(",\"icon16x16Url\":\"").append(OWASP.escapeJsonString(icon32x32Url)).append('"');
-				}
-				if (icon32x32Url != null) {
-					result.append(",\"icon32x32Url\":\"").append(OWASP.escapeJsonString(icon32x32Url)).append('"');
-				}
-				value = view.getHelpRelativeFileName();
+				result.append(view.getName()).append("\",\"title\":\"").append(jsonViewTitle(view)).append('"');
+				result.append(",\"escapeTitle\":").append(ViewRenderer.shouldEscape(view.getEscapeTitle()));
+				appendViewIcon(result, resolvedIcon, document);
+				String value = view.getHelpRelativeFileName();
 				if (value != null) {
 					result.append(",\"helpRelativeFileName\":\"").append(value).append('"');
 				}
@@ -811,22 +877,24 @@ public class MetaDataServlet extends HttpServlet {
 				processContainer();
 			}
 
+			/** {@inheritDoc} */
 			@Override
-			public void renderedView(String icon16x16Url, String icon32x32Url) {
+			public void renderedView(@Nonnull ResolvedIcon resolvedIcon) {
 				if (view.getSidebar() == null) {
 					processedContainer(view);
 				}
 
 				result.setLength(result.length() - 1); // remove last comma
 
-				if (actionsJSON.length() > 0) {
+				if (! actionsJSON.isEmpty()) {
 					actionsJSON.setLength(actionsJSON.length() - 1); // remove last comma
 					result.append(",\"actions\":[").append(actionsJSON).append(']');
 				}
 
 				result.append('}');
 			}
-			
+
+			/** {@inheritDoc} */
 			@Override
 			public void renderVBox(String borderTitle, VBox vbox) {
 				result.append("{\"type\":\"vbox\"");
@@ -847,6 +915,7 @@ public class MetaDataServlet extends HttpServlet {
 				processContainer();
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedVBox(String borderTitle, VBox vbox) {
 				processedContainer(vbox);
@@ -854,6 +923,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderHBox(String borderTitle, HBox hbox) {
 				result.append("{\"type\":\"hbox\"");
@@ -874,6 +944,7 @@ public class MetaDataServlet extends HttpServlet {
 				processContainer();
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedHBox(String title, HBox hbox) {
 				processedContainer(hbox);
@@ -881,6 +952,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderTabPane(TabPane tabPane) {
 				result.append("{\"type\":\"tabPane\"");
@@ -896,16 +968,19 @@ public class MetaDataServlet extends HttpServlet {
 				result.append(",\"tabs\":[");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedTabPane(TabPane tabPane) {
 				result.setLength(result.length() - 1); // remove last comma
 				result.append("]},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderTab(String title, String icon16x16Url, Tab tab) {
 				result.append("{\"type\":\"tab\",\"title\":\"");
 				result.append(OWASP.escapeJsonString(title)).append('"');
+				result.append(",\"escapeTitle\":").append(ViewRenderer.shouldEscape(tab.getEscapeTitle()));
 				if (icon16x16Url != null) {
 					result.append(",\"icon16x16Url\":\"").append(OWASP.escapeJsonString(icon16x16Url)).append('"');
 				}
@@ -919,6 +994,7 @@ public class MetaDataServlet extends HttpServlet {
 				processContainer();
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedTab(String title, String icon16x16Url, Tab tab) {
 				processedContainer(tab);
@@ -926,6 +1002,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderForm(String borderTitle, Form form) {
 				result.append("{\"type\":\"form\"");
@@ -981,17 +1058,20 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("],\"rows\":[");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedForm(String borderTitle, Form form) {
 				result.setLength(result.length() - 1); // remove last comma
 				result.append("]},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormColumn(FormColumn column) {
 				// handled in renderForm()
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormRow(FormRow row) {
 				result.append("{\"type\":\"row\"");
@@ -999,15 +1079,17 @@ public class MetaDataServlet extends HttpServlet {
 				result.append(",\"items\":[");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormRow(FormRow row) {
 				result.setLength(result.length() - 1); // remove last comma
 				result.append("]},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormItem(String label,
-										boolean required,
+										String requiredMessage,
 										String help,
 										boolean showsLabel,
 										int colspan,
@@ -1026,6 +1108,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 				if (label != null) {
 					result.append(",\"label\":\"").append(OWASP.escapeJsonString(label)).append('"');
+					result.append(",\"escapeLabel\":").append(getCurrentWidgetEscapeLabel());
 				}
 				result.append(",\"showLabel\":").append(showsLabel);
 				align = item.getLabelHorizontalAlignment();
@@ -1038,15 +1121,20 @@ public class MetaDataServlet extends HttpServlet {
 				}
 				if (help != null) {
 					result.append(",\"help\":\"").append(OWASP.escapeJsonString(help)).append('"');
+					result.append(",\"escapeHelp\":").append(getCurrentWidgetEscapeHelp());
 				}
-				result.append(",\"required\":").append(required);
+				if (requiredMessage != null) {
+					result.append(",\"requiredMessage\":\"").append(requiredMessage).append('"');
+					result.append(",\"escapeRequiredMessage\":").append(getCurrentWidgetEscapeRequiredMessage());
+				}
 				processDecorated(item);
 				result.append(",\"widget\":");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormItem(String label,
-											boolean required,
+											String requiredMessage,
 											String help,
 											boolean showLabel,
 											int colspan,
@@ -1054,6 +1142,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormTextField(TextField text) {
 				result.append("{\"type\":\"textField\"");
@@ -1076,11 +1165,13 @@ public class MetaDataServlet extends HttpServlet {
 				processDecorated(text);
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormTextField(TextField text) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormTextArea(TextArea text) {
 				result.append("{\"type\":\"textArea\"");
@@ -1100,11 +1191,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormTextArea(TextArea text) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormZoomIn(String label,
 											String iconUrl,
@@ -1114,6 +1207,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("{\"type\":\"zoomIn\"");
 				if (label != null) {
 					result.append(",\"label\":\"").append(OWASP.escapeJsonString(label)).append('"');
+					result.append(",\"escapeDisplayName\":").append(ViewRenderer.shouldEscape(zoomIn.getEscapeDisplayName()));
 				}
 				processBound(zoomIn);
 				if (iconStyleClass != null) {
@@ -1128,6 +1222,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 				if (toolTip != null) {
 					result.append(",\"toolTip\":\"").append(OWASP.escapeJsonString(toolTip)).append('"');
+					result.append(",\"escapeToolTip\":").append(ViewRenderer.shouldEscape(zoomIn.getEscapeToolTip()));
 				}
 				processSize(zoomIn);
 				processDisableable(zoomIn);
@@ -1136,6 +1231,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormStaticImage(String fileUrl, StaticImage image) {
 				result.append("{\"type\":\"staticImage\",\"fileUrl\":\"");
@@ -1146,6 +1242,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormSpinner(Spinner spinner) {
 				result.append("{\"type\":\"spinner\"");
@@ -1165,11 +1262,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormSpinner(Spinner spinner) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormSpacer(Spacer spacer) {
 				result.append("{\"type\":\"spacer\"");
@@ -1179,6 +1278,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormSlider(Slider slider) {
 				result.append("{\"type\":\"slider\"");
@@ -1208,11 +1308,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormSlider(Slider slider) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormRichText(RichText text) {
 				result.append("{\"type\":\"richText\"");
@@ -1226,11 +1328,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormRichText(RichText text) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormRadio(Radio radio) {
 				result.append("{\"type\":\"radio\"");
@@ -1244,11 +1348,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormRadio(Radio radio) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormProgressBar(ProgressBar progressBar) {
 				result.append("{\"type\":\"progressBar\"");
@@ -1259,6 +1365,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormPassword(Password password) {
 				result.append("{\"type\":\"password\"");
@@ -1268,11 +1375,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormPassword(Password password) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormLookupDescription(MetaDataQueryDefinition query,
 														boolean canCreate,
@@ -1324,6 +1433,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormLookupDescription(MetaDataQueryDefinition query,
 														boolean canCreate,
@@ -1333,22 +1443,26 @@ public class MetaDataServlet extends HttpServlet {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormLink(String value, Link link) {
 				result.append("{\"type\":\"link\"");
 				if (value != null) {
 					result.append(",\"value\":\"").append(OWASP.escapeJsonString(value)).append('"');
+					result.append(",\"escapeValue\":").append(ViewRenderer.shouldEscape(link.getEscapeValue()));
 				}
 				org.skyve.impl.metadata.view.reference.Reference linkReference = link.getReference();
 				if (linkReference != null) {
 					result.append(",\"reference\":{");
 					new ReferenceProcessor() {
+						/** {@inheritDoc} */
 						@Override
 						public void processResourceReference(ResourceReference reference) {
 							result.append("\"type\":\"resourceRef\",\"relativeFile\":\"");
 							result.append(OWASP.escapeJsonString(reference.getRelativeFile())).append('"');
 						}
 						
+						/** {@inheritDoc} */
 						@Override
 						public void processReportReference(ReportReference reference) {
 							result.append("\"type\":\"reportRef\"");
@@ -1371,24 +1485,28 @@ public class MetaDataServlet extends HttpServlet {
 							MetaDataServlet.processParameterizable(reference, result);
 						}
 						
+						/** {@inheritDoc} */
 						@Override
 						public void processQueryListViewReference(QueryListViewReference reference) {
 							result.append("\"type\":\"queryListViewRef\",\"queryName\":\"");
 							result.append(reference.getQueryName()).append('"');
 						}
 						
+						/** {@inheritDoc} */
 						@Override
 						public void processImplicitActionReference(ImplicitActionReference reference) {
 							result.append("\"type\":\"implicitActionRef\",\"implicitActionname\":\"");
 							result.append(reference.getImplicitActionName()).append('"');
 						}
 						
+						/** {@inheritDoc} */
 						@Override
 						public void processExternalReference(ExternalReference reference) {
 							result.append("\"type\":\"externalRef\",\"href\":\"");
 							result.append(reference.getHref()).append('"');
 						}
 						
+						/** {@inheritDoc} */
 						@Override
 						public void processEditViewReference(EditViewReference reference) {
 							result.append("\"type\":\"editViewRef\"");
@@ -1406,6 +1524,7 @@ public class MetaDataServlet extends HttpServlet {
 							}
 						}
 						
+						/** {@inheritDoc} */
 						@Override
 						public void processDefaultListViewReference(DefaultListViewReference reference) {
 							result.append("\"type\":\"listViewRef\",\"moduleName\":\"");
@@ -1413,12 +1532,14 @@ public class MetaDataServlet extends HttpServlet {
 							result.append(reference.getDocumentName()).append('"');
 						}
 						
+						/** {@inheritDoc} */
 						@Override
 						public void processContentReference(ContentReference reference) {
 							result.append("\"type\":\"contentRef\",\"binding\":\"");
 							result.append(reference.getBinding()).append('"');
 						}
 						
+						/** {@inheritDoc} */
 						@Override
 						public void processActionReference(ActionReference reference) {
 							result.append("\"type\":\"actionRef\",\"actionName\":\"");
@@ -1437,6 +1558,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormLabel(String value, boolean boundValue, Label label) {
 				result.append("{\"type\":\"label\"");
@@ -1459,12 +1581,14 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormInject(Inject inject) {
 				// Unused so just stub
 				result.append("{\"type\":\"inject\"}");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormHTML(HTML html) {
 				result.append("{\"type\":\"html\"");
@@ -1478,6 +1602,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormGeometryMap(GeometryMap geometry) {
 				result.append("{\"type\":\"geometryMap\"");
@@ -1491,11 +1616,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormGeometryMap(GeometryMap geometry) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormGeometry(Geometry geometry) {
 				result.append("{\"type\":\"geometry\"");
@@ -1509,16 +1636,19 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormGeometry(Geometry geometry) {
 				// nothing to see here
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormDialogButton(String label, DialogButton button) {
 				result.append("{\"type\":\"dialogButton\"");
 				if (label != null) {
 					result.append(",\"label\":\"").append(OWASP.escapeJsonString(label)).append('"');
+					result.append(",\"escapeDisplayName\":").append(ViewRenderer.shouldEscape(button.getEscapeDisplayName()));
 				}
 				String string = button.getDialogName();
 				if (string != null) {
@@ -1538,6 +1668,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormContentSignature(ContentSignature signature) {
 				result.append("{\"type\":\"contentSignature\"");
@@ -1554,35 +1685,48 @@ public class MetaDataServlet extends HttpServlet {
 				processDecorated(signature);
 				result.append('}');
 			}
-			
+
+			/** {@inheritDoc} */
 			@Override
-			public void renderFormContentLink(String value, ContentLink link) {
-				result.append("{\"type\":\"contentLink\"");
-				if (value != null) {
-					result.append(",\"value\":\"").append(value).append('"');
-				}
-				processInputWidget(link);
-				processEditable(link);
-				processSize(link);
-				processParameterizable(link);
-				processDecorated(link);
-				result.append('}');
+			public void renderFormContent(@Nonnull ContentUpload content) {
+				renderContent(content);
 			}
-			
+
+			/** {@inheritDoc} */
 			@Override
-			public void renderFormContentImage(ContentImage image) {
-				result.append("{\"type\":\"contentImage\"");
-				processInputWidget(image);
-				processEditable(image);
-				Boolean showMarkup = image.getShowMarkup();
+			public void renderBoundColumnContent(@Nonnull ContentUpload content) {
+				if (input != null) {
+					renderContent(content);
+				}
+			}
+
+			/** {@inheritDoc} */
+			@Override
+			public void renderContainerColumnContent(@Nonnull ContentUpload content) {
+				renderContent(content);
+			}
+
+			/**
+			 * Serializes a managed-content widget for metadata clients.
+			 *
+			 * @param content the content widget metadata; must not be {@code null}
+			 */
+			private void renderContent(@Nonnull ContentUpload content) {
+				result.append("{\"type\":\"content\"");
+				processInputWidget(content);
+				result.append(",\"display\":\"").append(content.getResolvedDisplay()).append('"');
+				result.append(",\"capture\":\"").append(content.getResolvedCapture()).append('"');
+				Boolean showMarkup = content.getShowMarkup();
 				if (showMarkup != null) {
 					result.append(",\"showMarkup\":").append(showMarkup);
 				}
-				processSize(image);
-				processDecorated(image);
+				processEditable(content);
+				processSize(content);
+				processDecorated(content);
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormCombo(Combo combo) {
 				result.append("{\"type\":\"combo\"");
@@ -1592,11 +1736,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormCombo(Combo combo) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormColourPicker(ColourPicker colour) {
 				result.append("{\"type\":\"colour\"");
@@ -1606,11 +1752,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormColourPicker(ColourPicker colour) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormCheckBox(CheckBox checkBox) {
 				result.append("{\"type\":\"checkBox\"");
@@ -1624,11 +1772,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedFormCheckBox(CheckBox checkBox) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormButton(String name,
 											String label,
@@ -1649,6 +1799,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append(",\"actionName\":\"").append(name).append('"');
 				if (label != null) {
 					result.append(",\"label\":\"").append(OWASP.escapeJsonString(label)).append('"');
+					result.append(",\"escapeDisplayName\":").append(getActionEscapeDisplayName());
 				}
 				if (iconStyleClass != null) {
 					result.append(",\"fontIcon\":\"").append(OWASP.escapeJsonString(iconStyleClass)).append('"');
@@ -1658,9 +1809,11 @@ public class MetaDataServlet extends HttpServlet {
 				}
 				if (toolTip != null) {
 					result.append(",\"toolTip\":\"").append(OWASP.escapeJsonString(toolTip)).append('"');
+					result.append(",\"escapeToolTip\":").append(getActionEscapeToolTip());
 				}
 				if (confirmationText != null) {
 					result.append(",\"confirmationText\":\"").append(OWASP.escapeJsonString(confirmationText)).append('"');
+					result.append(",\"escapeConfirm\":").append(getActionEscapeConfirm());
 				}
 				ActionShow show = button.getShow();
 				if (show != null) {
@@ -1671,6 +1824,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderFormBlurb(String markup, Blurb blurb) {
 				result.append("{\"type\":\"blurb\"");
@@ -1688,11 +1842,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append('}');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderDataGrid(String title, DataGrid grid) {
 				result.append("{\"type\":\"dataGrid\"");
 				if (title != null) {
 					result.append(",\"title\":\"").append(OWASP.escapeJsonString(title)).append('"');
+					result.append(",\"escapeTitle\":").append(ViewRenderer.shouldEscape(grid.getEscapeTitle()));
 				}
 				processBound(grid);
 				processIdentifiable(grid);
@@ -1733,11 +1889,13 @@ public class MetaDataServlet extends HttpServlet {
 				result.append(",\"columns\":[");
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderDataGridContainerColumn(String title, DataGridContainerColumn column) {
 				result.append("{\"type\":\"containerColumn\"");
 				if (title != null) {
 					result.append(",\"title\":\"").append(OWASP.escapeJsonString(title)).append('"');
+					result.append(",\"escapeTitle\":").append(ViewRenderer.shouldEscape(column.getEscapeTitle()));
 				}
 				HorizontalAlignment alignment = column.getAlignment();
 				if (alignment != null) {
@@ -1748,37 +1906,37 @@ public class MetaDataServlet extends HttpServlet {
 				result.append(",\"widgets\":[");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderContainerColumnStaticImage(String fileUrl, StaticImage image) {
 				renderStaticImage(fileUrl, image);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderContainerColumnLink(String value, Link link) {
 				renderLink(value, link);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderContainerColumnLabel(String value, Label label) {
 				renderLabel(value, false, label);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderContainerColumnDynamicImage(DynamicImage image) {
 				renderDynamicImage(image);
 			}
 			
-			@Override
-			public void renderContainerColumnContentImage(ContentImage image) {
-				renderFormContentImage(image);
-				result.append(',');
-			}
-			
+			/** {@inheritDoc} */
 			@Override
 			public void renderContainerColumnBlurb(String markup, Blurb blurb) {
 				renderBlurb(markup, blurb);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedDataGridContainerColumn(String title, DataGridContainerColumn column) {
 				result.setLength(result.length() - 1); // remove last comma
@@ -1787,11 +1945,13 @@ public class MetaDataServlet extends HttpServlet {
 			
 			WidgetReference input = null;
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderDataGridBoundColumn(String title, DataGridBoundColumn column) {
 				result.append("{\"type\":\"boundColumn\"");
 				if (title != null) {
 					result.append(",\"title\":\"").append(OWASP.escapeJsonString(title)).append('"');
+					result.append(",\"escapeTitle\":").append(ViewRenderer.shouldEscape(column.getEscapeTitle()));
 				}
 				HorizontalAlignment alignment = column.getAlignment();
 				if (alignment != null) {
@@ -1805,6 +1965,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnTextField(TextField text) {
 				if (input != null) {
@@ -1812,6 +1973,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnTextField(TextField text) {
 				if (input != null) {
@@ -1819,6 +1981,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnTextArea(TextArea text) {
 				if (input != null) {
@@ -1826,6 +1989,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnTextArea(TextArea text) {
 				if (input != null) {
@@ -1833,6 +1997,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnSpinner(Spinner spinner) {
 				if (input != null) {
@@ -1840,6 +2005,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnSpinner(Spinner spinner) {
 				if (input != null) {
@@ -1847,6 +2013,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnSlider(Slider slider) {
 				if (input != null) {
@@ -1854,6 +2021,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnSlider(Slider slider) {
 				if (input != null) {
@@ -1861,6 +2029,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnRichText(RichText text) {
 				if (input != null) {
@@ -1868,6 +2037,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnRichText(RichText text) {
 				if (input != null) {
@@ -1875,6 +2045,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnRadio(Radio radio) {
 				if (input != null) {
@@ -1882,6 +2053,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnRadio(Radio radio) {
 				if (input != null) {
@@ -1889,6 +2061,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnPassword(Password password) {
 				if (input != null) {
@@ -1896,6 +2069,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnPassword(Password password) {
 				if (input != null) {
@@ -1903,6 +2077,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnLookupDescription(MetaDataQueryDefinition query,
 															boolean canCreate,
@@ -1914,6 +2089,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnLookupDescription(MetaDataQueryDefinition query,
 																boolean canCreate,
@@ -1925,6 +2101,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnHTML(HTML html) {
 				if (input != null) {
@@ -1932,6 +2109,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnGeometry(Geometry geometry) {
 				if (input != null) {
@@ -1939,6 +2117,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnGeometry(Geometry geometry) {
 				if (input != null) {
@@ -1946,20 +2125,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
-			@Override
-			public void renderBoundColumnContentLink(String value, ContentLink link) {
-				if (input != null) {
-					renderFormContentLink(value, link);
-				}
-			}
-			
-			@Override
-			public void renderBoundColumnContentImage(ContentImage image) {
-				if (input != null) {
-					renderFormContentImage(image);
-				}
-			}
-			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnCombo(Combo combo) {
 				if (input != null) {
@@ -1967,6 +2133,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnCombo(Combo combo) {
 				if (input != null) {
@@ -1974,6 +2141,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnColourPicker(ColourPicker colour) {
 				if (input != null) {
@@ -1981,6 +2149,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnColourPicker(ColourPicker colour) {
 				if (input != null) {
@@ -1988,6 +2157,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBoundColumnCheckBox(CheckBox checkBox) {
 				if (input != null) {
@@ -1995,6 +2165,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderedBoundColumnCheckBox(CheckBox checkBox) {
 				if (input != null) {
@@ -2002,23 +2173,27 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderedDataGridBoundColumn(String title, DataGridBoundColumn column) {
 				result.append("},");
 				input = null;
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedDataGrid(String title, DataGrid grid) {
 				result.setLength(result.length() - 1); // remove last comma
 				result.append("]},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderDataRepeater(String title, DataRepeater repeater) {
 				result.append("{\"type\":\"dataRepeater\"");
 				if (title != null) {
 					result.append(",\"title\":\"").append(OWASP.escapeJsonString(title)).append('"');
+					result.append(",\"escapeTitle\":").append(ViewRenderer.shouldEscape(repeater.getEscapeTitle()));
 				}
 				processBound(repeater);
 				processIdentifiable(repeater);
@@ -2036,32 +2211,38 @@ public class MetaDataServlet extends HttpServlet {
 				result.append(",\"columns\":[");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderDataRepeaterContainerColumn(String title, DataGridContainerColumn column) {
 				renderDataGridContainerColumn(title, column);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedDataRepeaterContainerColumn(String title, DataGridContainerColumn column) {
 				renderedDataGridContainerColumn(title, column);
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderDataRepeaterBoundColumn(String title, DataGridBoundColumn column) {
 				renderDataGridBoundColumn(title, column);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedDataRepeaterBoundColumn(String title, DataGridBoundColumn column) {
 				renderedDataGridBoundColumn(title, column);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedDataRepeater(String title, DataRepeater repeater) {
 				result.setLength(result.length() - 1); // remove last comma
 				result.append("]},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderListGrid(String title, boolean aggregateQuery, ListGrid grid) {
 				result.append("{\"type\":\"listGrid\"");
@@ -2072,6 +2253,7 @@ public class MetaDataServlet extends HttpServlet {
 			private void renderListGridGuts(String title, boolean aggregateQuery, ListGrid grid) {
 				if (title != null) {
 					result.append(",\"title\":\"").append(OWASP.escapeJsonString(title)).append('"');
+					result.append(",\"escapeTitle\":").append(ViewRenderer.shouldEscape(grid.getEscapeTitle()));
 				}
 				result.append(",\"aggregateQuery\":").append(aggregateQuery);
 				result.append(",\"continueConversation\":").append(grid.getContinueConversation());
@@ -2128,10 +2310,15 @@ public class MetaDataServlet extends HttpServlet {
 				if (bool != null) {
 					result.append(",\"showTag\":").append(bool);
 				}
+				bool = grid.getShowFlag();
+				if (bool != null) {
+					result.append(",\"showFlag\":").append(bool);
+				}
 
 				processDecorated(grid);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderListGridProjectedColumn(MetaDataQueryProjectedColumn column) {
 				result.append("{\"type\":\"column\"");
@@ -2147,6 +2334,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderListGridContentColumn(MetaDataQueryContentColumn column) {
 				result.append("{\"type\":\"contentColumn\"");
@@ -2166,17 +2354,20 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedListGrid(String title, boolean aggregateQuery, ListGrid grid) {
 				result.setLength(result.length() - 1); // remove last comma
 				result.append("]},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderListRepeater(String title, ListRepeater repeater) {
 				result.append("{\"type\":\"listRepeater\"");
 				if (title != null) {
 					result.append(",\"title\":\"").append(OWASP.escapeJsonString(title)).append('"');
+					result.append(",\"escapeTitle\":").append(ViewRenderer.shouldEscape(repeater.getEscapeTitle()));
 				}
 				processAbstractListWidget(repeater);
 				Boolean bool = repeater.getShowColumnHeaders();
@@ -2191,22 +2382,26 @@ public class MetaDataServlet extends HttpServlet {
 				result.append(",\"columns\":[");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderListRepeaterProjectedColumn(MetaDataQueryProjectedColumn column) {
 				renderListGridProjectedColumn(column);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderListRepeaterContentColumn(MetaDataQueryContentColumn column) {
 				renderListGridContentColumn(column);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedListRepeater(String title, ListRepeater repeater) {
 				result.setLength(result.length() - 1); // remove last comma
 				result.append("]},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderTreeGrid(String title, TreeGrid grid) {
 				result.append("{\"type\":\"treeGrid\"");
@@ -2218,38 +2413,46 @@ public class MetaDataServlet extends HttpServlet {
 				result.append(",\"columns\":[");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderTreeGridProjectedColumn(MetaDataQueryProjectedColumn column) {
 				renderListGridProjectedColumn(column);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderTreeGridContentColumn(MetaDataQueryContentColumn column) {
 				renderListGridContentColumn(column);
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedTreeGrid(String title, TreeGrid grid) {
 				result.setLength(result.length() - 1); // remove last comma
 				result.append("]},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderListMembership(String candidatesHeading, String membersHeading, ListMembership membership) {
 				result.append("{\"type\":\"listMembership\"");
 				processInputWidget(membership);
 				result.append(",\"candidatesHeading\":\"").append(OWASP.escapeJsonString(candidatesHeading)).append('"');
+				result.append(",\"escapeCandidatesHeading\":").append(ViewRenderer.shouldEscape(membership.getEscapeCandidatesHeading()));
 				result.append(",\"membersHeading\":\"").append(OWASP.escapeJsonString(membersHeading)).append('"');
+				result.append(",\"escapeMembersHeading\":").append(ViewRenderer.shouldEscape(membership.getEscapeMembersHeading()));
 				processSize(membership);
 				processDecorated(membership);
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedListMembership(String candidatesHeading, String membersHeading, ListMembership membership) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderCheckMembership(CheckMembership membership) {
 				result.append("{\"type\":\"checkMembership\"");
@@ -2258,29 +2461,34 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderedCheckMembership(CheckMembership membership) {
 				// nothing to see here
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderStaticImage(String fileUrl, StaticImage image) {
 				renderFormStaticImage(fileUrl, image);
 				result.append(',');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderSpacer(Spacer spacer) {
 				renderFormSpacer(spacer);
 				result.append(',');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderZoomIn(String label, String iconUrl, String iconStyleClass, String toolTip, ZoomIn zoomIn) {
 				renderFormZoomIn(label, iconUrl, iconStyleClass, toolTip, zoomIn);
 				result.append(',');
 			}
 						
+			/** {@inheritDoc} */
 			@Override
 			public void renderMap(MapDisplay map) {
 				result.append("{\"type\":\"map\"");
@@ -2306,24 +2514,28 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderLink(String value, Link link) {
 				renderFormLink(value, link);
 				result.append(',');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderLabel(String value, boolean boundValue, Label label) {
 				renderFormLabel(value, boundValue, label);
 				result.append(',');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderInject(Inject inject) {
 				renderFormInject(inject);
 				result.append(',');
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderDynamicImage(DynamicImage image) {
 				result.append("{\"type\":\"dynamicImage\"");
@@ -2346,12 +2558,14 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderDialogButton(String label, DialogButton button) {
 				renderFormDialogButton(label, button);
 				result.append(',');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderComparison(Comparison comparison) {
 				result.append("{\"type\":\"comparison\"");
@@ -2365,6 +2579,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderChart(Chart chart) {
 				result.append("{\"type\":\"chart\",\"chartType\":\"").append(chart.getType()).append('"');
@@ -2405,29 +2620,28 @@ public class MetaDataServlet extends HttpServlet {
 						if (bucket instanceof NoBucketMetaData) {
 							result.append("null");
 						}
-						else if (bucket instanceof NumericMultipleBucketMetaData) {
+						else if (bucket instanceof NumericMultipleBucketMetaData numeric) {
 							result.append("{\"type\":\"numericMultipleBucket\",\"multiple\":");
-							result.append(((NumericMultipleBucketMetaData) bucket).getMultiple());
+							result.append(numeric.getMultiple());
 							result.append('}');
 						}
-						else if (bucket instanceof NumericRangeBucketMetaData) {
+						else if (bucket instanceof NumericRangeBucketMetaData range) {
 							result.append("{\"type\":\"numericRangeBucket\",\"range\":[");
-							for (NumericRangeMetaData rangeInt : ((NumericRangeBucketMetaData) bucket).getRanges()) {
+							for (NumericRangeMetaData rangeInt : range.getRanges()) {
 								result.append(rangeInt.getRange()).append(',');
 							}
 							result.setLength(result.length() - 1);
 							result.append("]}");
 						}
-						else if (bucket instanceof TemporalBucketMetaData) {
+						else if (bucket instanceof TemporalBucketMetaData temporal) {
 							result.append("{\"type\":\"temporalBucket\",\"temporalType\":\"");
-							result.append(((TemporalBucketMetaData) bucket).getType()).append("\"}");
+							result.append(temporal.getType()).append("\"}");
 						}
 						else if (bucket instanceof TextLengthBucketMetaData) {
 							result.append("{\"type\":\"textLengthBucket\"}");
 						}
-						else if (bucket instanceof TextStartsWithBucketMetaData) {
+						else if (bucket instanceof TextStartsWithBucketMetaData startsWith) {
 							result.append("{\"type\":\"textStartsWithBucket\",\"textStartsWithBucket\":\"length\":");
-							TextStartsWithBucketMetaData startsWith = (TextStartsWithBucketMetaData) bucket;
 							result.append(startsWith.getLength());
 							result.append("\"caseSensitive\":").append(startsWith.isCaseSensitive());
 							result.append('}');
@@ -2455,7 +2669,7 @@ public class MetaDataServlet extends HttpServlet {
 					ChartBuilderOrderMetaData order = model.getOrder();
 					if (order != null) {
 						result.append(",\"order\":{");
-						processChartBuilderOrderMetaData(top);
+						processChartBuilderOrderMetaData(order);
 						result.append('}');
 					}
 					string = model.getJFreeChartPostProcessorClassName();
@@ -2473,6 +2687,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderButton(String name,
 										String label,
@@ -2486,12 +2701,14 @@ public class MetaDataServlet extends HttpServlet {
 				result.append(',');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBlurb(String markup, Blurb blurb) {
 				renderFormBlurb(markup, blurb);
 				result.append(',');
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderZoomOutAction(String name,
 												String label,
@@ -2505,6 +2722,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderUploadAction(String name,
 											String label,
@@ -2518,6 +2736,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderSaveAction(String name,
 											String label,
@@ -2531,6 +2750,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderReportAction(String name,
 											String label,
@@ -2544,6 +2764,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderRemoveAction(String name,
 											String label,
@@ -2558,6 +2779,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderPrintAction(String name,
 											String label,
@@ -2571,6 +2793,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderOKAction(String name,
 										String label,
@@ -2584,6 +2807,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderNewAction(String name,
 											String label,
@@ -2597,6 +2821,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderNavigateAction(String name,
 												String label,
@@ -2610,6 +2835,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderEditAction(String name,
 											String label,
@@ -2623,6 +2849,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderDownloadAction(String name,
 												String label,
@@ -2636,6 +2863,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderDeleteAction(String name,
 											String label,
@@ -2649,6 +2877,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderCustomAction(String name,
 											String label,
@@ -2662,6 +2891,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderCancelAction(String name,
 											String label,
@@ -2675,6 +2905,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBizImportAction(String name,
 												String label,
@@ -2688,6 +2919,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderBizExportAction(String name,
 												String label,
@@ -2701,6 +2933,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void renderAddAction(String name,
 											String label,
@@ -2714,11 +2947,13 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append("},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitParameter(Parameter parameter, boolean parentVisible, boolean parentEnabled) {
 				// handled in processParameterizable()
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitFilterParameter(FilterParameter parameter, boolean parentVisible, boolean parentEnabled) {
 				// handled in processFilterable()
@@ -2731,6 +2966,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitOnSelectedEventHandler(Selectable selectable, boolean parentVisible, boolean parentEnabled) {
 				postProcessListColumns();
@@ -2744,6 +2980,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitedOnSelectedEventHandler(Selectable selectable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = selectable.getSelectedActions();
@@ -2753,6 +2990,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void visitOnRemovedEventHandler(Removable removable, boolean parentVisible, boolean parentEnabled) {
 				postProcessListColumns();
@@ -2762,6 +3000,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitedOnRemovedEventHandler(Removable removable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = removable.getRemovedActions();
@@ -2771,6 +3010,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitOnFocusEventHandler(Focusable blurable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = blurable.getFocusActions();
@@ -2779,6 +3019,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitedOnFocusEventHandler(Focusable blurable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = blurable.getFocusActions();
@@ -2788,6 +3029,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitOnBlurEventHandler(Focusable blurable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = blurable.getBlurActions();
@@ -2796,6 +3038,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitedOnBlurEventHandler(Focusable blurable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = blurable.getBlurActions();
@@ -2805,6 +3048,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitOnEditedEventHandler(Editable editable, boolean parentVisible, boolean parentEnabled) {
 				postProcessListColumns();
@@ -2814,6 +3058,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitedOnEditedEventHandler(Editable editable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = editable.getEditedActions();
@@ -2823,6 +3068,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitOnChangedEventHandler(Changeable changeable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = changeable.getChangedActions();
@@ -2831,6 +3077,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitedOnChangedEventHandler(Changeable changeable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = changeable.getChangedActions();
@@ -2840,6 +3087,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitOnAddedEventHandler(Addable addable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = addable.getAddedActions();
@@ -2848,6 +3096,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitedOnAddedEventHandler(Addable addable, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = addable.getAddedActions();
@@ -2857,6 +3106,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void visitOnPickedEventHandler(LookupDescription lookup, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = lookup.getPickedActions();
@@ -2865,6 +3115,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitedOnPickedEventHandler(LookupDescription lookup, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = lookup.getPickedActions();
@@ -2874,6 +3125,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitOnClearedEventHandler(LookupDescription lookup, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = lookup.getClearedActions();
@@ -2882,6 +3134,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitedOnClearedEventHandler(LookupDescription lookup, boolean parentVisible, boolean parentEnabled) {
 				List<EventAction> actions = lookup.getClearedActions();
@@ -2891,6 +3144,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitToggleVisibilityEventAction(ToggleVisibilityEventAction toggleVisibility,
 															boolean parentVisible,
@@ -2898,6 +3152,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("{\"type\":\"toggleVisibility\"},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitToggleDisabledEventAction(ToggleDisabledEventAction toggleDisabled,
 														boolean parentVisible,
@@ -2905,6 +3160,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("{\"type\":\"toggleDisabled\"},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitSetInvisibleEventAction(SetInvisibleEventAction setInvisible,
 														boolean parentVisible,
@@ -2912,6 +3168,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("{\"type\":\"setInvisible\"},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitSetDisabledEventAction(SetDisabledEventAction setDisabled,
 														boolean parentVisible,
@@ -2919,6 +3176,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append("{\"type\":\"setDisabled\"},");
 			}
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitRerenderEventAction(RerenderEventAction rerender,
 													EventSource source,
@@ -2928,6 +3186,7 @@ public class MetaDataServlet extends HttpServlet {
 			}
 			
 			
+			/** {@inheritDoc} */
 			@Override
 			public void visitServerSideActionEventAction(Action action, ServerSideActionEventAction server) {
 				result.append("{\"type\":\"server\"},");
@@ -2949,8 +3208,7 @@ public class MetaDataServlet extends HttpServlet {
 				if (value != null) {
 					result.append(",\"pixelWidth\":").append(value);
 				}
-				if (size instanceof RelativeWidth) {
-					RelativeWidth width = (RelativeWidth) size;
+				if (size instanceof RelativeWidth width) {
 					value = width.getPercentageWidth();
 					if (value != null) {
 						result.append(",\"percentageWidth\":").append(value);
@@ -2960,8 +3218,7 @@ public class MetaDataServlet extends HttpServlet {
 						result.append(",\"responsiveWidth\":").append(value);
 					}
 					
-					if (size instanceof ResponsiveWidth) {
-						ResponsiveWidth responsive = (ResponsiveWidth) size;
+					if (size instanceof ResponsiveWidth responsive) {
 						value = responsive.getSm();
 						if (value != null) {
 							result.append(",\"sm\":").append(value);
@@ -2979,15 +3236,14 @@ public class MetaDataServlet extends HttpServlet {
 							result.append(",\"xl\":").append(value);
 						}
 						
-						if (size instanceof RelativeSize) {
-							RelativeSize relative = (RelativeSize) size;
+						if (size instanceof RelativeSize relative) {
 							value = relative.getPercentageHeight();
 							if (value != null) {
 								result.append(",\"percentageHeight\":").append(value);
 							}
 							
-							if (size instanceof ShrinkWrapper) {
-								ShrinkWrap wrap = ((ShrinkWrapper) size).getShrinkWrap();
+							if (size instanceof ShrinkWrapper wrapper) {
+								ShrinkWrap wrap = wrapper.getShrinkWrap();
 								if (wrap != null) {
 									result.append(",\"shrinkWrap\":\"").append(wrap).append('"');
 								}
@@ -2996,29 +3252,29 @@ public class MetaDataServlet extends HttpServlet {
 					}
 				}
 				
-				if (size instanceof AbsoluteSize) {
-					value = ((AbsoluteSize) size).getPixelHeight();
+				if (size instanceof AbsoluteSize absolute) {
+					value = absolute.getPixelHeight();
 					if (value != null) {
 						result.append(",\"pixelHeight\":").append(value);
 					}
 				}
 
-				if (size instanceof MinimumHeight) {
-					value = ((MinimumHeight) size).getMinPixelHeight();
+				if (size instanceof MinimumHeight minimumHeight) {
+					value = minimumHeight.getMinPixelHeight();
 					if (value != null) {
 						result.append(",\"minPixelHeight\":").append(value);
 					}
-					if (size instanceof ConstrainableHeight) {
-						value = ((ConstrainableHeight) size).getMaxPixelHeight();
+					if (size instanceof ConstrainableHeight constrainableHeight) {
+						value = constrainableHeight.getMaxPixelHeight();
 						if (value != null) {
 							result.append(",\"maxPixelHeight\":").append(value);
 						}
-						if (size instanceof ConstrainableSize) {
-							value = ((ConstrainableSize) size).getMinPixelWidth();
+						if (size instanceof ConstrainableSize constrainableSize) {
+							value = constrainableSize.getMinPixelWidth();
 							if (value != null) {
 								result.append(",\"minPixelWidth\":").append(value);
 							}
-							value = ((ConstrainableSize) size).getMaxPixelWidth();
+							value = constrainableSize.getMaxPixelWidth();
 							if (value != null) {
 								result.append(",\"maxPixelWidth\":").append(value);
 							}
@@ -3033,6 +3289,7 @@ public class MetaDataServlet extends HttpServlet {
 					result.append(",\"border\":true");
 					if (borderTitle != null) {
 						result.append(",\"borderTitle\":\"").append(OWASP.escapeJsonString(borderTitle)).append('"');
+						result.append(",\"escapeBorderTitle\":").append(ViewRenderer.shouldEscape(bordered.getEscapeBorderTitle()));
 					}
 				}
 			}
@@ -3082,6 +3339,7 @@ public class MetaDataServlet extends HttpServlet {
 				}
 			}
 
+			@SuppressWarnings("java:S6541") // complexity OK
 			private void processTarget() {
 				TargetMetaData target = getCurrentTarget();
 				if (target != null) {
@@ -3101,7 +3359,7 @@ public class MetaDataServlet extends HttpServlet {
 											String code = value.getCode();
 											result.append('"').append(OWASP.escapeJsonString(code)).append("\":\"");
 											String description = value.getLocalisedDescription();
-											result.append(OWASP.escapeJsonString((description == null) ? code : description)).append("\",");
+											result.append(OWASP.escapeJsonString(description)).append("\",");
 										}
 										result.setLength(result.length() - 1); // remove last comma
 									}
@@ -3109,11 +3367,9 @@ public class MetaDataServlet extends HttpServlet {
 								}
 							}
 						}
-						if (attribute instanceof Relation) {
-							Relation relation = (Relation) attribute;
+						if (attribute instanceof Relation relation) {
 							result.append("\"documentName\":\"").append(relation.getDocumentName()).append("\",");
-							if (relation instanceof Inverse) {
-								Inverse inverse = (Inverse) relation;
+							if (relation instanceof Inverse inverse) {
 								result.append("\"referenceName\":\"").append(inverse.getReferenceName()).append("\",");
 								result.append("\"cardinality\":\"").append(inverse.getCardinality()).append("\",");
 								result.append("\"cascade\":\"").append(inverse.getCascade()).append("\",");
@@ -3123,15 +3379,11 @@ public class MetaDataServlet extends HttpServlet {
 								// NB query name not required in views here
 								// NB reference type not required either
 								
-								if (reference instanceof Collection) {
-									Collection collection = (Collection) reference;
-									Integer cardinality = collection.getMinCardinality();
-									if (cardinality != null) {
-										result.append("\"minCardinality\":").append(cardinality).append(',');
-									}
-									cardinality = collection.getMaxCardinality();
-									if (cardinality != null) {
-										result.append("\"maxCardinality\":").append(cardinality).append(',');
+								if (reference instanceof Collection collection) {
+									result.append("\"minCardinality\":").append(collection.getMinCardinality()).append(',');
+									Integer maxCardinality = collection.getMaxCardinality();
+									if (maxCardinality != null) {
+										result.append("\"maxCardinality\":").append(maxCardinality).append(',');
 									}
 								}
 							}
@@ -3143,50 +3395,49 @@ public class MetaDataServlet extends HttpServlet {
 								result.append("\"defaultValue\":\"").append(OWASP.escapeJsonString(defaultValue)).append("\",");
 							}
 
-							if (field instanceof ConvertableField) {
-								ConverterName converterName = ((ConvertableField) field).getConverterName();
+							if (field instanceof ConvertibleField convertibleField) {
+								ConverterName converterName = convertibleField.getConverterName();
 								if (converterName != null) {
 									result.append("\"converterName\":\"").append(converterName).append("\",");
 								}
-								if (field instanceof Date) {
-									processDateValidator(((Date) field).getValidator());
+								if (field instanceof Date date) {
+									processDateValidator(date.getValidator());
 								}
-								else if (field instanceof DateTime) {
-									processDateValidator(((DateTime) field).getValidator());
+								else if (field instanceof DateTime dateTime) {
+									processDateValidator(dateTime.getValidator());
 								}
-								else if (field instanceof Time) {
-									processDateValidator(((Time) field).getValidator());
+								else if (field instanceof Time time) {
+									processDateValidator(time.getValidator());
 								}
-								else if (field instanceof Timestamp) {
-									processDateValidator(((Timestamp) field).getValidator());
+								else if (field instanceof Timestamp timestamp) {
+									processDateValidator(timestamp.getValidator());
 								}
-								else if (field instanceof Decimal10) {
-									processDecimalValidator(((Decimal10) field).getValidator());
+								else if (field instanceof Decimal10 decimal) {
+									processDecimalValidator(decimal.getValidator());
 								}
-								else if (field instanceof Decimal2) {
-									processDecimalValidator(((Decimal2) field).getValidator());
+								else if (field instanceof Decimal2 decimal) {
+									processDecimalValidator(decimal.getValidator());
 								}
-								else if (field instanceof Decimal5) {
-									processDecimalValidator(((Decimal5) field).getValidator());
+								else if (field instanceof Decimal5 decimal) {
+									processDecimalValidator(decimal.getValidator());
 								}
-								else if (field instanceof org.skyve.impl.metadata.model.document.field.Integer) {
-									IntegerValidator validator = ((org.skyve.impl.metadata.model.document.field.Integer) field).getValidator();
+								else if (field instanceof org.skyve.impl.metadata.model.document.field.Integer integer) {
+									IntegerValidator validator = integer.getValidator();
 									if (validator != null) {
 										processRangeValidator(validator);
 										result.setLength(result.length() - 1); // remove last comma
 										result.append("},");
 									}
 								}
-								else if (field instanceof LongInteger) {
-									LongValidator validator = ((LongInteger) field).getValidator();
+								else if (field instanceof LongInteger longInt) {
+									LongValidator validator = longInt.getValidator();
 									if (validator != null) {
 										processRangeValidator(validator);
 										result.setLength(result.length() - 1); // remove last comma
 										result.append("},");
 									}
 								}
-								else if (field instanceof Text) {
-									Text text = (Text) field;
+								else if (field instanceof Text text) {
 									result.append("\"length\":").append(text.getLength()).append(",");
 									
 									TextFormat format = text.getFormat();
@@ -3390,6 +3641,7 @@ public class MetaDataServlet extends HttpServlet {
 				result.append(",\"sort\":\"").append(order.getSort()).append('"');
 			}
 			
+			@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 			private void processAction(String name,
 										ImplicitActionName type,
 										String label,
@@ -3412,6 +3664,7 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append(",\"actionName\":\"").append(name).append('"');
 				if (label != null) {
 					actionsJSON.append(",\"label\":\"").append(OWASP.escapeJsonString(label)).append('"');
+					actionsJSON.append(",\"escapeDisplayName\":").append(getActionEscapeDisplayName());
 				}
 				if (iconStyleClass != null) {
 					actionsJSON.append(",\"fontIcon\":\"").append(iconStyleClass).append('"');
@@ -3427,9 +3680,11 @@ public class MetaDataServlet extends HttpServlet {
 				actionsJSON.append(",\"show\":\"").append(show).append('"');
 				if (confirmationText != null) {
 					actionsJSON.append(",\"confirm\":\"").append(OWASP.escapeJsonString(confirmationText)).append('"');
+					actionsJSON.append(",\"escapeConfirm\":").append(getActionEscapeConfirm());
 				}
 				if (toolTip != null) {
 					actionsJSON.append(",\"toolTip\":\"").append(OWASP.escapeJsonString(toolTip)).append('"');
+					actionsJSON.append(",\"escapeToolTip\":").append(getActionEscapeToolTip());
 				}
 				MetaDataServlet.processDisableable(action, actionsJSON);
 				MetaDataServlet.processInvisible(action, actionsJSON);
@@ -3437,6 +3692,7 @@ public class MetaDataServlet extends HttpServlet {
 				MetaDataServlet.processDecorated(action, actionsJSON);
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderSidebar(Sidebar sidebar) {
 				result.setLength(result.length() - 1); // remove last comma from view.getContained() processing
@@ -3448,6 +3704,7 @@ public class MetaDataServlet extends HttpServlet {
 				processContainer();
 			}
 
+			/** {@inheritDoc} */
 			@Override
 			public void renderedSidebar(Sidebar sidebar) {
 				processedContainer(sidebar);
@@ -3461,6 +3718,15 @@ public class MetaDataServlet extends HttpServlet {
 		vr.visit();	
 		
 		return result;
+	}
+
+	/**
+	 * Returns the JSON-escaped view title.
+	 *
+	 * <p>Package-visible for testing.
+	 */
+	static String jsonViewTitle(View view) {
+		return OWASP.escapeJsonString(view.getLocalisedTitle());
 	}
 	
 	private static void processParameterizable(Parameterizable parameterizable, StringBuilder json) {

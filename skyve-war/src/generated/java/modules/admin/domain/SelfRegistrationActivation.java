@@ -20,6 +20,8 @@ import org.skyve.util.Util;
 
 /**
  * Self Registration Activation
+ * <br/>
+ * Document that handles user account activation when users click the activation link in their registration email.
  * 
  * @depend - - - Result
  * @navhas n user 0..1 User
@@ -70,7 +72,7 @@ public abstract class SelfRegistrationActivation extends AbstractTransientBean {
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum Result implements Enumeration {
+	public enum Result implements Enumeration {
 		SUCCESS("SUCCESS", "SUCCESS"),
 		ALREADYACTIVATED("ALREADY_ACTIVATED", "ALREADY_ACTIVATED"),
 		EXPIRED("EXPIRED", "EXPIRED"),
@@ -222,12 +224,6 @@ public abstract class SelfRegistrationActivation extends AbstractTransientBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof SelfRegistrationActivation) && 
-					this.getBizId().equals(((SelfRegistrationActivation) o).getBizId()));
 	}
 
 	/**

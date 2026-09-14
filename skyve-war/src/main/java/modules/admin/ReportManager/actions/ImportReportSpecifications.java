@@ -1,5 +1,7 @@
 package modules.admin.ReportManager.actions;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import java.io.File;
 import java.io.InputStream;
 import java.nio.charset.Charset;
@@ -26,114 +28,139 @@ import org.skyve.util.FileUtil;
 import org.skyve.util.JSON;
 import org.skyve.web.WebContext;
 
+import jakarta.inject.Inject;
 import modules.admin.ReportManager.ReportManagerExtension;
+import modules.admin.ReportManager.ReportManagerService;
 import modules.admin.ReportTemplate.ReportTemplateExtension;
 import modules.admin.domain.ReportManager.ImportActionType;
 import modules.admin.domain.ReportTemplate;
 
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
+
+/**
+ * Imports report specifications from JSON or ZIP files, validating and loading report templates
+ * with support for batch imports and replacing existing reports.
+ */
 public class ImportReportSpecifications extends UploadAction<ReportManagerExtension> {
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(ImportReportSpecifications.class);
+	private static final int IMPORT_ZIP_MAX_ENTRIES = 2000;
+	private static final int IMPORT_ZIP_MAX_UNCOMPRESSED_MB = 100;
+
+	@Inject
+	@SuppressWarnings("java:S6813") // allow member injection
+	private transient ReportManagerService reportManagerService;
 
 	/**
 	 * Upload a zip containing a number of report configurations
 	 * unzip to a temporary folder
 	 * and then unmarshall the json
+	 * @param bean the report manager bean
+	 * @param upload the uploaded file metadata and stream
+	 * @param exception the upload exception holder
+	 * @param webContext the current web context
+	 * @return the updated report manager bean
+	 * @throws Exception if upload or import processing fails
 	 */
 	@Override
-	public ReportManagerExtension upload(ReportManagerExtension bean, Upload upload, UploadException exception, WebContext webContext) throws Exception {
-
+	@SuppressWarnings("java:S3776") // Complexity OK
+	public ReportManagerExtension upload(ReportManagerExtension bean, Upload upload, UploadException exception,
+			WebContext webContext) throws Exception {
 		// Mimetype not being detected, so use file extension instead
 		String ext = upload.getFileName().substring(upload.getFileName().lastIndexOf(".") + 1);
 
 		// check mimetype of uploaded file
 		try (InputStream in = upload.getInputStream()) {
 			if (MimeType.json.getStandardFileSuffix().equals(ext)) {
-				byte[] fileContent = new byte[in.available()];
-				in.read(fileContent);
-				String json = new String(fileContent, Charset.forName("UTF-8"));
-	
+				String json = new String(in.readAllBytes(), UTF_8);
+
 				try {
 					PersistentBean pb = (PersistentBean) JSON.unmarshall(CORE.getUser(), json);
-	
+
 					if (bean.getImportActionType() == ImportActionType.validateOnlyReportConfigurationsAndTemplates) {
 						validateReport(pb, false, null);
 						webContext.growl(MessageSeverity.info, "Report validated ok - select import option to import this report");
 						return bean;
 					}
 					validateReport(pb, true, null);
-	
+
 					// now load
 					pb = (PersistentBean) JSON.unmarshall(CORE.getUser(), json);
-	
+
 					loadReport(bean, pb);
-	
+
 				} catch (Exception e) {
-					e.printStackTrace();
-					if(e instanceof ValidationException) {
+					LOGGER.error(e.getMessage(), e);
+					if (e instanceof ValidationException) {
 						throw e;
 					}
 					throw new ValidationException(new Message("The file was not recognised as a valid report"));
 				}
 			} else if (MimeType.zip.getStandardFileSuffix().equals(ext)) {
-	
+
 				// store the uploaded zip
-				File outdir = ReportManagerExtension.getTemporaryPreparationFolder();
+				File outdir = reportManagerService.getTemporaryPreparationFolder();
 				bean.setPathToZip(outdir.getAbsolutePath());
-				File importFile = ReportManagerExtension.getZipFile();
+				File importFile = reportManagerService.getZipFile();
 				Files.copy(in, Paths.get(importFile.getAbsolutePath()));
-	
+
 				// extract the report configurations from the zip
-				FileUtil.extractZipArchive(importFile, outdir);
-				
+				FileUtil.extractZipArchive(importFile,
+						outdir,
+						IMPORT_ZIP_MAX_ENTRIES,
+						IMPORT_ZIP_MAX_UNCOMPRESSED_MB);
+
 				// handle case that zip supplied was a directory of files
 				if (outdir.isDirectory()) {
-					if(outdir.listFiles().length==1 && outdir.listFiles()[0].isDirectory()) {
+					if (outdir.listFiles().length == 1 && outdir.listFiles()[0].isDirectory()) {
 						outdir = outdir.listFiles()[0];
 					}
 				}
-	
+
 				List<String> templatesToReplace = new ArrayList<>();
-	
+
 				// Validate all reports before attempting to replace them
 				if (outdir.isDirectory()) {
 					for (File report : outdir.listFiles()) {
 						byte[] fileContent = Files.readAllBytes(report.toPath());
 						String json = new String(fileContent, Charset.forName("UTF-8"));
-	
+
 						PersistentBean pb;
 						try {
 							pb = (PersistentBean) JSON.unmarshall(CORE.getUser(), json);
 						} catch (Exception e) {
-							e.printStackTrace();
+							LOGGER.error(e.getMessage(), e);
 							throw new ValidationException(new Message("The report " + report.getName() + " was not a valid."));
 						}
 						validateReport(pb, false, templatesToReplace);
 					}
-	
+
 					if (bean.getImportActionType() == ImportActionType.validateOnlyReportConfigurationsAndTemplates) {
 						webContext.growl(MessageSeverity.info, "All reports validated ok - select import option to import reports");
 						return bean;
 					}
-	
+
 					// if all validated, then proceed by deleting any existing report with the same name
 					for (String name : templatesToReplace) {
 						removePreviousTemplate(name);
 					}
-	
+
 					// then reload
 					for (File report : outdir.listFiles()) {
 						byte[] fileContent = Files.readAllBytes(report.toPath());
 						String json = new String(fileContent, Charset.forName("UTF-8"));
-	
+
 						// now load
 						PersistentBean pb = (PersistentBean) JSON.unmarshall(CORE.getUser(), json);
 						loadReport(bean, pb);
 					}
 				}
 			} else {
-				throw new ValidationException("File type " + upload.getMimeType().toString() + " is not recognised as either json or zip");
+				throw new ValidationException(
+						"File type " + upload.getMimeType().toString() + " is not recognised as either json or zip");
 			}
 		}
-		
+
 		webContext.growl(MessageSeverity.info, "Reports uploaded successfully");
 
 		return bean;
@@ -146,11 +173,10 @@ public class ImportReportSpecifications extends UploadAction<ReportManagerExtens
 	 * @param withRemove
 	 */
 	private static void validateReport(final PersistentBean pb, final boolean withRemove, final List<String> templatesToReplace) {
-		if (pb instanceof ReportTemplate) {
-			ReportTemplate newTemplate = (ReportTemplate) pb;
+		if (pb instanceof ReportTemplate newTemplate) {
 			BeanValidator.validateBeanAgainstDocument(newTemplate);
 			BeanValidator.validateBeanAgainstBizlet(newTemplate);
-			
+
 			// validate no SQL dataset if this is a multi-tenant installation
 			if (UtilImpl.CUSTOMER == null) {
 				if (newTemplate.getDatasets().stream().anyMatch(d -> d.getDatasetType() == DatasetType.SQL)) {
@@ -158,11 +184,11 @@ public class ImportReportSpecifications extends UploadAction<ReportManagerExtens
 							+ " is not supported in multi-tenant applications");
 				}
 			}
-					
+
 			if (withRemove) {
 				removePreviousTemplate(newTemplate.getName());
 			} else {
-				if(templatesToReplace!=null) {
+				if (templatesToReplace != null) {
 					templatesToReplace.add(newTemplate.getName());
 				}
 			}
@@ -191,18 +217,16 @@ public class ImportReportSpecifications extends UploadAction<ReportManagerExtens
 	 * @param bean
 	 * @param pb
 	 */
-	private static void loadReport(ReportManagerExtension bean, PersistentBean pb) {
-		if (pb instanceof ReportTemplate) {
-			ReportTemplateExtension newTemplate = (ReportTemplateExtension) pb;
-
+	private void loadReport(ReportManagerExtension bean, PersistentBean pb) {
+		if (pb instanceof ReportTemplateExtension newTemplate) {
 			// clear the schedule component before saving
 			newTemplate.clearSchedules();
 
 			try {
-				newTemplate = CORE.getPersistence().save(newTemplate);
+				CORE.getPersistence().save(newTemplate);
 			} catch (Exception e) {
-				e.printStackTrace();
-				ReportManagerExtension.cleanUpTemporaryFiles();
+				LOGGER.error(e.getMessage(), e);
+				reportManagerService.cleanUpTemporaryFiles();
 				throw new ValidationException(new Message("The report template " + newTemplate.getName() + " could not be saved."));
 			}
 		}

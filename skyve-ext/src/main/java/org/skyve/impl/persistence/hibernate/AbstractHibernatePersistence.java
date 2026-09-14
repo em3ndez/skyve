@@ -1,14 +1,13 @@
 package org.skyve.impl.persistence.hibernate;
 
-import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.sql.Connection;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
+import java.util.Deque;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -16,12 +15,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-import java.util.Stack;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Consumer;
 import java.util.function.Function;
-import java.util.logging.Level;
 
 import javax.cache.management.CacheStatisticsMXBean;
 
@@ -45,10 +42,12 @@ import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
 import org.hibernate.boot.spi.MetadataImplementor;
 import org.hibernate.cache.CacheException;
 import org.hibernate.cfg.AvailableSettings;
+import org.hibernate.engine.config.spi.ConfigurationService;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.hibernate.event.service.spi.EventListenerRegistry;
 import org.hibernate.event.spi.EventType;
 import org.hibernate.hql.internal.ast.QuerySyntaxException;
+import org.hibernate.hql.spi.id.inline.InlineIdsOrClauseBulkIdStrategy;
 import org.hibernate.integrator.spi.Integrator;
 import org.hibernate.integrator.spi.IntegratorService;
 import org.hibernate.internal.SessionImpl;
@@ -57,8 +56,12 @@ import org.hibernate.query.NativeQuery;
 import org.hibernate.query.Query;
 import org.hibernate.service.spi.SessionFactoryServiceRegistry;
 import org.hibernate.tool.hbm2ddl.SchemaExport;
-import org.hibernate.tool.hbm2ddl.SchemaUpdate;
 import org.hibernate.tool.schema.TargetType;
+import org.hibernate.tool.schema.internal.ExceptionHandlerLoggedImpl;
+import org.hibernate.tool.schema.spi.ExecutionOptions;
+import org.hibernate.tool.schema.spi.SchemaManagementTool;
+import org.hibernate.tool.schema.spi.ScriptTargetOutput;
+import org.hibernate.tool.schema.spi.TargetDescriptor;
 import org.hibernate.type.StringType;
 import org.hibernate.type.Type;
 import org.skyve.EXT;
@@ -72,6 +75,7 @@ import org.skyve.domain.PersistentBean;
 import org.skyve.domain.app.AppConstants;
 import org.skyve.domain.messages.DomainException;
 import org.skyve.domain.messages.Message;
+import org.skyve.domain.messages.NoResultsException;
 import org.skyve.domain.messages.OptimisticLockException;
 import org.skyve.domain.messages.OptimisticLockException.OperationType;
 import org.skyve.domain.messages.ReferentialConstraintViolationException;
@@ -92,6 +96,7 @@ import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.persistence.RDBMSDynamicPersistence;
 import org.skyve.impl.persistence.hibernate.dialect.DDLDelegate;
 import org.skyve.impl.persistence.hibernate.dialect.SkyveDialect;
+import org.skyve.impl.persistence.hibernate.dialect.SkyveDialect.RDBMS;
 import org.skyve.impl.util.CascadeDeleteBeanVisitor;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.util.ValidationUtil;
@@ -132,17 +137,82 @@ import org.skyve.util.BeanVisitor;
 import org.skyve.util.Binder;
 import org.skyve.util.Binder.TargetMetaData;
 import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.persistence.EntityTransaction;
 import jakarta.persistence.RollbackException;
 
+/**
+ * Base Hibernate-backed persistence implementation for Skyve.
+ * <p>
+ * This class wires the Hibernate {@link SessionFactory} and per-instance
+ * {@link EntityManager}/{@link Session} pair, configures caching and schema
+ * update behavior, and provides shared persistence utilities used by concrete
+ * persistence implementations.
+ * </p>
+ * <p>
+ * Key responsibilities include:
+ * </p>
+ * <ul>
+ *   <li>Initializing Hibernate from Skyve configuration and repository metadata.</li>
+ *   <li>Registering Skyve event listeners for Bizlet, CMS, and BizKey/BizLock callbacks.</li>
+ *   <li>Managing per-instance session lifecycle with manual flush mode.</li>
+ *   <li>Providing database dialect discovery and DDL migration hooks.</li>
+ *   <li>Delegating content storage operations to subclasses via abstract methods.</li>
+ * </ul>
+ * <p>
+ * Subclasses must implement content handling for binary/text attachments via
+ * {@link #removeBeanContent(PersistentBean)}, {@link #putBeanContent(BeanContent)},
+ * and {@link #closeContent()}.
+ * </p>
+ * <p>
+ * Threading: thread-confined — do not share instances across threads.
+ * </p>
+ *
+ * @see AbstractPersistence
+ * @see Persistence
+ * @see DynamicPersistence
+ * @see HibernateContentPersistence
+ * @see HibernateNoContentPersistence
+ */
 public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 	private static final long serialVersionUID = -1813679859498468849L;
 
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(AbstractHibernatePersistence.class);
+    private static final Logger QUERY_LOGGER = Category.QUERY.logger();
+    private static final Logger BIZLET_LOGGER = Category.BIZLET.logger();
+
+    private static final String DOCUMENT_PREFIX = "Document ";
+	private static final String ID_COLUMN_SUFFIX = "_id";
+	private static final String INSERT_INTO_SQL = "insert into ";
+	private static final String IS_NOT_PERSISTABLE = " is not persistable";
+	private static final String AND_SQL = " and ";
+	private static final String CONFIG_FALSE = "false";
+	private static final String FROM_BEAN = " from bean ";
+	private static final String TYPE_COLUMN_SUFFIX = "_type";
+	private static final String VALUES_SQL = ") values (:";
+	private static final String WHERE_SQL = " where ";
+
+    /**
+     * Shared Hibernate session factory for all persistence instances.
+     */
+	@SuppressWarnings("resource") // static lifecycle is controlled by configure()/shutdown hooks
 	private static SessionFactory sf = null;
+	
+	/**
+	 * Hibernate metadata assembled from Skyve repository mappings.
+	 */
 	private static Metadata metadata = null;
+	
+	/**
+	 * Cache of instantiated dialects by Hibernate dialect class name.
+	 */
 	private static final Map<String, SkyveDialect> DIALECTS = new TreeMap<>();
 
 	static {
@@ -154,19 +224,54 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 		}
 	}
 
+	/**
+	 * JPA EntityManager for the current persistence instance.
+	 */
+	@SuppressWarnings("resource") // closed by persistence lifecycle
 	private EntityManager em = null;
+	
+	/**
+	 * Hibernate Session unwrapped from the EntityManager.
+	 */
+	@SuppressWarnings("resource") // closed by persistence lifecycle
 	private Session session = null;
 	
-	public AbstractHibernatePersistence() {
+	/**
+	 * Create a new persistence instance with a manual-flush Hibernate session.
+	 */
+	@SuppressWarnings("resource") // em/session are closed by close() lifecycle
+	protected AbstractHibernatePersistence() {
 		em = sf.createEntityManager();
 		session = em.unwrap(Session.class);
 		session.setHibernateFlushMode(FlushMode.MANUAL);
 	}
 
-	protected abstract void removeBeanContent(PersistentBean bean) throws Exception;
-	protected abstract void putBeanContent(BeanContent content) throws Exception;
+	/**
+	 * Remove all content associated with the supplied bean.
+	 *
+	 * @param bean The bean whose content should be removed.
+	 * @throws Exception If the underlying content store fails.
+	 */
+	protected abstract void removeBeanContent(@Nonnull PersistentBean bean) throws Exception;
+	
+	/**
+	 * Persist or update content for a bean.
+	 *
+	 * @param content The content to store.
+	 * @throws Exception If the underlying content store fails.
+	 */
+	protected abstract void putBeanContent(@Nonnull BeanContent content) throws Exception;
+	
+	/**
+	 * Close any content-store resources associated with this persistence instance.
+	 *
+	 * @throws Exception If the underlying content store fails to close.
+	 */
 	protected abstract void closeContent() throws Exception;
 	
+	/**
+	 * Performs disposeAllPersistenceInstances.
+	 */
 	@Override
 	@SuppressWarnings("unchecked")
 	public final void disposeAllPersistenceInstances() {
@@ -204,7 +309,10 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 		configure();
 	}
 
-	@SuppressWarnings("resource")
+	/**
+	 * Configure the shared Hibernate SessionFactory and metadata.
+	 */
+	@SuppressWarnings({"resource", "java:S3776"}) // Complexity OK
 	private static void configure() {
 		LoadedConfig config = LoadedConfig.baseline();
 		Map<String, String> cfg = config.getConfigurationValues();
@@ -221,7 +329,7 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 			if (value != null) {
 				cfg.put(AvailableSettings.PASS, value);
 			}
-			cfg.put(AvailableSettings.AUTOCOMMIT, "false");
+			cfg.put(AvailableSettings.AUTOCOMMIT, CONFIG_FALSE);
 		}
 		else {
 			cfg.put(AvailableSettings.DATASOURCE, dataSource);
@@ -229,7 +337,7 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 		cfg.put(AvailableSettings.DIALECT, UtilImpl.DATA_STORE.getDialectClassName());
 
 		// Query Caching screws up pessimistic locking
-		cfg.put(AvailableSettings.USE_QUERY_CACHE, "false");
+		cfg.put(AvailableSettings.USE_QUERY_CACHE, CONFIG_FALSE);
 
 		// turn on second level caching
 		cfg.put(AvailableSettings.USE_SECOND_LEVEL_CACHE, "true");
@@ -254,7 +362,7 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 		}
 
 		// Whether to generate dynamic proxies as classes or not (adds to classes loaded and thus Permanent Generation)
-		cfg.put(AvailableSettings.USE_REFLECTION_OPTIMIZER, "false");
+		cfg.put(AvailableSettings.USE_REFLECTION_OPTIMIZER, CONFIG_FALSE);
 
 		// Update the database schema on first use
 		if (UtilImpl.DDL_SYNC) {
@@ -265,14 +373,17 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 		cfg.put(AvailableSettings.HBM2DDL_JDBC_METADATA_EXTRACTOR_STRATEGY, "individually");
 
 		// Keep stats on usage
-		cfg.put(AvailableSettings.GENERATE_STATISTICS, "false");
+		cfg.put(AvailableSettings.GENERATE_STATISTICS, CONFIG_FALSE);
 
 		// Log SQL to stdout
 		cfg.put(AvailableSettings.SHOW_SQL, Boolean.toString(UtilImpl.SQL_TRACE));
 		cfg.put(AvailableSettings.FORMAT_SQL, Boolean.toString(UtilImpl.PRETTY_SQL_OUTPUT));
 
 		// Don't import simple class names as entity names
-		cfg.put("auto-import", "false");
+		cfg.put("auto-import", CONFIG_FALSE);
+
+		// Disable the unsafe inline bulk-id strategy that is vulnerable to CVE-2026-0603, even if configured by the user, and fail fast with a clear error message.
+		validateBulkIdStrategyConfiguration(cfg);
 
 		StandardServiceRegistryBuilder ssrb = new StandardServiceRegistryBuilder().configure(config);
 		ssrb.addService(IntegratorService.class, new IntegratorService() {
@@ -309,6 +420,9 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 						eventListenerRegistry.appendListeners(EventType.INIT_COLLECTION, listener);
 					}
 					
+					/**
+					 * {@inheritDoc}
+					 */
 					@Override
 					public void disintegrate(SessionFactoryImplementor sessionFactory, SessionFactoryServiceRegistry serviceRegistry) {
 						// nothing to clean up here
@@ -327,39 +441,33 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 		sources.addAnnotatedClass(UniquenessEntity.class);
 
 		ProvidedRepository repository = ProvidedRepositoryFactory.get();
-		if (UtilImpl.USING_JPA) {
-			// cfg.configure("bizhub", null);
-			// emf = javax.persistence.Persistence.createEntityManagerFactory("bizhub");
-		}
-		else {
-			StringBuilder sb = new StringBuilder(64);
+		StringBuilder sb = new StringBuilder(64);
 
-			for (String moduleName : repository.getAllVanillaModuleNames()) {
-				// repository.REPOSITORY_DIRECTORY
-				sb.setLength(0);
-				sb.append(ProvidedRepository.MODULES_NAME).append('/');
-				sb.append(moduleName).append('/');
-				sb.append(ProvidedRepository.DOMAIN_NAME).append('/');
-				sb.append(moduleName).append("_orm.hbm.xml");
-				String mappingPath = sb.toString();
+		for (String moduleName : repository.getAllVanillaModuleNames()) {
+			// repository.REPOSITORY_DIRECTORY
+			sb.setLength(0);
+			sb.append(ProvidedRepository.MODULES_NAME).append('/');
+			sb.append(moduleName).append('/');
+			sb.append(ProvidedRepository.DOMAIN_NAME).append('/');
+			sb.append(moduleName).append("_orm.hbm.xml");
+			String mappingPath = sb.toString();
 
-				File mappingFile = new File(UtilImpl.getAbsoluteBasePath() + mappingPath);
-				if (mappingFile.exists()) {
-					sources.addResource(mappingPath);
-				}
+			File mappingFile = new File(UtilImpl.getAbsoluteBasePath() + mappingPath);
+			if (mappingFile.exists()) {
+				sources.addResource(mappingPath);
 			}
+		}
 
-			// Check for customer overridden ORMs
-			for (String customerName : repository.getAllCustomerNames()) {
-				sb.setLength(0);
-				sb.append(ProvidedRepository.CUSTOMERS_NAMESPACE).append(customerName).append('/');
-				sb.append(ProvidedRepository.MODULES_NAME).append("/orm.hbm.xml");
-				String ormResourcePath = sb.toString();
-				
-				File ormFile = new File(UtilImpl.getAbsoluteBasePath() + ormResourcePath);
-				if (ormFile.exists()) {
-					sources.addResource(ormResourcePath);
-				}
+		// Check for customer overridden ORMs
+		for (String customerName : repository.getAllCustomerNames()) {
+			sb.setLength(0);
+			sb.append(ProvidedRepository.CUSTOMERS_NAMESPACE).append(customerName).append('/');
+			sb.append(ProvidedRepository.MODULES_NAME).append("/orm.hbm.xml");
+			String ormResourcePath = sb.toString();
+			
+			File ormFile = new File(UtilImpl.getAbsoluteBasePath() + ormResourcePath);
+			if (ormFile.exists()) {
+				sources.addResource(ormResourcePath);
 			}
 		}
 
@@ -380,13 +488,42 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 				DDLDelegate.migrate(standardRegistry, metadata, AbstractHibernatePersistence.getDialect(), true);
 			}
 			catch (Exception e) {
-				UtilImpl.LOGGER.severe("Could not apply skyve extra schema updates");
-				e.printStackTrace();
+				LOGGER.error("Could not apply skyve extra schema updates", e);
 			}
 		}
 	}
 
-	public static SkyveDialect getDialect(String dialectClassName) {
+	/**
+	 * Validate the configured Hibernate bulk-id strategy to prevent unsafe inline strategies that are vulnerable to CVE-2026-0603.
+	 * @param cfg
+	 */
+	private static void validateBulkIdStrategyConfiguration(Map<String, String> cfg) {
+		String configuredStrategy = cfg.get(AvailableSettings.HQL_BULK_ID_STRATEGY);
+		if (configuredStrategy == null) {
+			return;
+		}
+
+		configuredStrategy = configuredStrategy.trim();
+		if (configuredStrategy.isEmpty()) {
+			return;
+		}
+
+		if (InlineIdsOrClauseBulkIdStrategy.class.getName().equals(configuredStrategy)) {
+			LOGGER.error("Attempted configuration of unsafe Hibernate bulk-id strategy '{}' was blocked due to CVE-2026-0603", configuredStrategy);
+			throw new IllegalStateException(String.format(
+					"Unsafe Hibernate bulk-id strategy '%s' is disabled due to CVE-2026-0603. "
+							+ "Use a non-inline strategy (or the dialect default).",
+					configuredStrategy));
+		}
+	}
+
+	/**
+	 * Resolve or create a Skyve dialect instance for the specified Hibernate dialect class name.
+	 *
+	 * @param dialectClassName Fully qualified Hibernate dialect class name.
+	 * @return A cached or newly instantiated Skyve dialect.
+	 */
+	public static @Nonnull SkyveDialect getDialect(@Nonnull String dialectClassName) {
 		SkyveDialect dialect = DIALECTS.get(dialectClassName);
 		if (dialect == null) {
 			synchronized (AbstractHibernatePersistence.class) {
@@ -406,53 +543,139 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 		return dialect;
 	}	
 	
-	public static SkyveDialect getDialect() {
+	/**
+	 * Resolve the Skyve dialect for the current data store configuration.
+	 *
+	 * @return The configured Skyve dialect.
+	 */
+	public static @Nonnull SkyveDialect getDialect() {
 		return getDialect(UtilImpl.DATA_STORE.getDialectClassName());
 	}
 	
-	public static void logSecondLevelCacheStats(String cacheName) {
+	/**
+	 * Log second-level cache statistics for a named cache region.
+	 *
+	 * @param cacheName The cache region name.
+	 */
+	public static void logSecondLevelCacheStats(@Nonnull String cacheName) {
 		CacheStatisticsMXBean bean = EXT.getCaching().getJCacheStatisticsMXBean(cacheName);
-		if (bean != null) {
-			UtilImpl.LOGGER.info("HIBERNATE SHARED CACHE:- " + cacheName + " => " + bean.getCacheGets() + " gets : " + bean.getCachePuts() + " puts : " + bean.getCacheHits() + " hits : " + bean.getCacheMisses() + " misses : " + bean.getCacheRemovals() + " removals : " + bean.getCacheEvictions() + " evictions");
-		}
+		if ((bean != null) && LOGGER.isInfoEnabled()) {
+			LOGGER.info("HIBERNATE SHARED CACHE:- {} => {} gets : {} puts : {} hits : {} misses : {} removals : {} evictions",
+							cacheName,
+							String.valueOf(bean.getCacheGets()),
+							String.valueOf(bean.getCachePuts()),
+							String.valueOf(bean.getCacheHits()),
+							String.valueOf(bean.getCacheMisses()),
+							String.valueOf(bean.getCacheRemovals()),
+							String.valueOf(bean.getCacheEvictions()));
+			}
+		
 	}
 	
+	/**
+	 * Performs generateDDL.
+	 */
 	@Override
 	@SuppressWarnings("resource")
-	public final void generateDDL(String dropDDLFilePath, String createDDLFilePath, String updateDDLFilePath) {
+	public final void generateDDL(List<String> dropDDL, List<String> createDDL, List<String> updateDDL) {
 		try {
-			if (dropDDLFilePath != null) {
-				new SchemaExport().setOutputFile(dropDDLFilePath).drop(EnumSet.of(TargetType.SCRIPT), metadata);
+			if (dropDDL != null) {
+				new SchemaExport().perform(SchemaExport.Action.DROP, metadata, new ListScriptTargetOutput(dropDDL));
 			}
-			if (createDDLFilePath != null) {
-				new SchemaExport().setOutputFile(createDDLFilePath).createOnly(EnumSet.of(TargetType.SCRIPT), metadata);
+			if (createDDL != null) {
+				new SchemaExport().perform(SchemaExport.Action.CREATE, metadata, new ListScriptTargetOutput(createDDL));
 			}
-			if (updateDDLFilePath != null) {
-				new SchemaUpdate().setOutputFile(updateDDLFilePath).execute(EnumSet.of(TargetType.SCRIPT), metadata);
-				try (FileWriter fw = new FileWriter(updateDDLFilePath, true)) {
-					try (BufferedWriter bw = new BufferedWriter(fw)) {
-						for (String ddl : DDLDelegate.migrate(((MetadataImplementor) metadata).getMetadataBuildingOptions().getServiceRegistry(),
-																metadata,
-																AbstractHibernatePersistence.getDialect(),
-																false)) {
-							bw.write(ddl);
-							bw.write(';');
-							bw.newLine();
-						}
+			if (updateDDL != null) {
+				// NOTE: In later Hibernate, the old org.hibernate.tool.hbm2ddl.SchemaUpdate path appears to be gone
+				// from the published 6.6/7.0 Javadocs, and the supported API is the schema tooling SPI under org.hibernate.tool.schema.
+				// That SPI does support in-memory collection, but through SchemaMigrator plus TargetDescriptor and ScriptTargetOutput, not through a convenience SchemaUpdate wrapper.
+				MetadataImplementor metadataImplementor = (MetadataImplementor) metadata;
+				org.hibernate.service.ServiceRegistry serviceRegistry = metadataImplementor.getMetadataBuildingOptions().getServiceRegistry();
+				Map<?, ?> configurationValues = serviceRegistry.getService(ConfigurationService.class).getSettings();
+
+				ExecutionOptions executionOptions = new ExecutionOptions() {
+					@Override
+					public Map<?, ?> getConfigurationValues() {
+						return configurationValues;
 					}
-				}
+
+					@Override
+					public boolean shouldManageNamespaces() {
+						return false;
+					}
+
+					@Override
+					public org.hibernate.tool.schema.spi.ExceptionHandler getExceptionHandler() {
+						return ExceptionHandlerLoggedImpl.INSTANCE;
+					}
+				};
+
+				TargetDescriptor targetDescriptor = new TargetDescriptor() {
+					@Override
+					public EnumSet<TargetType> getTargetTypes() {
+						return EnumSet.of(TargetType.SCRIPT);
+					}
+
+					@Override
+					public ScriptTargetOutput getScriptTargetOutput() {
+						return new ListScriptTargetOutput(updateDDL);
+					}
+				};
+
+				serviceRegistry.getService(SchemaManagementTool.class)
+							.getSchemaMigrator(configurationValues)
+							.doMigration(metadata, executionOptions, targetDescriptor);
+
+				updateDDL.addAll(DDLDelegate.migrate(serviceRegistry,
+												metadata,
+												AbstractHibernatePersistence.getDialect(),
+												false));
 			}
-		}
-		catch (IOException e) {
-			throw new DomainException("Could not create temporary DDL file", e);
 		}
 		catch (Exception e) {
-			throw new DomainException("Could not read temporary DDL file", e);
+			throw new DomainException("Could not generate DDL", e);
 		}
 	}
 
+	private static final class ListScriptTargetOutput implements ScriptTargetOutput {
+		private final List<String> commands;
+
+		private ListScriptTargetOutput(List<String> commands) {
+			this.commands = commands;
+		}
+
+		@Override
+		public void prepare() {
+			// nothing to prepare
+		}
+
+		@Override
+		public void accept(String command) {
+			if (command != null) {
+				String sql = command.trim();
+				if (! sql.isEmpty()) {
+					if (sql.endsWith(";")) {
+						sql = sql.substring(0, sql.length() - 1);
+					}
+					commands.add(sql);
+				}
+			}
+		}
+
+		@Override
+		public void release() {
+			// nothing to release
+		}
+	}
+
+	/**
+	 * Resolve the Hibernate entity name for a document, considering customer overrides.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 * @return The Hibernate entity name to use.
+	 */
 	@Override
-	@SuppressWarnings("deprecation")
 	public final String getDocumentEntityName(String moduleName, String documentName) {
 		String overriddenEntityName = user.getCustomerName() + moduleName + documentName;
 
@@ -463,13 +686,36 @@ public abstract class AbstractHibernatePersistence extends AbstractPersistence {
 		return moduleName + documentName;
 	}
 	
-	private String getCollectionRoleName(String moduleName, String documentName, String collectionName) {
+	/**
+	 * Build the Hibernate collection role name for a document collection.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 * @param collectionName The collection name.
+	 * @return The Hibernate role name for the collection.
+	 */
+	private @Nonnull String getCollectionRoleName(@Nonnull String moduleName,
+													@Nonnull String documentName,
+													@Nonnull String collectionName) {
 		return getDocumentEntityName(moduleName, documentName) + '.' + collectionName;
 	}
 
-	private void treatPersistenceThrowable(Throwable t, OperationType operationType, PersistentBean bean) {
-t.printStackTrace();
+	/**
+	 * Normalize and rethrow persistence exceptions as Skyve domain exceptions.
+	 *
+	 * @param t The throwable to interpret.
+	 * @param operationType The persistence operation being performed.
+	 * @param bean The bean involved, if any.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private void treatPersistenceThrowable(@Nonnull Throwable t,
+											@Nonnull OperationType operationType,
+											@Nullable PersistentBean bean) {
+		LOGGER.error(t.getMessage(), t);
 		if (t instanceof jakarta.persistence.OptimisticLockException) {
+			if (bean == null) {
+				throw new DomainException(t);
+			}
 			if (bean.isPersisted()) {
 				try {
 					session.refresh(bean);
@@ -482,6 +728,9 @@ t.printStackTrace();
 			throw new OptimisticLockException(user, operationType, bean.getBizLock());
 		}
 		else if (t instanceof StaleObjectStateException) {
+			if (bean == null) {
+				throw new DomainException(t);
+			}
 			if (bean.isPersisted()) {
 				try {
 					session.refresh(bean);
@@ -494,19 +743,22 @@ t.printStackTrace();
 			throw new OptimisticLockException(user, operationType, bean.getBizLock());
 		}
 		else if (t instanceof EntityNotFoundException) {
+			if (bean == null) {
+				throw new DomainException(t);
+			}
 			throw new OptimisticLockException(user, operationType, bean.getBizLock());
 		}
-		else if (t instanceof DomainException) {
-			throw (DomainException) t;
+		else if (t instanceof DomainException de) {
+			throw de;
 		}
-		else if (t instanceof MetaDataException) {
-			throw (MetaDataException) t;
+		else if (t instanceof MetaDataException me) {
+			throw me;
 		}
-		else if (t.getCause() instanceof DomainException) {
-			throw (DomainException) t.getCause();
+		else if (t.getCause() instanceof DomainException de) {
+			throw de;
 		}
-		else if (t.getCause() instanceof MetaDataException) {
-			throw (MetaDataException) t.getCause();
+		else if (t.getCause() instanceof MetaDataException me) {
+			throw me;
 		}
 		else {
 			if (UtilImpl.DEV_MODE) {
@@ -521,6 +773,9 @@ t.printStackTrace();
 		}
 	}
 
+	/**
+	 * Begin a transaction for both static and dynamic persistence contexts.
+	 */
 	@Override
 	public final void begin() {
 		try {
@@ -539,12 +794,25 @@ t.printStackTrace();
 		}
 	}
 
+	/**
+	 * Set the current user and refresh document permission scopes.
+	 *
+	 * @param user The current user.
+	 */
 	@Override
 	public void setUser(User user) {
 		super.setUser(user);
 		resetDocumentPermissionScopes();
 	}
 
+	/**
+	 * Execute work with an overridden document permission scope and return a result.
+	 *
+	 * @param scope The scope to apply for the duration of the call.
+	 * @param function The work to execute.
+	 * @param <R> The return type.
+	 * @return The value returned by the function.
+	 */
 	@Override
 	public <R> R withDocumentPermissionScopes(DocumentPermissionScope scope, Function<Persistence, R> function) {
 		try {
@@ -556,6 +824,12 @@ t.printStackTrace();
 		}
 	}
 
+	/**
+	 * Execute work with an overridden document permission scope.
+	 *
+	 * @param scope The scope to apply for the duration of the call.
+	 * @param consumer The work to execute.
+	 */
 	@Override
 	public void withDocumentPermissionScopes(DocumentPermissionScope scope, Consumer<Persistence> consumer) {
 		try {
@@ -567,7 +841,12 @@ t.printStackTrace();
 		}
 	}
 	
-	private void setDocumentPermissionScopes(DocumentPermissionScope scope) {
+	/**
+	 * Apply Hibernate filters for all accessible documents for the supplied scope.
+	 *
+	 * @param scope The document permission scope.
+	 */
+	private void setDocumentPermissionScopes(@Nonnull DocumentPermissionScope scope) {
 		Set<String> accessibleModuleNames = ((UserImpl) user).getAccessibleModuleNames(); 
 		ProvidedRepository repository = ProvidedRepositoryFactory.get();
 
@@ -575,12 +854,15 @@ t.printStackTrace();
 		for (String moduleName : repository.getAllVanillaModuleNames()) {
 			Customer moduleCustomer = (accessibleModuleNames.contains(moduleName) ? user.getCustomer() : null);
 			Module module = repository.getModule(moduleCustomer, moduleName);
+			if (module == null) {
+				continue;
+			}
 
 			for (String documentName : module.getDocumentRefs().keySet()) {
 				Document document = module.getDocument(moduleCustomer, documentName);
 				if ((! document.isDynamic()) && // is not dynamic
 						document.isPersistable() && // is persistent document
-						(repository.findNearestPersistentUnmappedSuperDocument(moduleCustomer, module, document) == null) && // not a sub-class (which don't have filters)
+						(repository.findNearestPersistentSingleOrJoinedSuperDocument(moduleCustomer, module, document) == null) && // not an ORM sub-class (which don't have filters)
 						moduleName.equals(document.getOwningModuleName())) { // document belongs to this module
 					setFilters(document, scope);
 				}
@@ -588,41 +870,39 @@ t.printStackTrace();
 		}
 	}
 	
+	/**
+	 * Reset Hibernate filters to each document's default permission scope.
+	 */
 	private void resetDocumentPermissionScopes() {
 		Set<String> accessibleModuleNames = user.getAccessibleModuleNames(); 
 		ProvidedRepository repository = ProvidedRepositoryFactory.get();
 
-//		String userDataGroupId = user.getDataGroupId();
-//		if (Util.SECURITY_TRACE) {
-//			Util.LOGGER.info("SET USER: cust=" + customer.getName() + " datagroup=" + userDataGroupId + " user=" + user.getId());
-//		}
-		
 		// Enable all filters required for this user
 		for (String moduleName : repository.getAllVanillaModuleNames()) {
 			Customer moduleCustomer = (accessibleModuleNames.contains(moduleName) ? user.getCustomer() : null);
 			Module module = repository.getModule(moduleCustomer, moduleName);
-
-			for (String documentName : module.getDocumentRefs().keySet()) {
-				Document document = module.getDocument(moduleCustomer, documentName);
-				if ((! document.isDynamic()) && // is not dynamic
-						(document.isPersistable()) && // is persistent document
-						(repository.findNearestPersistentUnmappedSuperDocument(moduleCustomer, module, document) == null) && // not a sub-class (which don't have filters)
-						moduleName.equals(document.getOwningModuleName())) { // document belongs to this module
-					
-					resetFilters(document);
+			if (module != null) {
+				for (String documentName : module.getDocumentRefs().keySet()) {
+					Document document = module.getDocument(moduleCustomer, documentName);
+					if ((! document.isDynamic()) && // is not dynamic
+							(document.isPersistable()) && // is persistent document
+							(repository.findNearestPersistentSingleOrJoinedSuperDocument(moduleCustomer, module, document) == null) && // not an ORM sub-class (which don't have filters)
+							moduleName.equals(document.getOwningModuleName())) { // document belongs to this module
+						resetFilters(document);
+					}
 				}
 			}
 		}
 	}
 
 	/**
-	 * Setup the session filters for the scope given.
-	 * 
-	 * @param document
-	 * @param newScope
-	 * @return
+	 * Configure Hibernate filters for a specific document and scope.
+	 *
+	 * @param document The document to apply filters to.
+	 * @param scope The permission scope.
 	 */
-	private void setFilters(Document document, DocumentPermissionScope scope) {
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private void setFilters(@Nonnull Document document, @Nonnull DocumentPermissionScope scope) {
 		Set<String> accessibleModuleNames = ((UserImpl) user).getAccessibleModuleNames(); 
 		ProvidedRepository repository = ProvidedRepositoryFactory.get();
 		String userDataGroupId = user.getDataGroupId();
@@ -635,11 +915,14 @@ t.printStackTrace();
 		while (tempFilterDocument != null) {
 			Customer moduleCustomer = (accessibleModuleNames.contains(moduleName) ? customer : null);
 			Module module = repository.getModule(moduleCustomer, moduleName);
+			if (module == null) {
+				break;
+			}
 
-			tempFilterDocument = repository.findNearestPersistentUnmappedSuperDocument(moduleCustomer, 
-																						module,
-																						tempFilterDocument);
-			if (tempFilterDocument != null) {
+			tempFilterDocument = repository.findNearestPersistentSingleOrJoinedSuperDocument(moduleCustomer, 
+																								module,
+																								tempFilterDocument);
+			if (tempFilterDocument != null) { // ORM Subclass
 				filterDocument = tempFilterDocument;
 			}
 		}
@@ -689,16 +972,18 @@ t.printStackTrace();
 	}
 	
 	/**
-	 * Reset filters to the document default
-	 * 
-	 * @param document
-	 * @param scope
+	 * Reset filters to the document's default scope.
+	 *
+	 * @param document The document whose scope should be restored.
 	 */
-	private void resetFilters(Document document) {
+	private void resetFilters(@Nonnull Document document) {
 		DocumentPermissionScope scope = user.getScope(document.getOwningModuleName(), document.getName());
 		setFilters(document, scope);
 	}
 	
+	/**
+	 * Mark the current transaction for rollback.
+	 */
 	@Override
 	public final void setRollbackOnly() {
 		if (em != null) {
@@ -711,6 +996,9 @@ t.printStackTrace();
 	
 	// This code is called in exception blocks all over the place.
 	// So we have to ensure its robust as all fuck
+	/**
+	 * Roll back the current transaction and clear unique-constraint tracking state.
+	 */
 	@Override
 	public final void rollback() {
 		boolean rollbackOnly = false;
@@ -735,20 +1023,37 @@ t.printStackTrace();
 				}
 			}
 			finally {
-				uniqueHashes.clear();
+				try {
+					uniqueBeansChecked.clear();
+				}
+				finally {
+					uniqueHashes.clear();
+				}
 			}				
 		}
 	}
 
 	// This code is called in finally blocks all over the place.
 	// So we have to ensure its robust as all fuck
+	/**
+	 * Commit the current transaction and close resources if requested.
+	 *
+	 * @param close Whether to close this persistence instance after commit.
+	 */
 	@Override
 	public final void commit(boolean close) {
 		commit(close, true);
 	}
 	
-	// this variant is used by BackupUtil.executeScript() where the ADM_)Uniqueness table 
+	// this variant is used by BackupUtil.executeScript() where the ADM_Uniqueness table 
 	// may not exist after a script - eg drop script
+	/**
+	 * Commit the current transaction, optionally removing temporary unique hashes.
+	 *
+	 * @param close Whether to close this persistence instance after commit.
+	 * @param removeUniqueHashes Whether to remove temporary unique hashes before commit.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public final void commit(boolean close, boolean removeUniqueHashes) {
 		boolean rollbackOnly = false;
 		try {
@@ -763,37 +1068,46 @@ t.printStackTrace();
 						et.rollback();
 					}
 					else {
-						try {
-							// remove all inserted unique hashes if we were told to (can only do if we have an em)
-							if (removeUniqueHashes) {
-								try {
-									final Persistent persistent = new Persistent();
-									persistent.setName(UniquenessEntity.TABLE_NAME);
-									final String persistentIdentifier = persistent.getPersistentIdentifier();
-									for (String hash : uniqueHashes) {
-										StringBuilder query = new StringBuilder(64);
-										query.append("delete from ").append(persistentIdentifier).append(" where ");
-										query.append(UniquenessEntity.HASH_COLUMN_NAME).append(" = :").append(UniquenessEntity.HASH_COLUMN_NAME);
-										newSQL(query.toString()).putParameter(UniquenessEntity.HASH_COLUMN_NAME, hash, false).execute();
-									}
-								}
-								finally {
-									uniqueHashes.clear();
+						// Remove all inserted unique hashes if we were told to (can only do if we have an em)
+						// If we cannot, rollback, and continue closing resources
+						if (removeUniqueHashes) {
+							try {
+								final Persistent persistent = new Persistent();
+								persistent.setName(UniquenessEntity.TABLE_NAME);
+								final String persistentIdentifier = persistent.getPersistentIdentifier();
+								for (String hash : uniqueHashes) {
+									StringBuilder query = new StringBuilder(64);
+									query.append("delete from ").append(persistentIdentifier).append(WHERE_SQL);
+									query.append(UniquenessEntity.HASH_COLUMN_NAME).append(" = :").append(UniquenessEntity.HASH_COLUMN_NAME);
+									newSQL(query.toString()).putParameter(UniquenessEntity.HASH_COLUMN_NAME, hash, false).execute();
 								}
 							}
+							// Note if we can't remove the hashes here that could screw every subsequent
+							// persistence operation on the server if we were to commit, so rollback and chuck.
+							catch (Exception e) {
+								// Set this for dynamic persistence treatment below
+								rollbackOnly = true;
+
+								LOGGER.error("Cannot remove unique hashes (stack trace underneath) - attempting a rollback....", e);
+
+								// try rollback
+								et.rollback();
+								// keep throwing
+								throw e;
+							}
 						}
-						finally {
-							// FROM THE HIBERNATE_REFERENCE DOCS Page 190
-							// Earlier versions of Hibernate required explicit disconnection and reconnection of a Session. 
-							// These methods are deprecated, as beginning and ending a transaction has the same effect.
-							et.commit();
-						}
+
+						// Commit only if no error above
+						// FROM THE HIBERNATE_REFERENCE DOCS Page 190
+						// Earlier versions of Hibernate required explicit disconnection and reconnection of a Session. 
+						// These methods are deprecated, as beginning and ending a transaction has the same effect.
+						et.commit();
 					}
 				}
 			}
 		}
 		catch (@SuppressWarnings("unused") RollbackException e) {
-			UtilImpl.LOGGER.warning("Cannot commit as transaction was rolled back earlier....");
+			LOGGER.warn("Cannot commit as transaction was rolled back earlier....");
 		}
 		finally {
 			try {
@@ -811,19 +1125,35 @@ t.printStackTrace();
 					closeContent();
 				}
 				catch (Exception e) {
-					UtilImpl.LOGGER.warning("Cannot commit content manager - " + e.getLocalizedMessage());
-					e.printStackTrace();
+					LOGGER.warn("Cannot commit content manager - {}", e.getLocalizedMessage(), e);
 				}
 				finally {
-					if (close) {
-						close();
-						threadLocalPersistence.remove();
+					try {
+						try {
+							uniqueBeansChecked.clear();
+						}
+						finally {
+							uniqueHashes.clear();
+						}
+					}
+					finally {
+						if (close) {
+							try {
+								close();
+							}
+							finally {
+								threadLocalPersistence.remove();
+							}
+						}
 					}
 				}
 			}
 		}
 	}
 
+	/**
+	 * Close the underlying EntityManager, Session, and dynamic persistence resources.
+	 */
 	public void close() {
 		try {
 			if (em != null) { // can be null after a relogin
@@ -839,12 +1169,20 @@ t.printStackTrace();
 		}
 	}
 	
+	/**
+	 * Evict all first-level cached entities and delegate to dynamic persistence.
+	 */
 	@Override
 	public void evictAllCached() {
 		session.clear();
 		dynamicPersistence.evictAllCached();
 	}
 
+	/**
+	 * Evict a bean from the first-level cache, delegating to dynamic persistence when required.
+	 *
+	 * @param bean The bean to evict.
+	 */
 	@Override
 	public void evictCached(Bean bean) {
 		if (bean instanceof DynamicBean) {
@@ -855,6 +1193,12 @@ t.printStackTrace();
 		}
 	}
 	
+	/**
+	 * Determine if a bean is present in the first-level cache.
+	 *
+	 * @param bean The bean to check.
+	 * @return True if cached in the session or dynamic persistence.
+	 */
 	@Override
 	public boolean cached(Bean bean) {
 		if (bean instanceof DynamicBean) {
@@ -863,69 +1207,147 @@ t.printStackTrace();
 		return session.contains(getDocumentEntityName(bean.getBizModule(), bean.getBizDocument()), bean);
 	}
 	
+	/**
+	 * Check if a collection is present in the shared (second-level) cache.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 * @param collectionName The collection name.
+	 * @param ownerBizId The owner bean id.
+	 * @return True if cached.
+	 */
 	@Override
 	public boolean sharedCacheCollection(String moduleName, String documentName, String collectionName, String ownerBizId) {
 		String role = getCollectionRoleName(moduleName, documentName, collectionName);
 		return sf.getCache().containsCollection(role, ownerBizId);
 	}
 	
+	/**
+	 * Check if a collection is present in the shared (second-level) cache.
+	 *
+	 * @param owner The owning bean.
+	 * @param collectionName The collection name.
+	 * @return True if cached.
+	 */
 	@Override
 	public boolean sharedCacheCollection(Bean owner, String collectionName) {
 		return sharedCacheCollection(owner.getBizModule(), owner.getBizDocument(), collectionName, owner.getBizId());
 	}
 	
+	/**
+	 * Check if an entity is present in the shared (second-level) cache.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 * @param bizId The bean id.
+	 * @return True if cached.
+	 */
 	@Override
 	public boolean sharedCacheBean(String moduleName, String documentName, String bizId) {
 		return sf.getCache().containsEntity(getDocumentEntityName(moduleName, documentName), bizId);
 	}
 
+	/**
+	 * Check if an entity is present in the shared (second-level) cache.
+	 *
+	 * @param bean The bean to check.
+	 * @return True if cached.
+	 */
 	@Override
 	public boolean sharedCacheBean(Bean bean) {
 		return sharedCacheBean(bean.getBizModule(), bean.getBizDocument(), bean.getBizId());
 	}
 	
+	/**
+	 * Evict all shared (second-level) cache regions.
+	 */
 	@Override
 	public void evictAllSharedCache() {
 		sf.getCache().evictAllRegions();
 	}
 	
+	/**
+	 * Evict all shared cache collection data.
+	 */
 	@Override
 	public void evictSharedCacheCollections() {
 		sf.getCache().evictCollectionData();
 	}
 	
+	/**
+	 * Evict shared cache collection data for a specific collection.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 * @param collectionName The collection name.
+	 */
 	@Override
 	public void evictSharedCacheCollections(String moduleName, String documentName, String collectionName) {
 		String role = getCollectionRoleName(moduleName, documentName, collectionName);
 		sf.getCache().evictCollectionData(role);
 	}
 	
+	/**
+	 * Evict shared cache data for a specific collection owner.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 * @param collectionName The collection name.
+	 * @param ownerBizId The owner bean id.
+	 */
 	@Override
 	public void evictSharedCacheCollection(String moduleName, String documentName, String collectionName, String ownerBizId) {
 		String role = getCollectionRoleName(moduleName, documentName, collectionName);
 		sf.getCache().evictCollectionData(role, ownerBizId);
 	}
 	
+	/**
+	 * Evict shared cache data for a specific collection owner.
+	 *
+	 * @param owner The owner bean.
+	 * @param collectionName The collection name.
+	 */
 	@Override
 	public void evictSharedCacheCollection(Bean owner, String collectionName) {
 		evictSharedCacheCollection(owner.getBizModule(), owner.getBizDocument(), collectionName, owner.getBizId());
 	}
 	
+	/**
+	 * Evict all shared cache entity data.
+	 */
 	@Override
 	public void evictSharedCacheBeans() {
 		sf.getCache().evictEntityData();
 	}
 	
+	/**
+	 * Evict shared cache entity data for a document.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 */
 	@Override
 	public void evictSharedCacheBeans(String moduleName, String documentName) {
 		sf.getCache().evictEntityData(getDocumentEntityName(moduleName, documentName));
 	}
 	
+	/**
+	 * Evict shared cache entity data for a specific bean id.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 * @param bizId The bean id.
+	 */
 	@Override
 	public void evictSharedCachedBean(String moduleName, String documentName, String bizId) {
 		sf.getCache().evictEntityData(getDocumentEntityName(moduleName, documentName), bizId);
 	}
 	
+	/**
+	 * Evict shared cache entity data for a bean.
+	 *
+	 * @param bean The bean to evict.
+	 */
 	@Override
 	public void evictSharedCachedBean(Bean bean) {
 		evictSharedCachedBean(bean.getBizModule(), bean.getBizDocument(), bean.getBizId());
@@ -938,7 +1360,7 @@ t.printStackTrace();
 	 * and any calls to Persistence.commit() will just not work.
 	 * @param bean
 	 */
-	public void refresh(Bean bean) {
+	public void refresh(@Nonnull Bean bean) {
 		if (bean.isPersisted()) {
 			try {
 				session.refresh(bean);
@@ -951,16 +1373,28 @@ t.printStackTrace();
 		}
 	}
 
+	/**
+	 * Flush pending changes to the database.
+	 */
 	@Override
 	public void flush() {
 		em.flush();
 	}
 	
-	// populate all implicit mandatory fields required
-	private void setMandatories(Document document, final PersistentBean beanToSave, Map<PersistentBean, PersistentBean> beansToMerge) {
+	/**
+	 * Populate implicit mandatory fields for a bean graph prior to merge.
+	 *
+	 * @param document The root document metadata.
+	 * @param beanToSave The root bean being saved.
+	 * @param beansToMerge Optional map of static beans reachable via dynamic relations.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private void setMandatories(@Nonnull Document document,
+									final @Nonnull PersistentBean beanToSave,
+									@Nullable Map<PersistentBean, PersistentBean> beansToMerge) {
 		final Customer customer = user.getCustomer();
 
-		new BeanVisitor(false, true, false) {
+		new BeanVisitor(true, false) {
 			@Override
 			@SuppressWarnings("synthetic-access")
 			protected boolean accept(String binding,
@@ -970,8 +1404,8 @@ t.printStackTrace();
 										Bean bean) 
 			throws Exception {
 				// Process an inverse if the inverse is specified as cascading.
-				if ((owningRelation instanceof Inverse) && 
-						(! Boolean.TRUE.equals(((Inverse) owningRelation).getCascade()))) {
+				if ((owningRelation instanceof Inverse inverse) && 
+						(! Boolean.TRUE.equals(inverse.getCascade()))) {
 					return false;
 				}
 			
@@ -985,7 +1419,7 @@ t.printStackTrace();
 					// Customer is not the broadest scope - global is, so customer data can be interrelated at the customer level.
 					// eg bizhub could maintain global post codes for all its customers, who may link to it, but when the other
 					// customers save their data, we do not want them taking ownership of our postcodes.
-//					bean.setBizCustomer(customer.getName());
+					//	So don't call bean.setBizCustomer()
 
 					// We set the bizKey unconditionally as the bizKey may be dependent on child or related
 					// beans and not just on properties in this bean.
@@ -1004,15 +1438,14 @@ t.printStackTrace();
 
 						// Add non-dynamic (static) unpersisted (transient) beans reachable by persistent dynamic relations to the Set to persist later (excluding top-level).
 						// This implements persistence by reachability for dynamic -> static beans in mixed graphs
-						if (beansToMerge != null) {
-							if ((owningRelation != null) && // not the top-level bean or parent
-									(owningDocument != null) && // not the top-level bean or parent
-									(persistentBean != beanToSave) && // not a reference to the top level bean
-									(! document.isDynamic()) && // bean is not dynamic
-										owningRelation.isPersistent() && // persistent relation
-										owningDocument.isDynamic()) { // dynamic relation
-								beansToMerge.put(persistentBean, null);
-							}
+						if ((beansToMerge != null) && 
+								(owningRelation != null) && // not the top-level bean or parent
+								(owningDocument != null) && // not the top-level bean or parent
+								(persistentBean != beanToSave) && // not a reference to the top level bean
+								(! document.isDynamic()) && // bean is not dynamic
+									owningRelation.isPersistent() && // persistent relation
+									owningDocument.isDynamic()) { // dynamic relation
+							beansToMerge.put(persistentBean, null);
 						}
 					}
 				}
@@ -1022,12 +1455,27 @@ t.printStackTrace();
 		}.visit(document, beanToSave, customer);
 	}
 	
+	/**
+	 * Pre-merge processing for a single bean.
+	 *
+	 * @param document The document metadata.
+	 * @param beanToSave The bean to save.
+	 */
 	@Override
 	public void preMerge(Document document, PersistentBean beanToSave) {
 		preMerge(document, beanToSave, null);
 	}
 	
-	private void preMerge(Document document, PersistentBean beanToSave, Map<PersistentBean, PersistentBean> beansToMerge) {
+	/**
+	 * Pre-merge processing for a bean with optional dynamic-reachability tracking.
+	 *
+	 * @param document The document metadata.
+	 * @param beanToSave The bean to save.
+	 * @param beansToMerge Optional map of static beans to be merged.
+	 */
+	private void preMerge(@Nonnull Document document,
+							@Nonnull PersistentBean beanToSave,
+							@Nullable Map<PersistentBean, PersistentBean> beansToMerge) {
 		// set bizCustomer, bizLock & bizKey
 		setMandatories(document, beanToSave, null);
 		
@@ -1042,8 +1490,18 @@ t.printStackTrace();
 		setMandatories(document, beanToSave, beansToMerge);
 	}
 
-	private static void firePreSaveEvents(final Customer customer, Document document, final Bean beanToSave) {
-		new BeanVisitor(false, true, false) {
+	/**
+	 * Fire preSave Bizlet callbacks across a bean graph.
+	 *
+	 * @param customer The current customer.
+	 * @param document The root document metadata.
+	 * @param beanToSave The root bean.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private static void firePreSaveEvents(@Nonnull final Customer customer,
+											@Nonnull Document document,
+											@Nonnull final Bean beanToSave) {
+		new BeanVisitor(true, false) {
 			@Override
 			protected boolean accept(String binding,
 										@SuppressWarnings("hiding") Document document,
@@ -1052,8 +1510,8 @@ t.printStackTrace();
 										Bean bean)
 			throws Exception {
 				// Process an inverse if the inverse is specified as cascading.
-				if ((owningRelation instanceof Inverse) && 
-						(! Boolean.TRUE.equals(((Inverse) owningRelation).getCascade()))) {
+				if ((owningRelation instanceof Inverse inverse) && 
+						(! Boolean.TRUE.equals(inverse.getCascade()))) {
 					return false;
 				}
 				
@@ -1073,9 +1531,9 @@ t.printStackTrace();
 						boolean vetoed = internalCustomer.interceptBeforePreSave(bean);
 						if (! vetoed) {
 							if (bizlet != null) {
-								if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preSave", "Entering " + bizlet.getClass().getName() + ".preSave: " + bean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.preSave: {}", bizlet.getClass().getName(), bean);
 								bizlet.preSave(bean);
-								if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preSave", "Exiting " + bizlet.getClass().getName() + ".preSave");
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.preSave", bizlet.getClass().getName());
 							}
 							internalCustomer.interceptAfterPreSave(bean);
 						}
@@ -1093,8 +1551,22 @@ t.printStackTrace();
 		}.visit(document, beanToSave, customer);
 	}
 	
-	private void validatePreMerge(final Customer customer, Document document, final Bean beanToSave) {
-		new BeanVisitor(false, true, false) {
+	/**
+	 * Validate a bean graph prior to merge, including uniqueness checks.
+	 *
+	 * @param customer The current customer.
+	 * @param document The root document metadata.
+	 * @param beanToSave The root bean.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private void validatePreMerge(@Nonnull final Customer customer,
+									@Nonnull Document document,
+									@Nonnull final Bean beanToSave) {
+		// Tracks all persistent binding prefixes visited
+		// Used to stop unique constraint checking beans that will not be cascade persisted
+		final Set<String> persisentBindingPrefixes = new TreeSet<>();
+		
+		new BeanVisitor(true, false) {
 			@Override
 			protected boolean accept(String binding,
 										@SuppressWarnings("hiding") Document document,
@@ -1103,8 +1575,8 @@ t.printStackTrace();
 										Bean bean)
 			throws Exception {
 				// Process an inverse if the inverse is specified as cascading.
-				if ((owningRelation instanceof Inverse) && 
-						(! Boolean.TRUE.equals(((Inverse) owningRelation).getCascade()))) {
+				if ((owningRelation instanceof Inverse inverse) && 
+						(! Boolean.TRUE.equals(inverse.getCascade()))) {
 					return false;
 				}
 				
@@ -1124,16 +1596,48 @@ t.printStackTrace();
 					// the save operation still needs to cascade persist any changes to the 
 					// persistent attributes in the referenced document.
 					if (document.isPersistable()) {
+						boolean persistentRelation = false;
+						boolean checkUniqueness = bean.isPersisted();
+						
 						if (owningRelation == null) { // top level or parent binding
+							if (binding.isEmpty()) { // top level
+								checkUniqueness = true; // ensure the check happens
+							}
+							else { // parent reference
+								persistentRelation = true;
+							}
+						}
+						else if (owningRelation.isPersistent()) {
+							persistentRelation = true;
+						}
+						
+						// If top-level bean or persisted, check it - it does not matter if the owningReference is persistent or not
+						if (checkUniqueness) {
 							checkUniqueConstraints(customer, document, bean);
 						}
-						else {
-							boolean persistentRelation = owningRelation.isPersistent();
-							// Don't check the unique constraints if the relation is not persistent
-							// and the instance will not be persisted by reachability - ie the bean is transient too
-							if (persistentRelation || bean.isPersisted()) {
-								checkUniqueConstraints(customer, document, bean);
+						
+						if (persistentRelation) {
+							// Use to check if the complete binding is persistent
+							String unindexedBinding = binding.replaceAll("\\[\\d*\\]", "");
+
+							// If this is an unpersisted bean, check if the bean will be persisted by reachability
+							if (! checkUniqueness) {
+								// If this is a compound binding, check that the binding prefix is persistent
+								int lastDotIndex = unindexedBinding.lastIndexOf('.');
+								if (lastDotIndex >= 0) { // compound binding
+									// Is the binding prefix persistent (visited previously)
+									if (persisentBindingPrefixes.contains(unindexedBinding.substring(0, lastDotIndex))) {
+										checkUniqueConstraints(customer, document, bean);
+									}
+								}
+								// Its a simple persistent binding, so check uniqueness as it'll be reachable
+								else { // simple binding
+									checkUniqueConstraints(customer, document, bean);
+								}
 							}
+							
+							// Add this unindexed binding to the set of persistent binding prefixes
+							persisentBindingPrefixes.add(unindexedBinding);
 						}
 						
 						// Re-evaluate the bizKey after all events have fired
@@ -1157,31 +1661,75 @@ t.printStackTrace();
 		}.visit(document, beanToSave, customer);
 	}
 	
+	/**
+	 * Save a bean with flush enabled.
+	 *
+	 * @param document The document metadata.
+	 * @param bean The bean to save.
+	 * @param <T> The bean type.
+	 * @return The persisted bean instance.
+	 */
 	@Override
 	public final <T extends PersistentBean> T save(Document document, T bean) {
 		return save(document, bean, true);
 	}
 	
+	/**
+	 * Merge a bean with flush disabled.
+	 *
+	 * @param document The document metadata.
+	 * @param bean The bean to merge.
+	 * @param <T> The bean type.
+	 * @return The persisted bean instance.
+	 */
 	@Override
 	public final <T extends PersistentBean> T merge(Document document, T bean) {
 		return save(document, bean, false);
 	}
 
+	/**
+	 * Save a variable number of beans with flush enabled.
+	 *
+	 * @param beans The beans to save.
+	 * @param <T> The bean type.
+	 * @return The persisted bean instances.
+	 */
 	@Override
 	public final <T extends PersistentBean> List<T> save(@SuppressWarnings("unchecked") T... beans) {
 		return save(Arrays.asList(beans), true);
 	}
 	
+	/**
+	 * Save a list of beans with flush enabled.
+	 *
+	 * @param beans The beans to save.
+	 * @param <T> The bean type.
+	 * @return The persisted bean instances.
+	 */
 	@Override
 	public final <T extends PersistentBean> List<T> save(List<T> beans) {
 		return save(beans, true);
 	}
 
+	/**
+	 * Merge a variable number of beans with flush disabled.
+	 *
+	 * @param beans The beans to merge.
+	 * @param <T> The bean type.
+	 * @return The persisted bean instances.
+	 */
 	@Override
 	public final <T extends PersistentBean> List<T> merge(@SuppressWarnings("unchecked") T... beans) {
 		return save(Arrays.asList(beans), false);
 	}
 	
+	/**
+	 * Merge a list of beans with flush disabled.
+	 *
+	 * @param beans The beans to merge.
+	 * @param <T> The bean type.
+	 * @return The persisted bean instances.
+	 */
 	@Override
 	public final <T extends PersistentBean> List<T> merge(List<T> beans) {
 		return save(beans, false);
@@ -1203,10 +1751,10 @@ t.printStackTrace();
 	 * This is a Map of the unmerged beans found in preMerge() that should be persisted to null.
 	 * Once they are merged, the merged bean is placed against each unmerged bean.
 	 */
-	private Stack<Map<PersistentBean, PersistentBean>> saveContext = new Stack<>();
+	private Deque<Map<PersistentBean, PersistentBean>> saveContext = new ArrayDeque<>(32); // non-null elements
 
-	@SuppressWarnings("unchecked")
-	private <T extends PersistentBean> T save(Document document, T bean, boolean flush) {
+	@SuppressWarnings({"unchecked", "java:S3776"}) // Complexity OK
+	private @Nonnull <T extends PersistentBean> T save(@Nonnull Document document, @Nonnull T bean, boolean flush) {
 		T result = null;
 		
 		Map<PersistentBean, PersistentBean> beansToMerge = null;
@@ -1270,14 +1818,17 @@ t.printStackTrace();
 					}
 				}
 			}
-			if (! vetoed) {
-				// Flush dynamic domain
-				if ((document.getPersistent() != null) && document.hasDynamic()) { // persistent (somehow) with dynamism somewhere
-					dynamicPersistence.persist(result);
-				}
 
-				postMerge(document, result);
-				internalCustomer.interceptAfterSave(document, result);
+			if (result != null) {
+				if (! vetoed) {
+					// Flush dynamic domain
+					if ((document.getPersistent() != null) && document.hasDynamic()) { // persistent (somehow) with dynamism somewhere
+						dynamicPersistence.persist(result);
+					}
+	
+					postMerge(document, result);
+					internalCustomer.interceptAfterSave(document, result);
+				}
 			}
 		}
 		catch (Throwable t) {
@@ -1290,11 +1841,14 @@ t.printStackTrace();
 			}
 		}
 
+		if (result == null) {
+			result = bean;
+		}
 		return result;
 	}
 
-	@SuppressWarnings("unchecked")
-	private <T extends PersistentBean> List<T> save(List<T> beans, boolean flush) {
+	@SuppressWarnings({"unchecked", "java:S3776"}) // Complexity OK
+	private @Nonnull <T extends PersistentBean> List<T> save(@Nonnull List<T> beans, boolean flush) {
 		List<T> results = new ArrayList<>();
 		PersistentBean currentBean = null; // used in exception handling
 
@@ -1426,11 +1980,18 @@ t.printStackTrace();
 		return results;
 	}
 	
+	/**
+	 * Post-merge callbacks for a bean graph.
+	 *
+	 * @param document The document metadata.
+	 * @param beanToSave The merged bean.
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void postMerge(Document document, final PersistentBean beanToSave) {
 		final Customer customer = user.getCustomer();
 		
-		new BeanVisitor(false, true, false) {
+		new BeanVisitor(true, false) {
 			@Override
 			protected boolean accept(String binding,
 										@SuppressWarnings("hiding") Document document,
@@ -1439,8 +2000,8 @@ t.printStackTrace();
 										Bean bean) 
 			throws Exception {
 				// Process an inverse if the inverse is specified as cascading.
-				if ((owningRelation instanceof Inverse) && 
-						(! Boolean.TRUE.equals(((Inverse) owningRelation).getCascade()))) {
+				if ((owningRelation instanceof Inverse inverse) && 
+						(! Boolean.TRUE.equals(inverse.getCascade()))) {
 					return false;
 				}
 				
@@ -1452,9 +2013,9 @@ t.printStackTrace();
 						if (! vetoed) {
 							Bizlet<Bean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 							if (bizlet != null) {
-								if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postSave", "Entering " + bizlet.getClass().getName() + ".postSave: " + bean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.postSave: {}", bizlet.getClass().getName(), bean);
 								bizlet.postSave(bean);
-								if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postSave", "Exiting " + bizlet.getClass().getName() + ".postSave");
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.postSave", bizlet.getClass().getName());
 							}
 							internalCustomer.interceptAfterPostSave(bean);
 						}
@@ -1476,10 +2037,22 @@ t.printStackTrace();
 		}.visit(document, beanToSave, customer);
 	}
 
-	private void prepareMergedBean(Document document, final PersistentBean mergedBean, final PersistentBean unmergedBean, Map<PersistentBean, PersistentBean> otherMergedBeans) {
+	/**
+	 * Prepare merged beans by restoring transient values and updating references.
+	 *
+	 * @param document The document metadata.
+	 * @param mergedBean The merged bean instance.
+	 * @param unmergedBean The original instance, if available.
+	 * @param otherMergedBeans Mapping of original to merged beans.
+	 */
+	@SuppressWarnings({"java:S2637", "java:S3776"}) // Complexity OK & False positive - merged bean is never null
+	private void prepareMergedBean(@Nonnull Document document,
+									@Nonnull final PersistentBean mergedBean,
+									@Nullable final PersistentBean unmergedBean,
+									@Nonnull Map<PersistentBean, PersistentBean> otherMergedBeans) {
 		Customer customer = user.getCustomer();
 
-		new BeanVisitor(false, true, false) {
+		new BeanVisitor(true, false) {
 			@Override
 			protected boolean accept(String binding,
 										@SuppressWarnings("hiding") Document document,
@@ -1490,25 +2063,28 @@ t.printStackTrace();
 				Bean mergedPart = binding.isEmpty() ? mergedBean : (Bean) BindUtil.get(mergedBean, binding);
 				if (mergedPart == null) { // when a dynamic relation encountered and not persisted
 					BindUtil.set(mergedBean, binding, unmergedPart);
+					mergedPart = unmergedPart;
 				}
 				else if (! binding.isEmpty()) { // not top level bean
 					// Set any deeper references to the top level unmerged bean to the top level merged bean
 					if ((unmergedPart == unmergedBean) && // a deeper reference to the top level bean (unmerged)
 							(unmergedPart != mergedBean)) { // but the reference is not the merged bean
 						BindUtil.set(mergedBean, binding, mergedBean);
+						mergedPart = mergedBean;
 					}
 					// Set any references that were merged by persistence-by-reachability
 					else if (otherMergedBeans.containsKey(unmergedPart)) {
 						PersistentBean otherMergedBean = otherMergedBeans.get(unmergedPart);
 						if (unmergedPart != otherMergedBean) {
 							BindUtil.set(mergedBean, binding, otherMergedBean);
+							mergedPart = otherMergedBean;
 						}
 					}
 				}
 				
 				// Process an inverse only if the inverse is specified as cascading.
-				if ((owningRelation instanceof Inverse) && 
-						(! Boolean.TRUE.equals(((Inverse) owningRelation).getCascade()))) {
+				if ((owningRelation instanceof Inverse inverse) && 
+						(! Boolean.TRUE.equals(inverse.getCascade()))) {
 					return false;
 				}
 				
@@ -1526,9 +2102,8 @@ t.printStackTrace();
 					if (bizUserId == null) {
 						mergedPart.setBizUserId(unmergedPart.getBizUserId());
 					}
-					if (mergedPart instanceof PersistentBean) {
+					if (mergedPart instanceof PersistentBean mergedPersistentBean) {
 						PersistentBean unmergedPersistentBean = (PersistentBean) unmergedPart;
-						PersistentBean mergedPersistentBean = (PersistentBean) mergedPart;
 						String bizKey = mergedPersistentBean.getBizKey();
 						if (bizKey == null) {
 							mergedPersistentBean.setBizKey(unmergedPersistentBean.getBizKey());
@@ -1576,52 +2151,125 @@ t.printStackTrace();
 	// This set of hashes is inserted in ADM_Uniqueness (temporarily) to allow database locking between transactions.
 	private Set<String> uniqueHashes = new TreeSet<>();
 	
+	// A set of unique beans (bizId unique) from when a transaction begins until it commits or rolls back.
+	// This ensures we don't run unique constraint checking on the same bean in vararg save() calls.
+	private Set<Bean> uniqueBeansChecked = new TreeSet<>();
+	
 	/**
-	 * Check the unique constraints for a document bean.
-	 * 
-	 * @param customer
-	 * @param document
-	 * @param bean
+	 * Check unique constraints for a document bean.
+	 *
+	 * @param customer The current customer.
+	 * @param document The document metadata.
+	 * @param bean The bean to validate.
 	 */
-	private void checkUniqueConstraints(Customer customer, Document document, Bean bean) {
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
+	private void checkUniqueConstraints(@Nonnull Customer customer, @Nonnull Document document, @Nonnull Bean bean) {
 // TODO - Work the dynamic something in here - remove the short-circuit on dynamic
 if (document.isDynamic()) return;
 
-		final String owningModuleName = document.getOwningModuleName();
-		final Module owningModule = customer.getModule(owningModuleName);
-		final String documentName = document.getName();
-		final String entityName = getDocumentEntityName(owningModuleName, documentName);
 		final boolean persisted = isPersisted(bean);
-		
-		try {
-			for (UniqueConstraint constraint : document.getAllUniqueConstraints(customer)) {
-				DocumentScope scope = constraint.getScope();
-				
-				// Don't check unique constraints if any of the parameters is null
-				boolean nullParameter = false;
+		// Don't check for insert uniqueness if we've already checked this instance
+		final boolean insertUniquenessRequiredButNotChecked = (! persisted) && uniqueBeansChecked.add(bean);
 
-				// Calculate a hash of the unique key and place into the uniqueHashes Set.
-				// If the hash is inserted twice then we have a unique constraint violation within the same transaction.
-				// To detect unique constraints between simultaneous transactions, we insert into ADM_Uniqueness.
-				// This will lock any transaction with the same hash until the commit of the first transaction.
-				// At this point the normal read lock unique constraint check will find the freshly inserted duplicate.
-				// Note that these rows are deleted just before commit of the transaction to release the locks
-				// and nothing is actually ever committed to this table.
-				if (! persisted) {
-					StringBuilder uniqueKey = new StringBuilder(128);
-					uniqueKey.append(document.getOwningModuleName()).append('|').append(document.getName()).append('|');
-					if (DocumentScope.customer.equals(scope)) {
-						uniqueKey.append(bean.getBizCustomer()).append('|');
+		try {
+			Document currentDocument = document;
+			Extends currentExtends = null;
+			do {
+				final String currentOwningModuleName = currentDocument.getOwningModuleName();
+				final Module currentOwningModule = customer.getModule(currentOwningModuleName);
+				final String currentDocumentName = currentDocument.getName();
+				final String currentEntityName = getDocumentEntityName(currentOwningModuleName, currentDocumentName);
+
+				for (UniqueConstraint constraint : currentDocument.getUniqueConstraints()) {
+					DocumentScope scope = constraint.getScope();
+					
+					// Don't check unique constraints if any of the parameters is null
+					boolean nullParameter = false;
+	
+					// Calculate a hash of the unique key and place into the uniqueHashes Set.
+					// If the hash is inserted twice then we have a unique constraint violation within the same transaction.
+					// To detect unique constraints between simultaneous transactions, we insert into ADM_Uniqueness.
+					// This will lock any transaction with the same hash until the commit of the first transaction.
+					// At this point the normal read lock unique constraint check will find the freshly inserted duplicate.
+					// Note that these rows are deleted just before commit of the transaction to release the locks
+					// and nothing is actually ever committed to this table.
+					if (insertUniquenessRequiredButNotChecked) {
+						StringBuilder uniqueKey = new StringBuilder(128);
+						uniqueKey.append(currentOwningModuleName).append('|').append(currentDocumentName).append('|');
+						if (DocumentScope.customer.equals(scope)) {
+							uniqueKey.append(bean.getBizCustomer()).append('|');
+						}
+						else if (DocumentScope.dataGroup.equals(scope)) {
+							uniqueKey.append(bean.getBizCustomer()).append('|');
+							uniqueKey.append(bean.getBizDataGroupId()).append('|');
+						}
+						else if (DocumentScope.user.equals(scope)) {
+							uniqueKey.append(bean.getBizCustomer()).append('|');
+							uniqueKey.append(bean.getBizDataGroupId()).append('|');
+							uniqueKey.append(bean.getBizUserId()).append('|');
+						}
+						uniqueKey.append(constraint.getName()).append('|');
+						for (String fieldName : constraint.getFieldNames()) {
+							Object constraintFieldValue = null;
+							try {
+								constraintFieldValue = BindUtil.get(bean, fieldName);
+							}
+							catch (Exception e) {
+								throw new DomainException(e);
+							}
+							
+							// Don't do the constraint check if any query parameter is null
+							if (constraintFieldValue == null) {
+								if (UtilImpl.QUERY_TRACE) {
+									QUERY_LOGGER.info("NOT TESTING CONSTRAINT {}.{}.{} as field {} is null", currentOwningModuleName, currentDocumentName, constraint.getName(), fieldName);
+								}
+								nullParameter = true;
+								break; // stop checking the field names of this constraint
+							}
+							uniqueKey.append(constraintFieldValue.toString()).append('|');
+						}
+						if (nullParameter) {
+							continue; // iterate to next constraint
+						}
+	
+						String hash = DigestUtils.sha256Hex(uniqueKey.toString());
+						if (! uniqueHashes.add(hash)) { // this transaction has this hash already
+							throwUniqueConstraintViolationException(constraint, document, bean);
+						}
+						else {
+							try {
+								final Persistent persistent = new Persistent();
+								persistent.setName(UniquenessEntity.TABLE_NAME);
+								String persistentIdentifier = persistent.getPersistentIdentifier();
+								StringBuilder sql = new StringBuilder(64);
+								sql.append(INSERT_INTO_SQL).append(persistentIdentifier).append(" (").append(UniquenessEntity.HASH_COLUMN_NAME);
+								sql.append(VALUES_SQL).append(UniquenessEntity.HASH_COLUMN_NAME).append(')');
+								newSQL(sql.toString()).putParameter(UniquenessEntity.HASH_COLUMN_NAME, hash, false).execute();
+							}
+							catch (@SuppressWarnings("unused") DomainException e) {
+								// Unique constraint violation caught here - within the same transaction
+								throwUniqueConstraintViolationException(constraint, document, bean);
+							}
+						}
 					}
-					else if (DocumentScope.dataGroup.equals(scope)) {
-						uniqueKey.append(bean.getBizCustomer()).append('|');
-						uniqueKey.append(bean.getBizDataGroupId()).append('|');
-					}
-					else if (DocumentScope.user.equals(scope)) {
-						uniqueKey.append(bean.getBizCustomer()).append('|');
-						uniqueKey.append(bean.getBizDataGroupId()).append('|');
-						uniqueKey.append(bean.getBizUserId()).append('|');
-					}
+					
+					StringBuilder queryString = new StringBuilder(48);
+					queryString.append("select bean from ").append(currentEntityName).append(" as bean");
+					
+					setFilters(document, scope.toDocumentPermissionScope());
+	
+					// indicates if we have appended any where clause conditions
+					boolean noWhere = true;
+	
+					// Don't check unique constraints if any of the parameters is an unpersisted bean.
+					// The query will produce an error and there is no use anyway as there cannot possibly be unique constraint violation.
+					boolean unpersistedBeanParameter = false;
+					
+					// Don't check unique constraints if all of the parameters haven't changed and the bean is persisted
+					boolean persistedBeanAndNoDirtyParameters = persisted;
+					
+					List<Object> constraintFieldValues = new ArrayList<>();
+					int i = 1;
 					for (String fieldName : constraint.getFieldNames()) {
 						Object constraintFieldValue = null;
 						try {
@@ -1634,198 +2282,137 @@ if (document.isDynamic()) return;
 						// Don't do the constraint check if any query parameter is null
 						if (constraintFieldValue == null) {
 							if (UtilImpl.QUERY_TRACE) {
-								StringBuilder log = new StringBuilder(256);
-								log.append("NOT TESTING CONSTRAINT ").append(owningModuleName).append('.').append(documentName).append('.').append(constraint.getName());
-								log.append(" as field ").append(fieldName).append(" is null");
-								Util.LOGGER.info(log.toString());
+								QUERY_LOGGER.info("NOT TESTING CONSTRAINT {}.{}.{} as field {} is null", currentOwningModuleName, currentDocumentName, constraint.getName(), fieldName);
 							}
 							nullParameter = true;
 							break; // stop checking the field names of this constraint
 						}
-						uniqueKey.append(constraintFieldValue.toString()).append('|');
-					}
-					if (nullParameter) {
-						continue; // iterate to next constraint
-					}
-
-					String hash = DigestUtils.sha256Hex(uniqueKey.toString());
-					if (! uniqueHashes.add(hash)) { // this transaction has this hash already
-						throwUniqueConstraintViolationException(constraint, document, bean);
-					}
-					else {
-						try {
-							final Persistent persistent = new Persistent();
-							persistent.setName(UniquenessEntity.TABLE_NAME);
-							String persistentIdentifier = persistent.getPersistentIdentifier();
-							StringBuilder sql = new StringBuilder(64);
-							sql.append("insert into ").append(persistentIdentifier).append(" (").append(UniquenessEntity.HASH_COLUMN_NAME);
-							sql.append(") values (:").append(UniquenessEntity.HASH_COLUMN_NAME).append(')');
-							newSQL(sql.toString()).putParameter(UniquenessEntity.HASH_COLUMN_NAME, hash, false).execute();
-						}
-						catch (@SuppressWarnings("unused") DomainException e) {
-							// Unique constraint violation caught here - within the same transaction
-							throwUniqueConstraintViolationException(constraint, document, bean);
-						}
-					}
-				}
-				
-				StringBuilder queryString = new StringBuilder(48);
-				queryString.append("select bean from ").append(entityName).append(" as bean");
-				
-				setFilters(document, scope.toDocumentPermissionScope());
-
-				// indicates if we have appended any where clause conditions
-				boolean noWhere = true;
-
-				// Don't check unique constraints if any of the parameters is an unpersisted bean.
-				// The query will produce an error and there is no use anyway as there cannot possibly be unique constraint violation.
-				boolean unpersistedBeanParameter = false;
-				
-				// Don't check unique constraints if all of the parameters haven't changed and the bean is persisted
-				boolean persistedBeanAndNoDirtyParameters = persisted;
-				
-				List<Object> constraintFieldValues = new ArrayList<>();
-				int i = 1;
-				for (String fieldName : constraint.getFieldNames()) {
-					Object constraintFieldValue = null;
-					try {
-						constraintFieldValue = BindUtil.get(bean, fieldName);
-					}
-					catch (Exception e) {
-						throw new DomainException(e);
-					}
-					
-					// Don't do the constraint check if any query parameter is null
-					if (constraintFieldValue == null) {
-						if (UtilImpl.QUERY_TRACE) {
-							StringBuilder log = new StringBuilder(256);
-							log.append("NOT TESTING CONSTRAINT ").append(owningModuleName).append('.').append(documentName).append('.').append(constraint.getName());
-							log.append(" as field ").append(fieldName).append(" is null");
-							Util.LOGGER.info(log.toString());
-						}
-						nullParameter = true;
-						break; // stop checking the field names of this constraint
-					}
-					
-					// Don't do the constraint check if any query parameters is not persisted
-					if ((constraintFieldValue instanceof PersistentBean) && (! isPersisted((Bean) constraintFieldValue))) {
-						if (UtilImpl.QUERY_TRACE) {
-							StringBuilder log = new StringBuilder(256);
-							log.append("NOT TESTING CONSTRAINT ").append(owningModuleName).append('.').append(documentName).append('.').append(constraint.getName());
-							log.append(" as field ").append(fieldName).append(" with value ").append(constraintFieldValue).append(" is not persisted");
-							Util.LOGGER.info(log.toString());
-						}
-						unpersistedBeanParameter = true;
-						break; // stop checking the field names of this constraint
-					}
-
-					if (persistedBeanAndNoDirtyParameters) {
-						// Check if the query parameter is dirty
-						TargetMetaData target = BindUtil.getMetaDataForBinding(customer, owningModule, document, fieldName);
-						Attribute attribute = target.getAttribute();
-						// Implicit attribute, so we have to assume we need to do the check
-						if (attribute == null) { // implicit
+						
+						// Don't do the constraint check if any query parameters is not persisted
+						if ((constraintFieldValue instanceof PersistentBean) && (! isPersisted((Bean) constraintFieldValue))) {
 							if (UtilImpl.QUERY_TRACE) {
-								StringBuilder log = new StringBuilder(256);
-								log.append("TEST CONSTRAINT ").append(owningModuleName).append('.').append(documentName).append('.').append(constraint.getName());
-								log.append(" as field ").append(fieldName).append(" is an implicit attribute");
-								Util.LOGGER.info(log.toString());
+								QUERY_LOGGER.info("NOT TESTING CONSTRAINT {}.{}.{} as field {} with value {} is not persisted", currentOwningModuleName, currentDocumentName, constraint.getName(), fieldName, constraintFieldValue);
 							}
-							persistedBeanAndNoDirtyParameters = false;
+							unpersistedBeanParameter = true;
+							break; // stop checking the field names of this constraint
 						}
-						else {
-							// Track changes is on so we can check to see if its dirty or not.
-							if (attribute.isTrackChanges()) {
-								if (bean.originalValues().containsKey(fieldName)) {
+	
+						if (persistedBeanAndNoDirtyParameters) {
+							// Check if the query parameter is dirty
+							TargetMetaData target = BindUtil.getMetaDataForBinding(customer, currentOwningModule, currentDocument, fieldName);
+							Attribute attribute = target.getAttribute();
+							// Implicit attribute, so we have to assume we need to do the check
+							if (attribute == null) { // implicit
+								if (UtilImpl.QUERY_TRACE) {
+									QUERY_LOGGER.info("TEST CONSTRAINT {}.{}.{} as field {} is an implicit attribute", currentOwningModuleName, currentDocumentName, constraint.getName(), fieldName);
+								}
+								persistedBeanAndNoDirtyParameters = false;
+							}
+							else {
+								// Track changes is on so we can check to see if its dirty or not.
+								if (attribute.isTrackChanges()) {
+									if (bean.originalValues().containsKey(fieldName)) {
+										if (UtilImpl.QUERY_TRACE) {
+											QUERY_LOGGER.info("TEST CONSTRAINT {}.{}.{} as field {} has changed", currentOwningModuleName, currentDocumentName, constraint.getName(), fieldName);
+										}
+										persistedBeanAndNoDirtyParameters = false;
+									}
+								}
+								// Track changes is off, so we have to assume we need to do the check
+								else {
 									if (UtilImpl.QUERY_TRACE) {
-										StringBuilder log = new StringBuilder(256);
-										log.append("TEST CONSTRAINT ").append(owningModuleName).append('.').append(documentName).append('.').append(constraint.getName());
-										log.append(" as field ").append(fieldName).append(" has changed");
-										Util.LOGGER.info(log.toString());
+										QUERY_LOGGER.info("TEST CONSTRAINT {}.{}.{} as field {} has track changes off", currentOwningModuleName, currentDocumentName, constraint.getName(), fieldName);
 									}
 									persistedBeanAndNoDirtyParameters = false;
 								}
 							}
-							// Track changes is off, so we have to assume we need to do the check
-							else {
-								if (UtilImpl.QUERY_TRACE) {
-									StringBuilder log = new StringBuilder(256);
-									log.append("TEST CONSTRAINT ").append(owningModuleName).append('.').append(documentName).append('.').append(constraint.getName());
-									log.append(" as field ").append(fieldName).append(" has track changes off");
-									Util.LOGGER.info(log.toString());
-								}
-								persistedBeanAndNoDirtyParameters = false;
+						}
+						
+						constraintFieldValues.add(constraintFieldValue);
+						if (noWhere) {
+							queryString.append(" where bean.");
+							noWhere = false;
+						}
+						else {
+							queryString.append(" and bean.");
+						}
+						queryString.append(fieldName);
+						queryString.append(" = ?").append(i++);
+					}
+		
+					if (nullParameter || unpersistedBeanParameter || persistedBeanAndNoDirtyParameters) {
+						continue; // iterate to next constraint
+					}
+	
+					Query<?> query = session.createQuery(queryString.toString());
+					if (UtilImpl.QUERY_TRACE) {
+						QUERY_LOGGER.info("TEST CONSTRAINT {}.{}.{} using {}", currentOwningModuleName, currentDocumentName, constraint.getName(), queryString);
+					}
+					
+					// Always use streaming JDBC results to avoid out of memory errors on large result sets
+					query.setFetchSize(RDBMS.mysql.equals(AbstractHibernatePersistence.getDialect().getRDBMS()) ? Integer.MIN_VALUE : 1000);
+
+					query.setLockMode("bean", LockMode.READ); // take a read lock on all referenced documents
+					
+					// Set timeout if applicable
+					int timeout = UtilImpl.DATA_STORE.getOltpConnectionTimeoutInSeconds();
+					if (timeout > 0) {
+						query.setTimeout(timeout);
+					}
+	
+					int index = 1;
+					for (@SuppressWarnings("unused") String fieldName : constraint.getFieldNames()) {
+						Object value = constraintFieldValues.get(index - 1);
+						query.setParameter(index, value);
+						if (UtilImpl.QUERY_TRACE) {
+						    QUERY_LOGGER.info("    SET PARAM {} = {}", String.valueOf(i), value);
+						}
+						index++;
+					}
+		
+					// Use a scrollable result set in case the result set is massive
+					try (ScrollableResults results = query.scroll(ScrollMode.FORWARD_ONLY)) {
+						if (results.next()) {
+							boolean persistent = isPersisted(bean);
+							Bean first = (Bean) results.get()[0];
+							if ((! persistent) || // we are inserting and 1 already exists
+									results.next() || // more than 1 exists
+									(persistent && (! first.getBizId().equals(bean.getBizId())))) { // updating, and 1 exists that is not this ID
+								throwUniqueConstraintViolationException(constraint, document, bean);
 							}
 						}
 					}
-					
-					constraintFieldValues.add(constraintFieldValue);
-					if (noWhere) {
-						queryString.append(" where bean.");
-						noWhere = false;
-					}
-					else {
-						queryString.append(" and bean.");
-					}
-					queryString.append(fieldName);
-					queryString.append(" = ?").append(i++);
-				}
-	
-				if (nullParameter || unpersistedBeanParameter || persistedBeanAndNoDirtyParameters) {
-					continue; // iterate to next constraint
 				}
 
-				Query<?> query = session.createQuery(queryString.toString());
-				if (UtilImpl.QUERY_TRACE) {
-					StringBuilder log = new StringBuilder(256);
-					log.append("TEST CONSTRAINT ").append(owningModuleName).append('.').append(documentName).append('.').append(constraint.getName());
-					log.append(" using ").append(queryString);
-					Util.LOGGER.info(log.toString());
-				}
-				query.setLockMode("bean", LockMode.READ); // take a read lock on all referenced documents
-				
-				// Set timeout if applicable
-				int timeout = UtilImpl.DATA_STORE.getOltpConnectionTimeoutInSeconds();
-				if (timeout > 0) {
-					query.setTimeout(timeout);
-				}
-
-				int index = 1;
-				for (@SuppressWarnings("unused") String fieldName : constraint.getFieldNames()) {
-					Object value = constraintFieldValues.get(index - 1);
-					query.setParameter(index, value);
-					if (UtilImpl.QUERY_TRACE) {
-						Util.LOGGER.info("    SET PARAM " + index + " = " + value);
-					}
-					index++;
-				}
-	
-				// Use a scrollable result set in case the result set is massive
-				try (ScrollableResults results = query.scroll(ScrollMode.FORWARD_ONLY)) {
-					if (results.next()) {
-						boolean persistent = isPersisted(bean);
-						Bean first = (Bean) results.get()[0];
-						if ((! persistent) || // we are inserting and 1 already exists
-								results.next() || // more than 1 exists
-								(persistent && (! first.getBizId().equals(bean.getBizId())))) { // updating, and 1 exists that is not this ID
-							throwUniqueConstraintViolationException(constraint, document, bean);
-						}
-					}
+				// Process the extension document if applicable
+				currentExtends = currentDocument.getExtends();
+				if (currentExtends != null) {
+					currentDocument = currentOwningModule.getDocument(customer, currentExtends.getDocumentName());
 				}
 			}
+			while (currentExtends != null);
 		}
 		finally {
 			resetFilters(document);
 		}
 	}
 	
-	private static void throwUniqueConstraintViolationException(UniqueConstraint constraint, Document document, Bean bean) {
+	/**
+	 * Throw a formatted unique constraint violation exception.
+	 *
+	 * @param constraint The violated constraint.
+	 * @param document The document metadata.
+	 * @param bean The offending bean.
+	 */
+	private static void throwUniqueConstraintViolationException(@Nonnull UniqueConstraint constraint,
+																	@Nonnull Document document,
+																	@Nonnull Bean bean) {
 		String message = null;
 		try {
 			message = BindUtil.formatMessage(constraint.getMessage(), bean);
 		}
 		catch (Exception e) {
-			e.printStackTrace();
+			LOGGER.error(e.getMessage(), e);
 			message = "Unique Constraint Violation occurred but could not display the unique constraint message for constraint " +
 							constraint.getName();
 		}
@@ -1850,12 +2437,13 @@ if (document.isDynamic()) return;
 	 * The beans to delete are collected by delete() firstly.
 	 * The referential integrity test is done in the preDelete() callback.
 	 */
-	private Stack<Map<String, Set<Bean>>> deleteContext = new Stack<>();
+	private Deque<Map<String, Set<Bean>>> deleteContext = new ArrayDeque<>(32); // non-null elements
 
 	/**
 	 * Delete a document bean from the data store.
 	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public final <T extends PersistentBean> void delete(Document document, T bean) {
 		if (isPersisted(bean)) {
 			try {
@@ -1875,7 +2463,7 @@ if (document.isDynamic()) return;
 					}
 					
 					// Find any other static beans referenced by dynamic relations
-					new BeanVisitor(false, true, false) {
+					new BeanVisitor(true, false) {
 						@Override
 						protected boolean accept(String binding,
 													Document visitedDocument,
@@ -1887,8 +2475,7 @@ if (document.isDynamic()) return;
 							}
 							
 							if (visitedBean.isPersisted()) {
-								if (owningRelation instanceof Reference) {
-									Reference reference = (Reference) owningRelation;
+								if (owningRelation instanceof Reference reference) {
 									ReferenceType type = reference.getType();
 									// Requires cascading
 									if (! (AssociationType.aggregation.equals(type) || CollectionType.aggregation.equals(type))) {
@@ -1922,7 +2509,15 @@ if (document.isDynamic()) return;
 		}
 	}
 	
-	private void deleteStatic(Set<PersistentBean> beans) throws Exception {
+	/**
+	 * Delete a set of static (non-dynamic) persistent beans, firing Bizlet callbacks
+	 * and enforcing referential integrity checks.
+	 *
+	 * @param beans The beans to delete.
+	 * @throws Exception If validation or persistence fails during deletion.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private void deleteStatic(@Nonnull Set<PersistentBean> beans) throws Exception {
 		Map<String, Set<Bean>> beansToDelete = null;
 		for (PersistentBean bean : beans) {
 			try {
@@ -1942,9 +2537,9 @@ if (document.isDynamic()) return;
 				if (! vetoed) {
 					Bizlet<Bean> bizlet = document.getBizlet(internalCustomer);
 					if (bizlet != null) {
-						if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preDelete", "Entering " + bizlet.getClass().getName() + ".preDelete: " + bean);
+						if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.preDelete: {}", bizlet.getClass().getName(), bean);
 						bizlet.preDelete(bean);
-						if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preDelete", "Exiting " + bizlet.getClass().getName() + ".preDelete");
+						if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.preDelete", bizlet.getClass().getName());
 					}
 					internalCustomer.interceptAfterPreDelete(bean);
 				}
@@ -1967,9 +2562,9 @@ if (document.isDynamic()) return;
 				if (! vetoed) {
 					Bizlet<Bean> bizlet = document.getBizlet(internalCustomer);
 					if (bizlet != null) {
-						if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postDelete", "Entering " + bizlet.getClass().getName() + ".postDelete: " + bean);
+						if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.postDelete: {}", bizlet.getClass().getName(), bean);
 						bizlet.postDelete(bean);
-						if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postDelete", "Exiting " + bizlet.getClass().getName() + ".postDelete");
+						if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.postDelete", bizlet.getClass().getName());
 					}
 					internalCustomer.interceptAfterPostDelete(bean);
 				}
@@ -1983,11 +2578,21 @@ if (document.isDynamic()) return;
 		}
 	}
 
+	/**
+	 * Enforce referential integrity for a delete operation, traversing base/derived documents.
+	 *
+	 * @param document The document being deleted.
+	 * @param bean The bean being deleted.
+	 * @param documentsVisited Documents already visited in this traversal.
+	 * @param beansToBeCascaded Beans being cascaded by delete.
+	 * @param preRemove True when invoked from Hibernate pre-remove events.
+	 */
 	// Do not increase visibility of this method as we don't want it to be public.
-	private void checkReferentialIntegrityOnDelete(Document document, 
-													PersistentBean bean, 
-													Set<String> documentsVisited,
-													Map<String, Set<Bean>> beansToBeCascaded,
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private void checkReferentialIntegrityOnDelete(@Nonnull Document document, 
+													@Nonnull PersistentBean bean, 
+													@Nonnull Set<String> documentsVisited,
+													@Nonnull Map<String, Set<Bean>> beansToBeCascaded,
 													boolean preRemove) {
 		Customer customer = user.getCustomer();
 		List<ExportedReference> refs = ((CustomerImpl) customer).getExportedReferences(document);
@@ -2015,8 +2620,8 @@ if (document.isDynamic()) return;
 						Document referenceDocument = referenceModule.getDocument(customer, documentName);
 						Persistent persistent = document.getPersistent();
 						if (persistent != null) {
-							if (ExtensionStrategy.mapped.equals(persistent.getStrategy())) {
-								checkMappedReference(bean, beansToBeCascaded, document, ref, modoc, referenceDocument);
+							if (persistent.isPolymorphicallyMapped()) {
+								checkPolymorphicallyMappedReference(bean, beansToBeCascaded, document, ref, modoc, referenceDocument);
 							}
 							else {
 								checkTypedReference(bean, beansToBeCascaded, document, ref, modoc, referenceDocument);
@@ -2049,15 +2654,26 @@ if (document.isDynamic()) return;
 		}
 	}
 
-	private void checkTypedReference(PersistentBean beanToDelete, 
-										Map<String, Set<Bean>> beansToBeCascaded,
-										Document documentToDelete,
-										ExportedReference ref,
-										String modoc,
-										Document referenceDocument)
+	/**
+	 * Check referential integrity for a typed reference (non-mapped strategy).
+	 *
+	 * @param beanToDelete The bean being deleted.
+	 * @param beansToBeCascaded Beans that are being cascaded.
+	 * @param documentToDelete The document being deleted.
+	 * @param ref The exported reference.
+	 * @param modoc Module/document identifier for the reference owner.
+	 * @param referenceDocument The document that holds the reference.
+	 * @throws ReferentialConstraintViolationException If a reference would be broken.
+	 */
+	private void checkTypedReference(@Nonnull PersistentBean beanToDelete, 
+										@Nonnull Map<String, Set<Bean>> beansToBeCascaded,
+										@Nonnull Document documentToDelete,
+										@Nonnull ExportedReference ref,
+										@Nonnull String modoc,
+										@Nonnull Document referenceDocument)
 	throws ReferentialConstraintViolationException {
 		Persistent persistent = referenceDocument.getPersistent();
-		if ((persistent != null) && ExtensionStrategy.mapped.equals(persistent.getStrategy())) {
+		if ((persistent != null) && persistent.isPolymorphicallyMapped()) {
 			// Find all implementations below the mapped and check these instead
 			Set<Document> derivations = new HashSet<>();
 			populateImmediateMapImplementingDerivations((CustomerImpl) user.getCustomer(), referenceDocument, derivations);
@@ -2077,10 +2693,19 @@ if (document.isDynamic()) return;
 		}
 	}
 	
-	private boolean hasReferentialIntegrity(Bean beanToDelete,
-												ExportedReference exportedReference,
-												Document referenceDocument,
-												Set<Bean> beansToBeExcluded) {
+	/**
+	 * Determine if any rows still reference the bean being deleted.
+	 *
+	 * @param beanToDelete The bean being deleted.
+	 * @param exportedReference The exported reference metadata.
+	 * @param referenceDocument The document that holds the reference.
+	 * @param beansToBeExcluded Beans to exclude from integrity checks.
+	 * @return True if no references exist.
+	 */
+	private boolean hasReferentialIntegrity(@Nonnull Bean beanToDelete,
+												@Nonnull ExportedReference exportedReference,
+												@Nonnull Document referenceDocument,
+												@Nullable Set<Bean> beansToBeExcluded) {
 		setFilters(referenceDocument, DocumentPermissionScope.global);
 		try {
 			StringBuilder queryString = new StringBuilder(64);
@@ -2106,9 +2731,13 @@ if (document.isDynamic()) return;
 					queryString.append(" and bean.bizId != :deletedBeanId").append(i++);
 				}
 			}
-			if (UtilImpl.QUERY_TRACE) UtilImpl.LOGGER.info("FK check : " + queryString);
+			if (UtilImpl.QUERY_TRACE) QUERY_LOGGER.info("FK check : {}", queryString);
 
 			Query<?> query = session.createQuery(queryString.toString());
+
+			// Always use streaming JDBC results to avoid out of memory errors on large result sets
+			query.setFetchSize(RDBMS.mysql.equals(AbstractHibernatePersistence.getDialect().getRDBMS()) ? Integer.MIN_VALUE : 1000);
+
 			query.setLockMode("bean", LockMode.READ); // read lock required for referential integrity
 
 			// Set timeout if applicable
@@ -2136,20 +2765,31 @@ if (document.isDynamic()) return;
 		}
 	}
 	
-	private void checkMappedReference(PersistentBean bean, 
-										Map<String, Set<Bean>> beansToBeCascaded,
-										Document document,
-										ExportedReference ref,
-										String modoc,
-										Document referenceDocument) {
+	/**
+	 * Check referential integrity for a mapped reference strategy.
+	 *
+	 * @param bean The bean being deleted.
+	 * @param beansToBeCascaded Beans that are being cascaded.
+	 * @param document The document being deleted.
+	 * @param ref The exported reference metadata.
+	 * @param modoc Module/document identifier for the reference owner.
+	 * @param referenceDocument The document that holds the reference.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private void checkPolymorphicallyMappedReference(@Nonnull PersistentBean bean, 
+														@Nonnull Map<String, Set<Bean>> beansToBeCascaded,
+														@Nonnull Document document,
+														@Nonnull ExportedReference ref,
+														@Nonnull String modoc,
+														@Nonnull Document referenceDocument) {
 		Persistent persistent = referenceDocument.getPersistent();
 		if (persistent != null) {
-			if (ExtensionStrategy.mapped.equals(persistent.getStrategy())) {
+			if (persistent.isPolymorphicallyMapped()) {
 				// Find all implementations below the mapped and check these instead
 				Set<Document> derivations = new HashSet<>();
 				populateImmediateMapImplementingDerivations((CustomerImpl) user.getCustomer(), referenceDocument, derivations);
 				for (Document derivation : derivations) {
-					checkMappedReference(bean, beansToBeCascaded, document, ref, modoc, derivation);
+					checkPolymorphicallyMappedReference(bean, beansToBeCascaded, document, ref, modoc, derivation);
 				}
 			}
 			else {
@@ -2158,10 +2798,10 @@ if (document.isDynamic()) return;
 				queryString.append(persistent.getPersistentIdentifier());
 				if (ref.isCollection()) {
 					queryString.append('_').append(ref.getReferenceFieldName());
-					queryString.append(" where ").append(PersistentBean.ELEMENT_COLUMN_NAME).append(" = :reference_id");
+					queryString.append(WHERE_SQL).append(PersistentBean.ELEMENT_COLUMN_NAME).append(" = :reference_id");
 				}
 				else {
-					queryString.append(" where ").append(ref.getReferenceFieldName());
+					queryString.append(WHERE_SQL).append(ref.getReferenceFieldName());
 					queryString.append("_id = :reference_id");
 				}
 				
@@ -2170,19 +2810,21 @@ if (document.isDynamic()) return;
 					int i = 0;
 					for (@SuppressWarnings("unused") Bean thisBeanToBeCascaded : theseBeansToBeCascaded) {
 						if (ref.isCollection()) {
-							queryString.append(" and ").append(PersistentBean.OWNER_COLUMN_NAME).append(" != :deleted_id");
+							queryString.append(AND_SQL).append(PersistentBean.OWNER_COLUMN_NAME).append(" != :deleted_id");
 						}
 						else {
-							queryString.append(" and ").append(Bean.DOCUMENT_ID).append(" != :deleted_id");
+							queryString.append(AND_SQL).append(Bean.DOCUMENT_ID).append(" != :deleted_id");
 						}
 						queryString.append(i++);
 					}
 				}
-				if (UtilImpl.QUERY_TRACE) UtilImpl.LOGGER.info("FK check : " + queryString);
+				if (UtilImpl.QUERY_TRACE) QUERY_LOGGER.info("FK check : {}", queryString);
 		
 				NativeQuery<?> query = session.createNativeQuery(queryString.toString());
-//				query.setLockMode("bean", LockMode.READ); // read lock required for referential integrity
-	
+
+				// Always use streaming JDBC results to avoid out of memory errors on large result sets
+				query.setFetchSize(RDBMS.mysql.equals(AbstractHibernatePersistence.getDialect().getRDBMS()) ? Integer.MIN_VALUE : 1000);
+				
 				// Set timeout if applicable
 				int timeout = UtilImpl.DATA_STORE.getOltpConnectionTimeoutInSeconds();
 				if (timeout > 0) {
@@ -2190,14 +2832,14 @@ if (document.isDynamic()) return;
 				}
 	
 				if (UtilImpl.QUERY_TRACE) {
-					UtilImpl.LOGGER.info("    SET PARAM reference_id = " + bean.getBizId());
+				    QUERY_LOGGER.info("    SET PARAM reference_id = {}", bean.getBizId());
 				}
 				query.setParameter("reference_id", bean.getBizId(), StringType.INSTANCE);
 				if (theseBeansToBeCascaded != null) {
 					int i = 0;
 					for (Bean thisBeanToBeCascaded : theseBeansToBeCascaded) {
 						if (UtilImpl.QUERY_TRACE) {
-							UtilImpl.LOGGER.info("    SET PARAM deleted_id " + i + " = " + thisBeanToBeCascaded.getBizId());
+						    QUERY_LOGGER.info("    SET PARAM deleted_id {} = {}", String.valueOf(i), thisBeanToBeCascaded.getBizId());
 						}
 						query.setParameter("deleted_id" + i++, thisBeanToBeCascaded.getBizId(), StringType.INSTANCE);
 					}
@@ -2212,9 +2854,16 @@ if (document.isDynamic()) return;
 		}
 	}
 
-	private void populateImmediateMapImplementingDerivations(CustomerImpl customer,
-																Document document,
-																Set<Document> result) {
+	/**
+	 * Populate the immediate mapped inheritance derivations for a document.
+	 *
+	 * @param customer The current customer.
+	 * @param document The base document.
+	 * @param result The set to populate with derivations.
+	 */
+	private void populateImmediateMapImplementingDerivations(@Nonnull CustomerImpl customer,
+																@Nonnull Document document,
+																@Nonnull Set<Document> result) {
 		for (String derivedDocumentName : customer.getDerivedDocuments(document)) {
 			int dotIndex = derivedDocumentName.indexOf('.');
 			Module derivedModule = customer.getModule(derivedDocumentName.substring(0, dotIndex));
@@ -2229,26 +2878,51 @@ if (document.isDynamic()) return;
 		}
 	}
 	
+	/**
+	 * Retrieve a bean by id.
+	 *
+	 * @param document The document metadata.
+	 * @param id The bean id.
+	 * @param <T> The bean type.
+	 * @return The bean instance, or null if not found.
+	 */
 	@Override
 	public <T extends Bean> T retrieve(Document document, String id) {
 		return retrieve(document, id, false);
 	}
 	
+	/**
+	 * Retrieve and pessimistically lock a bean by id.
+	 *
+	 * @param document The document metadata.
+	 * @param id The bean id.
+	 * @param <T> The bean type.
+	 * @return The bean instance.
+	 * @throws NoResultsException If no bean is found.
+	 */
 	@Override
 	public <T extends Bean> T retrieveAndLock(Document document, String id) {
-		return retrieve(document, id, true);
+		T result = retrieve(document, id, true);
+		if (result == null) {
+			throw new NoResultsException();
+		}
+		return result;
 	}
 	
+	/**
+	 * Retrieve a bean by id with optional pessimistic locking.
+	 *
+	 * @param document The document metadata.
+	 * @param id The bean id.
+	 * @param forUpdate Whether to lock the row for update.
+	 * @param <T> The bean type.
+	 * @return The bean instance, or null if not found.
+	 */
 	@SuppressWarnings("unchecked")
-	private final <T extends Bean> T retrieve(Document document, String id, boolean forUpdate) {
+	private final @Nullable <T extends Bean> T retrieve(@Nonnull Document document, @Nonnull String id, boolean forUpdate) {
 		T result = null;
-		Class<?> beanClass = null;
 		String entityName = getDocumentEntityName(document.getOwningModuleName(), document.getName());
-		Customer customer = user.getCustomer();
 		try {
-			if (UtilImpl.USING_JPA && (! entityName.startsWith(customer.getName()))) {
-				beanClass = ((DocumentImpl) document).getBeanClass(customer);
-			}
 			if (document.isDynamic()) {
 				try {
 					result = (T) dynamicPersistence.populate(id);
@@ -2260,21 +2934,11 @@ if (document.isDynamic()) return;
 			}
 			else {
 				if (forUpdate) {
-					if (beanClass != null) {
-						result = (T) session.load(beanClass, id, LockMode.PESSIMISTIC_WRITE);
-					}
-					else {
-						result = (T) session.load(entityName, id, LockMode.PESSIMISTIC_WRITE);
-					}
+					result = (T) session.load(entityName, id, LockMode.PESSIMISTIC_WRITE);
 				}
 				else // works with transient instances
 				{
-					if (beanClass != null) {
-						result = (T) em.find(beanClass, id);
-					}
-					else {
-						result = (T) session.get(entityName, id);
-					}
+					result = (T) session.get(entityName, id);
 				}
 			}
 		}
@@ -2283,14 +2947,15 @@ if (document.isDynamic()) return;
 			// The select for update is by [bizId] and [bizVersion] and other transaction changed the bizVersion
 			// so it cannot be found.
 			// The result is null here, so retrieve it again (from the database) without trying to lock
-			if (beanClass != null) {
-				result = (T) em.find(beanClass, id);
-			}
-			else {
-				result = (T) session.get(entityName, id);
-			}
+			result = (T) session.get(entityName, id);
 
 			session.refresh(result, LockMode.PESSIMISTIC_WRITE);
+		}
+		catch (@SuppressWarnings("unused") org.hibernate.ObjectNotFoundException e) {
+			// session.load() with a pessimistic lock issues immediate SQL; if the row does not exist
+			// Hibernate throws ObjectNotFoundException rather than returning null. Normalise to null
+			// so callers see the standard "not found" contract.
+			result = null;
 		}
 		catch (ClassNotFoundException e) { // Can emanate out of hibernate innards
 			throw new MetaDataException("Could not find bean", e);
@@ -2299,6 +2964,12 @@ if (document.isDynamic()) return;
 		return result;
 	}
 
+	/**
+	 * Post-load callback invoked by Hibernate event listeners.
+	 *
+	 * @param loadedBean The bean that has been loaded.
+	 * @throws Exception If post-load processing fails.
+	 */
 	@Override
 	public void postLoad(PersistentBean loadedBean)
 	throws Exception {
@@ -2323,9 +2994,9 @@ if (document.isDynamic()) return;
 		if (! vetoed) {
 			Bizlet<Bean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 			if (bizlet != null) {
-				if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postLoad", "Entering " + bizlet.getClass().getName() + ".postLoad: " + loadedBean);
+				if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.postLoad: {}", bizlet.getClass().getName(), loadedBean);
 				bizlet.postLoad(loadedBean);
-				if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postLoad", "Exiting " + bizlet.getClass().getName() + ".postLoad");
+				if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.postLoad", bizlet.getClass().getName());
 			}
 			internalCustomer.interceptAfterPostLoad(loadedBean);
 		}
@@ -2334,13 +3005,21 @@ if (document.isDynamic()) return;
 		loadedBean.originalValues().clear();
 	}
 
-	private static void nullEmbeddedReferencesOnLoad(Customer customer,
-														Module module,
-														Document document,
-														PersistentBean loadedBean) {
+	/**
+	 * Null out embedded references that contain only empty values.
+	 *
+	 * @param customer The current customer.
+	 * @param module The module containing the document.
+	 * @param document The document metadata.
+	 * @param loadedBean The bean being processed.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private static void nullEmbeddedReferencesOnLoad(@Nonnull Customer customer,
+														@Nonnull Module module,
+														@Nonnull Document document,
+														@Nonnull PersistentBean loadedBean) {
 		for (Attribute attribute : document.getAllAttributes(customer)) {
-			if (attribute instanceof Association) {
-				Association association = (Association) attribute;
+			if (attribute instanceof Association association) {
 				if (AssociationType.embedded.equals(association.getType())) {
 					String embeddedName = association.getName();
 					Bean embeddedBean = (Bean) BindUtil.get(loadedBean, embeddedName);
@@ -2352,7 +3031,7 @@ if (document.isDynamic()) return;
 							if (! (embeddedAttribute instanceof Inverse)) {
 								Object value = BindUtil.get(embeddedBean, embeddedAttribute.getName());
 								if (value != null) {
-									if ((value instanceof List<?>) && ((List<?>) value).isEmpty()) {
+									if ((value instanceof List<?> list) && list.isEmpty()) {
 										continue;
 									}
 									empty = false;
@@ -2371,7 +3050,14 @@ if (document.isDynamic()) return;
 		}
 	}
 	
+	/**
+	 * Reindex a bean by extracting textual fields and updating content storage.
+	 *
+	 * @param beanToReindex The bean to reindex.
+	 * @throws Exception If indexing or content storage fails.
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void reindex(PersistentBean beanToReindex)
 	throws Exception {
 		TextExtractor extractor = null; // lazily instantiated
@@ -2381,8 +3067,7 @@ if (document.isDynamic()) return;
 		Module module = customer.getModule(beanToReindex.getBizModule());
 		Document document = module.getDocument(customer, beanToReindex.getBizDocument());
 		for (Attribute attribute : document.getAllAttributes(customer)) {
-			if (attribute instanceof Field) {
-				Field field = (Field) attribute;
+			if (attribute instanceof Field field) {
 				AttributeType type = attribute.getAttributeType();
 				IndexType index = field.getIndex();
 				if (IndexType.textual.equals(index) || IndexType.both.equals(index)) {
@@ -2412,11 +3097,22 @@ if (document.isDynamic()) return;
 		}
 	}
 
-	public void index(PersistentBean beanToIndex,
-						String[] propertyNames,
-						Type[] propertyTypes,
-						Object[] oldState,
-						Object[] state)
+	/**
+	 * Index updated bean properties during persistence events.
+	 *
+	 * @param beanToIndex The bean being indexed.
+	 * @param propertyNames Hibernate property names.
+	 * @param propertyTypes Hibernate property types.
+	 * @param oldState Old property state (null for inserts).
+	 * @param state Current property state.
+	 * @throws Exception If indexing or content storage fails.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	public void index(@Nonnull PersistentBean beanToIndex,
+						@Nonnull String[] propertyNames,
+						@Nonnull Type[] propertyTypes,
+						@Nullable Object[] oldState,
+						@Nonnull Object[] state)
 	throws Exception {
 		BeanContent content = new BeanContent(beanToIndex);
 		Map<String, String> properties = content.getProperties();
@@ -2431,8 +3127,7 @@ if (document.isDynamic()) return;
 			// NB use getMetaForBinding() to ensure that base document attributes are also retrieved
 			TargetMetaData target = Binder.getMetaDataForBinding(customer, module, document, propertyName);
 			Attribute attribute = target.getAttribute();
-			if (attribute instanceof Field) {
-				Field field = (Field) attribute;
+			if (attribute instanceof Field field) {
 				AttributeType type = field.getAttributeType();
 				IndexType index = field.getIndex();
 				if (IndexType.textual.equals(index) || IndexType.both.equals(index)) {
@@ -2475,16 +3170,6 @@ if (document.isDynamic()) return;
 				// If the transaction rolls back and we are using a file store content manager
 				// the file could be deleted when its not meant to be orphaning the content link.
 				// Let Content Garbage Collection pick it up in another thread once committed to the RDBMS.
-				/*
-				if (AttributeType.content.equals(type) || AttributeType.image.equals(type)) {
-					if (oldState != null) { // an update
-						if ((state[i] == null) && (oldState[i] != null)) { // removed the content link
-							// Remove the attachment content
-							removeAttachmentContent((String) oldState[i]);
-						}
-					}
-				}
-				*/
 			}
 		}
 
@@ -2495,6 +3180,7 @@ if (document.isDynamic()) return;
 
 	// Need the callback because an element removed from a collection will be deleted and only this event will pick it up
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void preRemove(PersistentBean bean)
 	throws Exception {
 		final Map<String, Set<Bean>> beansToDelete = deleteContext.isEmpty() ? new TreeMap<>() : deleteContext.peek();
@@ -2502,9 +3188,12 @@ if (document.isDynamic()) return;
 		if (! deleteContext.isEmpty()) { // called within a Persistence.delete() operation 
 			// Don't continue if we've already called preDelete on this bean 
 			// as it was the argument in a Persistence.delete() call
-			Bean beanToDelete = beansToDelete.get("").stream().findFirst().get();
-			if (bean.equals(beanToDelete)) {
-				return;
+			Set<Bean> rootBeansToDelete = beansToDelete.get("");
+			if (rootBeansToDelete != null) {
+				Bean beanToDelete = rootBeansToDelete.stream().findFirst().orElse(null);
+				if (bean.equals(beanToDelete)) {
+					return;
+				}
 			}
 		}
 		
@@ -2545,9 +3234,9 @@ if (document.isDynamic()) return;
 			if (! vetoed) {
 				Bizlet<Bean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 				if (bizlet != null) {
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preDelete", "Entering " + bizlet.getClass().getName() + ".preDelete: " + bean);
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.preDelete: {}",  bizlet.getClass().getName(), bean);
 					bizlet.preDelete(bean);
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preDelete", "Exiting " + bizlet.getClass().getName() + ".preDelete");
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.preDelete", bizlet.getClass().getName());
 				}
 				internalCustomer.interceptAfterPreDelete(bean);
 			}
@@ -2572,36 +3261,46 @@ if (document.isDynamic()) return;
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void postRemove(PersistentBean bean)
 	throws Exception {
+		final Customer customer = user.getCustomer();
+		final Module module = customer.getModule(bean.getBizModule());
+		final Document document = module.getDocument(customer, bean.getBizDocument());
+
 		// check we are not calling postRemove from delete operation
 		final Map<String, Set<Bean>> beansToDelete = deleteContext.isEmpty() ? new TreeMap<>() : deleteContext.peek();
 		if (! deleteContext.isEmpty()) { // called within a Persistence.delete() operation 
 			// Don't continue if we've already called preDelete on this bean 
 			// as it was the argument in a Persistence.delete() call
-			Bean beanToDelete = beansToDelete.get("").stream().findFirst().get();
-			if (bean.equals(beanToDelete)) {
-				// remove content but don't call Bizlet.postDelete()
-				removeBeanContent(bean);
-				return;
+			Set<Bean> rootBeansToDelete = beansToDelete.get("");
+			if (rootBeansToDelete != null) {
+				Bean beanToDelete = rootBeansToDelete.stream().findFirst().orElse(null);
+				if (bean.equals(beanToDelete)) {
+					// remove content and unique constraints state but don't call Bizlet.postDelete()
+					try {
+						removeBeanContent(bean);
+					}
+					finally {
+						removeInsertedUniqueConstraintState(customer, document, bean);
+					}
+					return;
+				}
 			}
 		}
 
 		// call Bizlet.postDelete() and then remove content
-		final Customer customer = user.getCustomer();
 		try {
 			final CustomerImpl internalCustomer = (CustomerImpl) customer;
-			Module module = internalCustomer.getModule(bean.getBizModule());
-			Document document = module.getDocument(customer, bean.getBizDocument());
-			boolean vetoed = internalCustomer.interceptBeforePreDelete(bean);
+			boolean vetoed = internalCustomer.interceptBeforePostDelete(bean);
 			if (! vetoed) {
 				Bizlet<Bean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 				if (bizlet != null) {
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postDelete", "Entering " + bizlet.getClass().getName() + ".postDelete: " + bean);
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.postDelete: {}", bizlet.getClass().getName(), bean);
 					bizlet.postDelete(bean);
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postDelete", "Exiting " + bizlet.getClass().getName() + ".postDelete");
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.postDelete", bizlet.getClass().getName());
 				}
-				internalCustomer.interceptAfterPreDelete(bean);
+				internalCustomer.interceptAfterPostDelete(bean);
 			}
 		}
 		catch (ValidationException e) {
@@ -2611,11 +3310,93 @@ if (document.isDynamic()) return;
 			throw e;
 		}
 
-		// remove content
-		removeBeanContent(bean);
+		// remove content and unique constraint state
+		try {
+			removeBeanContent(bean);
+		}
+		finally {
+			removeInsertedUniqueConstraintState(customer, document, bean);
+		}
 	}
 	
-	public final Connection getConnection() {
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private void removeInsertedUniqueConstraintState(Customer customer, Document document, Bean bean) {
+// TODO - Work the dynamic something in here - remove the short-circuit on dynamic
+if (document.isDynamic()) return;
+
+		Document currentDocument = document;
+		Extends currentExtends = null;
+		do {
+			final String currentOwningModuleName = currentDocument.getOwningModuleName();
+			final Module currentOwningModule = customer.getModule(currentOwningModuleName);
+			final String currentDocumentName = currentDocument.getName();
+
+			for (UniqueConstraint constraint : currentDocument.getUniqueConstraints()) {
+				DocumentScope scope = constraint.getScope();
+				
+				// Don't check for unique constraint state if any of the parameters are null
+				boolean nullParameter = false;
+
+				// Calculate a hash of the unique key
+				StringBuilder uniqueKey = new StringBuilder(128);
+				uniqueKey.append(currentOwningModuleName).append('|').append(currentDocumentName).append('|');
+				if (DocumentScope.customer.equals(scope)) {
+					uniqueKey.append(bean.getBizCustomer()).append('|');
+				}
+				else if (DocumentScope.dataGroup.equals(scope)) {
+					uniqueKey.append(bean.getBizCustomer()).append('|');
+					uniqueKey.append(bean.getBizDataGroupId()).append('|');
+				}
+				else if (DocumentScope.user.equals(scope)) {
+					uniqueKey.append(bean.getBizCustomer()).append('|');
+					uniqueKey.append(bean.getBizDataGroupId()).append('|');
+					uniqueKey.append(bean.getBizUserId()).append('|');
+				}
+				uniqueKey.append(constraint.getName()).append('|');
+				for (String fieldName : constraint.getFieldNames()) {
+					Object constraintFieldValue = null;
+					try {
+						constraintFieldValue = BindUtil.get(bean, fieldName);
+					}
+					catch (Exception e) {
+						throw new DomainException(e);
+					}
+					
+					// Don't do the constraint check if any query parameter is null
+					if (constraintFieldValue == null) {
+						nullParameter = true;
+						break; // stop checking the field names of this constraint
+					}
+					uniqueKey.append(constraintFieldValue.toString()).append('|');
+				}
+				if (nullParameter) {
+					continue; // iterate to next constraint
+				}
+				String hash = DigestUtils.sha256Hex(uniqueKey.toString());
+
+				// if the hash is present, remove it and delete it from ADM_Uniqueness
+				if (uniqueHashes.remove(hash)) {
+					final Persistent persistent = new Persistent();
+					persistent.setName(UniquenessEntity.TABLE_NAME);
+					String persistentIdentifier = persistent.getPersistentIdentifier();
+					StringBuilder sql = new StringBuilder(64);
+					sql.append("delete from ").append(persistentIdentifier);
+					sql.append(WHERE_SQL).append(UniquenessEntity.HASH_COLUMN_NAME).append(" = :").append(UniquenessEntity.HASH_COLUMN_NAME);
+					newSQL(sql.toString()).putParameter(UniquenessEntity.HASH_COLUMN_NAME, hash, false).execute();
+				}
+			}
+
+			// Process the extension document if applicable
+			currentExtends = currentDocument.getExtends();
+			if (currentExtends != null) {
+				currentDocument = currentOwningModule.getDocument(customer, currentExtends.getDocumentName());
+			}
+		}
+		while (currentExtends != null);
+	}
+
+	@SuppressWarnings("resource") // connection lifecycle remains owned by the underlying session
+	public final @Nonnull Connection getConnection() {
 /*
 Maybe use this...
 public void doWorkOnConnection(Session session) {
@@ -2631,13 +3412,17 @@ public void doWorkOnConnection(Session session) {
 	
 	private static final Integer NEW_VERSION = Integer.valueOf(0);
 	
+	/**
+	 * {@inheritDoc}
+	 */
 	@Override
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	public void upsertBeanTuple(PersistentBean bean) {
 		CustomerImpl customer = (CustomerImpl) user.getCustomer();
 		Module module = customer.getModule(bean.getBizModule());
 		Document document = module.getDocument(customer, bean.getBizDocument());
 		if (! document.isPersistable()) {
-			throw new MetaDataException("Document " + module.getName() + '.' + document.getName() + " is not persistable");
+			throw new MetaDataException(DOCUMENT_PREFIX + module.getName() + '.' + document.getName() + IS_NOT_PERSISTABLE);
 		}
 		@SuppressWarnings("null") // tested above
 		String persistentIdentifier = document.getPersistent().getPersistentIdentifier();
@@ -2692,18 +3477,17 @@ public void doWorkOnConnection(Session session) {
 				if (Bean.BIZ_KEY.equals(attributeName)) {
 					continue;
 				}
-				else if (attribute instanceof Association) {
-					Association association = (Association) attribute;
+				else if (attribute instanceof Association association) {
 					// Exclude embedded associations
 					if (association.getType() != AssociationType.embedded) {
-						query.append(',').append(attributeName).append("_id=:").append(attributeName).append("_id");
+						query.append(',').append(attributeName).append("_id=:").append(attributeName).append(ID_COLUMN_SUFFIX);
 
 						// If this is an arc, add the type column to the insert
 						String referencedDocumentName = association.getDocumentName();
 						Document referencedDocument = module.getDocument(customer, referencedDocumentName);
 						Persistent referencedPersistent = referencedDocument.getPersistent();
-						if ((referencedPersistent != null) && ExtensionStrategy.mapped.equals(referencedPersistent.getStrategy())) {
-							query.append(',').append(attributeName).append("_type=:").append(attributeName).append("_type");
+						if ((referencedPersistent != null) && referencedPersistent.isPolymorphicallyMapped()) {
+							query.append(',').append(attributeName).append("_type=:").append(attributeName).append(TYPE_COLUMN_SUFFIX);
 						}
 					}
 				}
@@ -2712,7 +3496,7 @@ public void doWorkOnConnection(Session session) {
 				}
 			}
 
-			query.append(" where ").append(Bean.DOCUMENT_ID).append("=:").append(Bean.DOCUMENT_ID);
+			query.append(WHERE_SQL).append(Bean.DOCUMENT_ID).append("=:").append(Bean.DOCUMENT_ID);
 		}
 		else { // insert a new row
 			// Add the built ins
@@ -2760,20 +3544,19 @@ public void doWorkOnConnection(Session session) {
 				if (Bean.BIZ_KEY.equals(attributeName)) {
 					continue;
 				}
-				else if (attribute instanceof Association) {
-					Association association = (Association) attribute;
+				else if (attribute instanceof Association association) {
 					// Exclude embedded associations
 					if (association.getType() != AssociationType.embedded) {
-						columns.append(',').append(attributeName).append("_id");
-						values.append(",:").append(attributeName).append("_id");
+						columns.append(',').append(attributeName).append(ID_COLUMN_SUFFIX);
+						values.append(",:").append(attributeName).append(ID_COLUMN_SUFFIX);
 	
 						// If this is an arc, add the type column to the insert
 						String referencedDocumentName = association.getDocumentName();
 						Document referencedDocument = module.getDocument(customer, referencedDocumentName);
 						Persistent referencedPersistent = referencedDocument.getPersistent();
-						if ((referencedPersistent != null) && ExtensionStrategy.mapped.equals(referencedPersistent.getStrategy())) {
-							columns.append(',').append(attributeName).append("_type");
-							values.append(",:").append(attributeName).append("_type");
+						if ((referencedPersistent != null) && referencedPersistent.isPolymorphicallyMapped()) {
+							columns.append(',').append(attributeName).append(TYPE_COLUMN_SUFFIX);
+							values.append(",:").append(attributeName).append(TYPE_COLUMN_SUFFIX);
 						}
 					}
 				}
@@ -2829,11 +3612,10 @@ public void doWorkOnConnection(Session session) {
 			}
 
 			try {
-				if (attribute instanceof Association) {
-					Association association = (Association) attribute;
+				if (attribute instanceof Association association) {
 					// Exclude embedded associations
 					if (association.getType() != AssociationType.embedded) {
-						String columnName = new StringBuilder(64).append(attributeName).append("_id").toString();
+						String columnName = new StringBuilder(64).append(attributeName).append(ID_COLUMN_SUFFIX).toString();
 						String binding = new StringBuilder(64).append(attributeName).append('.').append(Bean.DOCUMENT_ID).toString();
 						sql.putParameter(columnName, (String) BindUtil.get(bean, binding), false);
 	
@@ -2841,8 +3623,8 @@ public void doWorkOnConnection(Session session) {
 						String referencedDocumentName = association.getDocumentName();
 						Document referencedDocument = module.getDocument(customer, referencedDocumentName);
 						Persistent referencedPersistent = referencedDocument.getPersistent();
-						if ((referencedPersistent != null) && ExtensionStrategy.mapped.equals(referencedPersistent.getStrategy())) {
-							columnName = new StringBuilder(64).append(attributeName).append("_type").toString();
+						if ((referencedPersistent != null) && referencedPersistent.isPolymorphicallyMapped()) {
+							columnName = new StringBuilder(64).append(attributeName).append(TYPE_COLUMN_SUFFIX).toString();
 							Bean referencedBean = (Bean) BindUtil.get(bean, attributeName);
 							String value = null;
 							if (referencedBean != null) {
@@ -2876,7 +3658,7 @@ public void doWorkOnConnection(Session session) {
 			}
 			catch (Exception e) {
 				throw new DomainException("Could not grab the value in attribute " + attributeName +
-											" from bean " + bean, e);
+											FROM_BEAN + bean, e);
 			}
 		}
 
@@ -2888,13 +3670,16 @@ public void doWorkOnConnection(Session session) {
 		bean.setBizVersion((bizVersion == null) ? NEW_VERSION : Integer.valueOf(bizVersion.intValue() + 1));
 	}
 
+	/**
+	 * {@inheritDoc}
+	 */
 	@Override
 	public void upsertCollectionTuples(PersistentBean owningBean, String collectionName) {
 		Customer customer = user.getCustomer();
 		Module module = customer.getModule(owningBean.getBizModule());
 		Document document = module.getDocument(customer, owningBean.getBizDocument());
 		if (! document.isPersistable()) {
-			throw new MetaDataException("Document " + module.getName() + '.' + document.getName() + " is not persistable");
+			throw new MetaDataException(DOCUMENT_PREFIX + module.getName() + '.' + document.getName() + IS_NOT_PERSISTABLE);
 		}
 		@SuppressWarnings("null") // tested above
 		String persistentIdentifier = document.getPersistent().getPersistentIdentifier();
@@ -2909,14 +3694,14 @@ public void doWorkOnConnection(Session session) {
 		}
 		catch (Exception e) {
 			throw new DomainException("Could not get collection " + collectionName + 
-										" from bean " + owningBean, e);
+										FROM_BEAN + owningBean, e);
 		}
 		
 		if (elementBeans != null) {
 			for (Bean elementBean : elementBeans) {
 				query.append("select * from ").append(persistentIdentifier).append('_').append(collectionName);
-				query.append(" where ").append(PersistentBean.OWNER_COLUMN_NAME).append("=:");
-				query.append(PersistentBean.OWNER_COLUMN_NAME).append(" and ").append(PersistentBean.ELEMENT_COLUMN_NAME);
+				query.append(WHERE_SQL).append(PersistentBean.OWNER_COLUMN_NAME).append("=:");
+				query.append(PersistentBean.OWNER_COLUMN_NAME).append(AND_SQL).append(PersistentBean.ELEMENT_COLUMN_NAME);
 				query.append("=:").append(PersistentBean.ELEMENT_COLUMN_NAME);
 	
 				SQL sql = newSQL(query.toString());
@@ -2926,9 +3711,9 @@ public void doWorkOnConnection(Session session) {
 				boolean notExists = sql.tupleResults().isEmpty();
 				query.setLength(0);
 				if (notExists) {
-					query.append("insert into ").append(persistentIdentifier).append('_').append(collectionName);
+					query.append(INSERT_INTO_SQL).append(persistentIdentifier).append('_').append(collectionName);
 					query.append(" (").append(PersistentBean.OWNER_COLUMN_NAME).append(',').append(PersistentBean.ELEMENT_COLUMN_NAME);
-					query.append(") values (:").append(PersistentBean.OWNER_COLUMN_NAME).append(",:");
+					query.append(VALUES_SQL).append(PersistentBean.OWNER_COLUMN_NAME).append(",:");
 					query.append(PersistentBean.ELEMENT_COLUMN_NAME).append(')');
 	
 					sql = newSQL(query.toString());
@@ -2942,20 +3727,23 @@ public void doWorkOnConnection(Session session) {
 		}
 	}
 	
+	/**
+	 * {@inheritDoc}
+	 */
 	@Override
 	public void insertCollectionTuples(PersistentBean owningBean, String collectionName) {
 		Customer customer = user.getCustomer();
 		Module module = customer.getModule(owningBean.getBizModule());
 		Document document = module.getDocument(customer, owningBean.getBizDocument());
 		if (! document.isPersistable()) {
-			throw new MetaDataException("Document " + module.getName() + '.' + document.getName() + " is not persistable");
+			throw new MetaDataException(DOCUMENT_PREFIX + module.getName() + '.' + document.getName() + IS_NOT_PERSISTABLE);
 		}
 		@SuppressWarnings("null") // tested above
 		String persistentIdentifier = document.getPersistent().getPersistentIdentifier();
 		StringBuilder query = new StringBuilder(256);
-		query.append("insert into ").append(persistentIdentifier).append('_').append(collectionName);
+		query.append(INSERT_INTO_SQL).append(persistentIdentifier).append('_').append(collectionName);
 		query.append(" (").append(PersistentBean.OWNER_COLUMN_NAME).append(',').append(PersistentBean.ELEMENT_COLUMN_NAME);
-		query.append(") values (:").append(PersistentBean.OWNER_COLUMN_NAME).append(",:");
+		query.append(VALUES_SQL).append(PersistentBean.OWNER_COLUMN_NAME).append(",:");
 		query.append(PersistentBean.ELEMENT_COLUMN_NAME).append(')');
 
 		List<PersistentBean> elementBeans = null;
@@ -2966,7 +3754,7 @@ public void doWorkOnConnection(Session session) {
 		}
 		catch (Exception e) {
 			throw new DomainException("Could not get collection " + collectionName + 
-										" from bean " + owningBean, e);
+										FROM_BEAN + owningBean, e);
 		}
 		
 		if (elementBeans != null) {
@@ -2980,25 +3768,36 @@ public void doWorkOnConnection(Session session) {
 		}
 	}
 
-	/**
-	 * In case of emergency, break glass
-	 */
-	public final EntityManager getEntityManager() {
+	@Override
+	public final @Nonnull EntityManager getEntityManager() {
 		return em;
 	}
 	
 	/**
 	 * In case of emergency, break glass
 	 */
-	public final Session getSession() {
+	public final @Nonnull Session getSession() {
 		return session;
 	}
 
+	/**
+	 * Create a new SQL wrapper for the given query string.
+	 *
+	 * @param query The SQL query.
+	 * @return The SQL wrapper.
+	 */
 	@Override
 	public SQL newSQL(String query) {
 		return new HibernateSQL(query, this);
 	}
 
+	/**
+	 * Create a new named SQL wrapper defined in the module.
+	 *
+	 * @param moduleName The module name.
+	 * @param queryName The named SQL definition.
+	 * @return The SQL wrapper.
+	 */
 	@Override
 	public SQL newNamedSQL(String moduleName, String queryName) {
 		Module module = user.getCustomer().getModule(moduleName);
@@ -3008,6 +3807,13 @@ public void doWorkOnConnection(Session session) {
 		return result;
 	}
 
+	/**
+	 * Create a new named BizQL wrapper defined in the module.
+	 *
+	 * @param module The module.
+	 * @param queryName The named BizQL definition.
+	 * @return The BizQL wrapper.
+	 */
 	@Override
 	public SQL newNamedSQL(Module module, String queryName) {
 		SQLDefinition sql = module.getSQL(queryName);
@@ -3016,16 +3822,39 @@ public void doWorkOnConnection(Session session) {
 		return result;
 	}
 
+	/**
+	 * Create a new SQL wrapper with module/document context.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 * @param query The SQL query.
+	 * @return The SQL wrapper.
+	 */
 	@Override
 	public SQL newSQL(String moduleName, String documentName, String query) {
 		return new HibernateSQL(moduleName, documentName, query, this);
 	}
 
+	/**
+	 * Create a new SQL wrapper for a document context.
+	 *
+	 * @param document The document metadata.
+	 * @param query The SQL query.
+	 * @return The SQL wrapper.
+	 */
 	@Override
 	public SQL newSQL(Document document, String query) {
 		return new HibernateSQL(document, query, this);
 	}
 
+	/**
+	 * Create a new named SQL wrapper with module/document context.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 * @param queryName The named SQL definition.
+	 * @return The SQL wrapper.
+	 */
 	@Override
 	public SQL newNamedSQL(String moduleName, String documentName, String queryName) {
 		Module module = user.getCustomer().getModule(moduleName);
@@ -3035,6 +3864,13 @@ public void doWorkOnConnection(Session session) {
 		return result;
 	}
 
+	/**
+	 * Create a new named SQL wrapper for a document.
+	 *
+	 * @param document The document metadata.
+	 * @param queryName The named SQL definition.
+	 * @return The SQL wrapper.
+	 */
 	@Override
 	public SQL newNamedSQL(Document document, String queryName) {
 		Module module = user.getCustomer().getModule(document.getOwningModuleName());
@@ -3044,11 +3880,24 @@ public void doWorkOnConnection(Session session) {
 		return result;
 	}
 
+	/**
+	 * Create a new BizQL wrapper for the given query string.
+	 *
+	 * @param query The BizQL query.
+	 * @return The BizQL wrapper.
+	 */
 	@Override
 	public BizQL newBizQL(String query) {
 		return new HibernateBizQL(query, this);
 	}
 
+	/**
+	 * Create a new named BizQL wrapper defined in the module.
+	 *
+	 * @param moduleName The module name.
+	 * @param queryName The named BizQL definition.
+	 * @return The BizQL wrapper.
+	 */
 	@Override
 	public BizQL newNamedBizQL(String moduleName, String queryName) {
 		Module module = user.getCustomer().getModule(moduleName);
@@ -3058,6 +3907,13 @@ public void doWorkOnConnection(Session session) {
 		return result;
 	}
 
+	/**
+	 * Create a new named BizQL wrapper defined in the module.
+	 *
+	 * @param module The module.
+	 * @param queryName The named BizQL definition.
+	 * @return The BizQL wrapper.
+	 */
 	@Override
 	public BizQL newNamedBizQL(Module module, String queryName) {
 		BizQLDefinition bizql = module.getBizQL(queryName);
@@ -3066,37 +3922,79 @@ public void doWorkOnConnection(Session session) {
 		return result;
 	}
 
+	/**
+	 * Construct a named document query from module metadata.
+	 *
+	 * @param moduleName The module name.
+	 * @param queryName The named query.
+	 * @return The document query instance.
+	 */
 	@Override
 	public DocumentQuery newNamedDocumentQuery(String moduleName, String queryName) {
 		Module module = user.getCustomer().getModule(moduleName);
-		MetaDataQueryDefinition query = module.getMetaDataQuery(queryName);
+		MetaDataQueryDefinition query = module.getNullSafeMetaDataQuery(queryName);
 		return query.constructDocumentQuery(null, null);
 	}
 
+	/**
+	 * Construct a named document query from module metadata.
+	 *
+	 * @param module The module.
+	 * @param queryName The named query.
+	 * @return The document query instance.
+	 */
 	@Override
 	public DocumentQuery newNamedDocumentQuery(Module module, String queryName) {
-		MetaDataQueryDefinition query = module.getMetaDataQuery(queryName);
+		MetaDataQueryDefinition query = module.getNullSafeMetaDataQuery(queryName);
 		return query.constructDocumentQuery(null, null);
 	}
 
+	/**
+	 * Create a document query for a document.
+	 *
+	 * @param document The document metadata.
+	 * @return The document query instance.
+	 */
 	@Override
 	public DocumentQuery newDocumentQuery(Document document) {
 		return new HibernateDocumentQuery(document, this);
 	}
 
+	/**
+	 * Create a document query for a module/document.
+	 *
+	 * @param moduleName The module name.
+	 * @param documentName The document name.
+	 * @return The document query instance.
+	 */
 	@Override
 	public DocumentQuery newDocumentQuery(String moduleName, String documentName) {
 		return new HibernateDocumentQuery(moduleName, documentName, this);
 	}
 
+	/**
+	 * Create a document query with explicit clauses.
+	 *
+	 * @param document The document metadata.
+	 * @param fromClause The query from clause.
+	 * @param filterClause The query filter clause.
+	 * @param groupClause The query group clause.
+	 * @param orderClause The query order clause.
+	 * @return The document query instance.
+	 */
 	@Override
-	public DocumentQuery newDocumentQuery(Document document, String fromClause, String filterClause) {
-		return new HibernateDocumentQuery(document, fromClause, filterClause, this);
+	public DocumentQuery newDocumentQuery(Document document, String fromClause, String filterClause, String groupClause, String orderClause) {
+		return new HibernateDocumentQuery(document, fromClause, filterClause, groupClause, orderClause, this);
 	}
 
+	/**
+	 * Create a document query from a query-by-example bean.
+	 *
+	 * @param queryByExampleBean The query-by-example bean.
+	 * @return The document query instance.
+	 */
 	@Override
-	public DocumentQuery newDocumentQuery(Bean queryByExampleBean)
-	throws Exception {
+	public DocumentQuery newDocumentQuery(Bean queryByExampleBean) {
 		return new HibernateDocumentQuery(queryByExampleBean, this);
 	}
 }

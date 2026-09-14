@@ -7,7 +7,6 @@ import java.util.Map;
 import org.skyve.CORE;
 import org.skyve.domain.Bean;
 import org.skyve.domain.types.converters.Converter;
-import org.skyve.domain.types.converters.enumeration.DynamicEnumerationConverter;
 import org.skyve.impl.bind.BindUtil;
 import org.skyve.impl.metadata.model.document.field.Enumeration;
 import org.skyve.impl.metadata.view.widget.bound.input.TextField;
@@ -30,8 +29,28 @@ import org.skyve.util.JSON;
 import modules.admin.domain.Audit;
 import modules.admin.domain.Audit.Operation;
 
+/**
+ * Builds the comparison tree used by the audit diff view.
+ *
+ * <p>The model reconstructs the source and comparison audit payloads into a tree
+ * of comparison composites, preserving the document and binding structure so the
+ * UI can show added, deleted, and changed nodes.
+ */
 public class AuditComparisonModel extends ComparisonModel<Audit, Audit> {
+	/**
+	 * Rebuilds the comparison tree for the selected audit record.
+	 *
+	 * <p>The method resolves the original document metadata when possible so it can
+	 * annotate nodes with the correct reference names, relationship labels, and
+	 * document aliases. If metadata is no longer available, the tree is still built
+	 * using the stored audit payload.
+	 *
+	 * @param me the selected audit record containing source and comparison versions; never {@code null}
+	 * @return the root of the comparison tree, or {@code null} if the source payload is empty
+	 * @throws Exception if audit payload parsing or metadata lookup fails
+	 */
 	@Override
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	public ComparisonComposite getComparisonComposite(Audit me) throws Exception {
 		Audit sourceVersion = me.getSourceVersion();
 		Audit comparisonVersion = me.getComparisonVersion();
@@ -100,17 +119,21 @@ public class AuditComparisonModel extends ComparisonModel<Audit, Audit> {
 				}
 				else {
 					if (node == null) {
-						TargetMetaData target = null;
 						try {
-							target = Binder.getMetaDataForBinding(c, am, ad, binding);
-							Reference reference = (Reference) target.getAttribute();
-							if (reference == null) {
-								throw new MetaDataException("Can't create a new Audit node as binding " + binding + 
-																" does not point to a reference.");
+							if ((am != null) && (ad != null)) {
+								TargetMetaData target = Binder.getMetaDataForBinding(c, am, ad, binding);
+								Reference reference = (Reference) target.getAttribute();
+								if (reference == null) {
+									throw new MetaDataException("Can't create a new Audit node as binding " + binding + 
+																	" does not point to a reference.");
+								}
+								Module targetModule = c.getModule(target.getDocument().getOwningModuleName());
+								Document referenceDocument = targetModule.getDocument(c, reference.getDocumentName());
+								bindingToNodes.put(binding, createNode(c, reference, referenceDocument, compareValues, true));
 							}
-							Module targetModule = c.getModule(target.getDocument().getOwningModuleName());
-							Document referenceDocument = (am == null) ? null : targetModule.getDocument(c, reference.getDocumentName());
-							bindingToNodes.put(binding, createNode(c, reference, referenceDocument, compareValues, true));
+							else {
+								bindingToNodes.put(binding, createNode(c, null, null, compareValues, true));
+							}
 						}
 						catch (@SuppressWarnings("unused") MetaDataException e) {
 							bindingToNodes.put(binding, createNode(c, null, null, compareValues, true));
@@ -151,8 +174,7 @@ public class AuditComparisonModel extends ComparisonModel<Audit, Audit> {
 													Reference owningReference,
 													Document referenceDocument,
 													Map<String, Object> values,
-													boolean deleted)
-	throws Exception {
+													boolean deleted) {
 		ComparisonComposite result = new ComparisonComposite();
 		result.setBizId((String) values.remove(Bean.DOCUMENT_ID));
 		String description = (String) values.remove(Bean.BIZ_KEY);
@@ -176,11 +198,11 @@ public class AuditComparisonModel extends ComparisonModel<Audit, Audit> {
 		return result;
 	}
 
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private static void addProperties(Customer c,
 										ComparisonComposite node,
 										Map<String, Object> values,
-										boolean deleted)
-	throws Exception {
+										boolean deleted) {
 		Document nodeDocument = node.getDocument();
 		List<ComparisonProperty> properties = node.getProperties();
 		
@@ -197,7 +219,7 @@ public class AuditComparisonModel extends ComparisonModel<Audit, Audit> {
 				Module nodeModule = c.getModule(nodeDocument.getOwningModuleName());
 				try {
 					TargetMetaData tmd = Binder.getMetaDataForBinding(c, nodeModule, nodeDocument, name);
-					attribute = (tmd == null) ? null : tmd.getAttribute();
+					attribute = tmd.getAttribute();
 				}
 				catch (@SuppressWarnings("unused") MetaDataException e) {
 					// nothing to do here - The document no longer has the given attribute
@@ -212,28 +234,28 @@ public class AuditComparisonModel extends ComparisonModel<Audit, Audit> {
 				property.setTitle(attribute.getLocalisedDisplayName());
 				property.setWidget(attribute.getDefaultInputWidget());
 
-				Class<?> type = null;
+				Class<?> type = attribute.getImplementingType();
 				Converter<?> converter = null;
-				if (attribute instanceof Enumeration) {
-					Enumeration e = (Enumeration) attribute;
-					e = e.getTarget();
-					if (e.isDynamic()) {
-						type = String.class;
-						converter = new DynamicEnumerationConverter(e);
-					}
-					else {
-						type = e.getEnum();
-					}
-				}
-				else {
-					type = attribute.getAttributeType().getImplementingType();
+				if (attribute instanceof Enumeration enumeration) {
+					converter = enumeration.getConverter();
 				}
 
-				if (value instanceof String) {
-					value = BindUtil.fromSerialised(converter, type, (String) value);
+				try {
+					if (value instanceof String string) {
+						value = BindUtil.fromSerialised(converter, type, string);
+					}
+					else {
+						value = BindUtil.convert(type, value);
+					}
 				}
-				else {
-					value = BindUtil.convert(type, value);
+				catch (@SuppressWarnings("unused") Exception e) {
+					// The audited value can no longer be coerced to the attribute's type
+					// (e.g. a removed/renamed enum constant). Keep the attribute's localised
+					// title but degrade to a text widget showing the raw audited string.
+					property.setWidget(new TextField());
+					if (value != null) {
+						value = value.toString();
+					}
 				}
 			}
 
@@ -244,10 +266,10 @@ public class AuditComparisonModel extends ComparisonModel<Audit, Audit> {
 		}
 	}
 
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private static void updateNode(ComparisonComposite node,
 									Customer c,
-									Map<String, Object> values)
-	throws Exception {
+									Map<String, Object> values) {
 		if (values != null) {
 			boolean nodeDirty = false;
 			
@@ -262,7 +284,7 @@ public class AuditComparisonModel extends ComparisonModel<Audit, Audit> {
 					Module nodeModule = c.getModule(nodeDocument.getOwningModuleName());
 					try {
 						TargetMetaData tmd = Binder.getMetaDataForBinding(c, nodeModule, nodeDocument, propertyName);
-						attribute = (tmd == null) ? null : tmd.getAttribute();
+						attribute = tmd.getAttribute();
 					}
 					catch (@SuppressWarnings("unused") MetaDataException e) {
 						// nothing to do here - The document no longer has the given attribute
@@ -271,27 +293,27 @@ public class AuditComparisonModel extends ComparisonModel<Audit, Audit> {
 
 				if (attribute != null) {
 					Converter<?> converter = null;
-					Class<?> type = null;
-					if (attribute instanceof Enumeration) {
-						Enumeration e = (Enumeration) attribute;
-						e = e.getTarget();
-						if (e.isDynamic()) {
-							type = String.class;
-							converter = new DynamicEnumerationConverter(e);
-						}
-						else {
-							type = e.getEnum();
-						}
-					}
-					else {
-						type = attribute.getAttributeType().getImplementingType();
+					Class<?> type = attribute.getImplementingType();
+					if (attribute instanceof Enumeration enumeration) {
+						converter = enumeration.getConverter();
 					}
 
-					if (value instanceof String) {
-						value = BindUtil.fromSerialised(converter, type, (String) value);
+					try {
+						if (value instanceof String string) {
+							value = BindUtil.fromSerialised(converter, type, string);
+						}
+						else {
+							value = BindUtil.convert(type, value);
+						}
 					}
-					else {
-						value = BindUtil.convert(type, value);
+					catch (@SuppressWarnings("unused") Exception e) {
+						// The audited value can no longer be coerced to the attribute's type
+						// (e.g. a removed/renamed enum constant). Degrade to a text widget
+						// showing the raw audited string.
+						property.setWidget(new TextField());
+						if (value != null) {
+							value = value.toString();
+						}
 					}
 				}
 

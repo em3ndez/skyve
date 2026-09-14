@@ -58,7 +58,10 @@ public class ImageDirective implements TemplateDirectiveModel {
 	private static final String PARAM_CLASS = "class";
 	private static final String PARAM_STYLE = "style";
 
+	private static final String STRING_PARAMETER_REQUIRED_FORMAT = "The '%s' parameter must be a String.";
+
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void execute(Environment env, Map params, TemplateModel[] loopVars, TemplateDirectiveBody body)
 	throws TemplateException, IOException {
 		if (params.isEmpty()) {
@@ -92,39 +95,39 @@ public class ImageDirective implements TemplateDirectiveModel {
 
 			if (paramName.equals(PARAM_FILENAME)) {
 				if (! (paramValue instanceof TemplateScalarModel)) {
-					throw new TemplateModelException(String.format("The '%s' parameter must be a String.", PARAM_FILENAME));
+					throw new TemplateModelException(String.format(STRING_PARAMETER_REQUIRED_FORMAT, PARAM_FILENAME));
 				}
 				filenameParam = ((TemplateScalarModel) paramValue).getAsString();
 			}
 			else if (paramName.equals(PARAM_MODULE)) {
 				if (! (paramValue instanceof TemplateScalarModel)) {
-					throw new TemplateModelException(String.format("The '%s' parameter must be a String.", PARAM_MODULE));
+					throw new TemplateModelException(String.format(STRING_PARAMETER_REQUIRED_FORMAT, PARAM_MODULE));
 				}
 				moduleParam = ((TemplateScalarModel) paramValue).getAsString();
 			}
 			else if (paramName.equals(PARAM_ALT)) {
 				if (! (paramValue instanceof TemplateScalarModel)) {
-					throw new TemplateModelException(String.format("The '%s' parameter must be a String.", PARAM_ALT));
+					throw new TemplateModelException(String.format(STRING_PARAMETER_REQUIRED_FORMAT, PARAM_ALT));
 				}
 				altParam = ((TemplateScalarModel) paramValue).getAsString();
 			}
 			else if (paramName.equals(PARAM_HEIGHT)) {
-				if (paramValue instanceof TemplateScalarModel) {
-					heightParam = ((TemplateScalarModel) paramValue).getAsString();
+				if (paramValue instanceof TemplateScalarModel scalar) {
+					heightParam = scalar.getAsString();
 				}
-				else if (paramValue instanceof TemplateNumberModel) {
-					heightParam = ((TemplateNumberModel) paramValue).getAsNumber().toString();
+				else if (paramValue instanceof TemplateNumberModel number) {
+					heightParam = number.getAsNumber().toString();
 				}
 				else {
 					throw new TemplateModelException(String.format("The '%s' parameter must be a String or an Integer.", PARAM_HEIGHT));
 				}
 			}
 			else if (paramName.equals(PARAM_WIDTH)) {
-				if (paramValue instanceof TemplateScalarModel) {
-					widthParam = ((TemplateScalarModel) paramValue).getAsString();
+				if (paramValue instanceof TemplateScalarModel scalar) {
+					widthParam = scalar.getAsString();
 				}
-				else if (paramValue instanceof TemplateNumberModel) {
-					widthParam = ((TemplateNumberModel) paramValue).getAsNumber().toString();
+				else if (paramValue instanceof TemplateNumberModel number) {
+					widthParam = number.getAsNumber().toString();
 				}
 				else {
 					throw new TemplateModelException(String.format("The '%s' parameter must be a String or an Integer.", PARAM_WIDTH));
@@ -132,13 +135,13 @@ public class ImageDirective implements TemplateDirectiveModel {
 			}
 			else if (paramName.equals(PARAM_CLASS)) {
 				if (! (paramValue instanceof TemplateScalarModel)) {
-					throw new TemplateModelException(String.format("The '%s' parameter must be a String.", PARAM_CLASS));
+					throw new TemplateModelException(String.format(STRING_PARAMETER_REQUIRED_FORMAT, PARAM_CLASS));
 				}
 				classParam = ((TemplateScalarModel) paramValue).getAsString();
 			}
 			else if (paramName.equals(PARAM_STYLE)) {
 				if (! (paramValue instanceof TemplateScalarModel)) {
-					throw new TemplateModelException(String.format("The '%s' parameter must be a String.", PARAM_STYLE));
+					throw new TemplateModelException(String.format(STRING_PARAMETER_REQUIRED_FORMAT, PARAM_STYLE));
 				}
 				styleParam = ((TemplateScalarModel) paramValue).getAsString();
 			}

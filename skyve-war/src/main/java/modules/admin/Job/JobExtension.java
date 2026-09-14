@@ -5,11 +5,14 @@ import java.util.List;
 import org.skyve.CORE;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.module.JobMetaData;
+import org.skyve.metadata.module.Module;
 
 import modules.admin.domain.Job;
 
+/**
+ * Extends {@link Job} with rerun eligibility logic for admin UI actions.
+ */
 public class JobExtension extends Job {
-
 	private static final long serialVersionUID = 3821211430282929423L;
 
 	/**
@@ -18,15 +21,15 @@ public class JobExtension extends Job {
 	 * Checks whether this job has a status (complete/failed), and
 	 * has a unique display name so we know we can identify the job to rerun.
 	 * 
-	 * @return true when this job can be rerun, false otherwise
+	 * @return {@code true} when this job can be rerun, otherwise {@code false}
 	 */
 	public boolean rerunnable() {
 		if (getStatus() != null) {
 			// count the number of jobs with this job's name
 			int jobCount = 0;
 			Customer c = CORE.getCustomer();
-			List<org.skyve.metadata.module.Module> modules = c.getModules();
-			for (org.skyve.metadata.module.Module m : modules) {
+			List<Module> modules = c.getModules();
+			for (Module m : modules) {
 				List<JobMetaData> jobs = m.getJobs();
 
 				for (JobMetaData j : jobs) {

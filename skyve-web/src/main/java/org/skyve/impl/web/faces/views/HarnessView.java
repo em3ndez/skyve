@@ -1,5 +1,6 @@
 package org.skyve.impl.web.faces.views;
 
+import java.io.File;
 import java.util.Set;
 
 import org.skyve.CORE;
@@ -24,93 +25,260 @@ import org.skyve.util.Util;
 import org.skyve.web.WebAction;
 import org.skyve.web.WebContext;
 
+import jakarta.annotation.Nullable;
 import jakarta.faces.FacesException;
 import jakarta.faces.context.ExternalContext;
 import jakarta.faces.context.FacesContext;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 
+/**
+ * Extension point that establishes state for the running Skyve app Faces Views.
+ * Note that no methods should be final in here as a bean could be injected and a proxy needs to be made.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate harness view script fragments.
 public abstract class HarnessView extends LocalisableView {
 	private static final long serialVersionUID = 2805839690076647L;
 
 	private String logoRelativeFileNameUrl;
-	public final String getLogoRelativeFileNameUrl() {
+
+	/**
+	 * Returns the logo resource URL relative to the web context.
+	 *
+	 * @return logo resource URL, or {@code null}
+	 */
+	public String getLogoRelativeFileNameUrl() {
 		return logoRelativeFileNameUrl;
 	}
 
+	private String logoDarkRelativeFileNameUrl;
+
+	/**
+	 * Returns the dark mode logo resource URL relative to the web context.
+	 * A dark variant is detected by convention - a customer resource named
+	 * &lt;logoName&gt;-dark.&lt;extension&gt; alongside the configured logo.
+	 *
+	 * @return dark logo resource URL, or {@code null} when no dark variant exists
+	 */
+	public String getLogoDarkRelativeFileNameUrl() {
+		return logoDarkRelativeFileNameUrl;
+	}
+
 	private String cssRelativeFileNameUrl;
+
+	/**
+	 * Returns the CSS resource URL relative to the web context.
+	 *
+	 * @return CSS resource URL, or {@code null}
+	 */
 	public String getCssRelativeFileNameUrl() {
 		return cssRelativeFileNameUrl;
 	}
-	
+
 	private String bizModuleParameter;
+
+	/**
+	 * Returns the selected module parameter.
+	 *
+	 * @return module parameter, or {@code null}
+	 */
 	public String getBizModuleParameter() {
 		return bizModuleParameter;
 	}
+
+	/**
+	 * Sets the module parameter used to initialise the harness context.
+	 *
+	 * @param bizModuleParameter the module name parameter
+	 */
 	public void setBizModuleParameter(String bizModuleParameter) {
 		this.bizModuleParameter = OWASP.sanitise(Sanitisation.text, Util.processStringValue(bizModuleParameter));
 	}
 
 	private String bizDocumentParameter;
+
+	/**
+	 * Returns the selected document parameter.
+	 *
+	 * @return document parameter, or {@code null}
+	 */
 	public String getBizDocumentParameter() {
 		return bizDocumentParameter;
 	}
+
+	/**
+	 * Sets the document parameter used to initialise the harness context.
+	 *
+	 * @param bizDocumentParameter the document name parameter
+	 */
 	public void setBizDocumentParameter(String bizDocumentParameter) {
 		this.bizDocumentParameter = OWASP.sanitise(Sanitisation.text, Util.processStringValue(bizDocumentParameter));
 	}
-	
+
 	private String queryNameParameter;
+
+	/**
+	 * Returns the selected query or model parameter.
+	 *
+	 * @return query or model parameter, or {@code null}
+	 */
 	public String getQueryNameParameter() {
 		return queryNameParameter;
 	}
+
+	/**
+	 * Sets the query/model parameter used to initialise list views.
+	 *
+	 * @param queryNameParameter the query or model name parameter
+	 */
 	public void setQueryNameParameter(String queryNameParameter) {
 		this.queryNameParameter = OWASP.sanitise(Sanitisation.text, Util.processStringValue(queryNameParameter));
 	}
 
 	private String bizIdParameter;
+
+	/**
+	 * Returns the selected business ID parameter.
+	 *
+	 * @return business ID parameter, or {@code null}
+	 */
 	public String getBizIdParameter() {
 		return bizIdParameter;
 	}
+
+	/**
+	 * Sets the business ID parameter used to target an existing record.
+	 *
+	 * @param bizIdParameter the target business ID
+	 */
 	public void setBizIdParameter(String bizIdParameter) {
 		this.bizIdParameter = OWASP.sanitise(Sanitisation.text, Util.processStringValue(bizIdParameter));
 	}
 
 	private WebAction webActionParameter;
+
+	/**
+	 * Returns the selected web action.
+	 *
+	 * @return selected web action, or {@code null}
+	 */
 	public WebAction getWebActionParameter() {
 		return webActionParameter;
 	}
+
+	/**
+	 * Sets the requested web action mode (for example edit or list).
+	 *
+	 * @param webActionParameter the requested web action
+	 */
 	public void setWebActionParameter(WebAction webActionParameter) {
 		this.webActionParameter = webActionParameter;
 	}
 
 	private ViewType viewType;
+
+	/**
+	 * Returns the resolved home view type for initial navigation.
+	 *
+	 * @return resolved home view type, or {@code null}
+	 */
 	public ViewType getViewType() {
 		return viewType;
 	}
 
+	/**
+	 * Returns an HTML comment describing the current Skyve framework version.
+	 *
+	 * @return HTML version comment
+	 */
 	@SuppressWarnings("static-method")
-	public final String getSkyveVersionComment() {
+	public String getSkyveVersionComment() {
 		StringBuilder result = new StringBuilder(64);
 		result.append("<!-- SKYVE FRAMEWORK version is ").append(UtilImpl.SKYVE_VERSION).append(" -->");
 		return result.toString();
 	}
-	
+
 	private String apiScript;
-	public final String getApiScript() {
+
+	/**
+	 * Returns the generated bootstrap API script fragment.
+	 *
+	 * @return API bootstrap script, or {@code null}
+	 */
+	public String getApiScript() {
 		return apiScript;
 	}
-	
+
+	/**
+	 * Returns the computed base URL for the current request context.
+	 *
+	 * @return base URL
+	 */
 	@SuppressWarnings("static-method")
-	public final String getBaseHref() {
-		return Util.getSkyveContextUrl() + '/';
+	public String getBaseHref() {
+		return Util.getBaseUrl();
 	}
 
+	/**
+	 * Returns the configured map provider type.
+	 *
+	 * @return map provider type name
+	 */
 	@SuppressWarnings("static-method")
-	public final String getMapType() {
+	public String getMapType() {
 		return UtilImpl.MAP_TYPE.toString();
 	}
 
+	private String userContactInitials;
+
+	/**
+	 * Returns the escaped initials for the current user contact avatar.
+	 *
+	 * @return user contact initials, or {@code null}
+	 */
+	public String getUserContactInitials() {
+		return userContactInitials;
+	}
+
+	private String userContactImageUrl;
+
+	/**
+	 * Returns the contact avatar image URL for the current user.
+	 *
+	 * @return contact avatar image URL, or {@code null}
+	 */
+	public String getUserContactImageUrl() {
+		return userContactImageUrl;
+	}
+
+	private String userContactName;
+
+	/**
+	 * Returns the escaped display name for the current user contact.
+	 *
+	 * @return user contact display name, or {@code null}
+	 */
+	public String getUserContactName() {
+		return userContactName;
+	}
+
+	private String userName;
+
+	/**
+	 * Returns the escaped user principal name.
+	 *
+	 * @return escaped user principal name, or {@code null}
+	 */
+	public String getUserName() {
+		return userName;
+	}
+
+	/**
+	 * Initialises harness state for the current request and user context.
+	 */
 	@Override
-	public final void initialise() {
+	@SuppressWarnings({"null", "unused", "java:S6541", "java:S3776"}) // OK to check user for null defensively and complexity OK
+	public void initialise() {
 		super.initialise();
 
 		User user = CORE.getUser();
@@ -118,24 +286,38 @@ public abstract class HarnessView extends LocalisableView {
 			return;
 		}
 		
+		userContactImageUrl = user.getContactImageUrl(64, 64);
+		userContactInitials = OWASP.escapeHtml(user.getContactAvatarInitials());
+		userContactName = OWASP.escapeHtml(user.getContactName());
+		userName = OWASP.escapeHtml(user.getName());
+
 		Customer customer = user.getCustomer();
-		
+
 		StringBuilder sb = new StringBuilder(64);
-		sb.append("resources?_n=");
-		sb.append(customer.getUiResources().getLogoRelativeFileName());
-		logoRelativeFileNameUrl = sb.toString();
+		String logoRelativeFileName = customer.getUiResources().getLogoRelativeFileName();
+		logoRelativeFileNameUrl = "resources?_n=" + logoRelativeFileName;
+
+		// Detect an optional dark mode logo variant - <logoName>-dark.<extension> - in the customer resources
+		int logoDotIndex = logoRelativeFileName.lastIndexOf('.');
+		if (logoDotIndex > 0) {
+			String darkLogoRelativeFileName = logoRelativeFileName.substring(0, logoDotIndex) +
+												"-dark" +
+												logoRelativeFileName.substring(logoDotIndex);
+			File darkLogoFile = CORE.getRepository().findResourceFile(darkLogoRelativeFileName, customer.getName(), null);
+			if ((darkLogoFile != null) && darkLogoFile.exists()) {
+				logoDarkRelativeFileNameUrl = "resources?_n=" + darkLogoRelativeFileName;
+			}
+		}
 
 		if (bizModuleParameter == null) {
 			Set<String> moduleNames = user.getAccessibleModuleNames();
-			if (moduleNames.size() == 0) {
+			if (moduleNames.isEmpty()) {
 				throw new SecurityException("any module", customer.getName() + '/' + user.getName());
 			}
 			Module homeModule = null;
 			bizModuleParameter = user.getHomeModuleName();
-			if (bizModuleParameter != null) {
-				if (moduleNames.contains(bizModuleParameter)) {
-					homeModule = customer.getModule(bizModuleParameter);
-				}
+			if ((bizModuleParameter != null) && moduleNames.contains(bizModuleParameter)) {
+				homeModule = customer.getModule(bizModuleParameter);
 			}
 			if (homeModule == null) {
 				homeModule = customer.getHomeModule();
@@ -149,9 +331,9 @@ public abstract class HarnessView extends LocalisableView {
 				homeModule = customer.getModule(bizModuleParameter);
 			}
 			bizDocumentParameter = homeModule.getHomeDocumentName();
-			
+
 			viewType = homeModule.getHomeRef();
-			
+
 			if (ViewType.edit.equals(viewType)) {
 				webActionParameter = WebAction.e;
 
@@ -181,19 +363,17 @@ public abstract class HarnessView extends LocalisableView {
 				if (bizDocumentParameter != null) {
 					d = m.getDocument(customer, bizDocumentParameter);
 				}
-				if (queryNameParameter != null) {
-					if (! queryNameParameter.equals(bizDocumentParameter)) {
-						if (m.getMetaDataQuery(queryNameParameter) == null) {
-							if (d == null) {
-								if (m.getDocument(customer, queryNameParameter) == null) {
-									throw new MetaDataException("Query name " + queryNameParameter + " does not exist for module " + bizModuleParameter);
-								}
-							}
-							else {
-								if (d.getListModel(customer, queryNameParameter, false) == null) {
-									throw new MetaDataException("Model name " + queryNameParameter + " does not exist for module " + bizModuleParameter);
-								}
-							}
+				if ((queryNameParameter != null) &&
+						(! queryNameParameter.equals(bizDocumentParameter)) &&
+						(m.getMetaDataQuery(queryNameParameter) == null)) {
+					if (d == null) {
+						if (m.getDocument(customer, queryNameParameter) == null) {
+							throw new MetaDataException("Query name " + queryNameParameter + " does not exist for module " + bizModuleParameter);
+						}
+					}
+					else {
+						if (d.getListModel(customer, queryNameParameter, false) == null) {
+							throw new MetaDataException("Model name " + queryNameParameter + " does not exist for module " + bizModuleParameter);
 						}
 					}
 				}
@@ -202,7 +382,7 @@ public abstract class HarnessView extends LocalisableView {
 		catch (Exception e) {
 			throw new FacesException("Malformed URL", e);
 		}
-		
+
 		String cssRelativeFileName = customer.getHtmlResources().getCssRelativeFileName();
 		if (cssRelativeFileName != null) {
 			sb.setLength(0);
@@ -214,7 +394,7 @@ public abstract class HarnessView extends LocalisableView {
 			sb.append("skyve/css/basic-min.css?v=").append(UtilImpl.WEB_RESOURCE_FILE_VERSION);
 			cssRelativeFileNameUrl = sb.toString();
 		}
-		
+
 		sb.setLength(0);
 		sb.append("var u=SKYVE.Util;u.setTouchCookie();u.customer='").append(customer.getName()).append("';");
 		sb.append("u.v='").append(UtilImpl.WEB_RESOURCE_FILE_VERSION).append("';");
@@ -244,56 +424,89 @@ public abstract class HarnessView extends LocalisableView {
 
 		apiScript = sb.toString();
 	}
-	
+
+	/**
+	 * Returns the current session user, if present.
+	 *
+	 * @return current session user, or {@code null}
+	 */
 	@SuppressWarnings("static-method")
-	public User getUser() {
+	public @Nullable User getUser() {
 		ExternalContext ec = FacesContext.getCurrentInstance().getExternalContext();
 		return (User) ec.getSessionMap().get(WebContext.USER_SESSION_ATTRIBUTE_NAME);
 	}
-	
+
+	/**
+	 * Asserts the supplied customer/user identity into the current web session.
+	 *
+	 * @param customerName the customer name
+	 * @param userName the user name
+	 */
 	@SuppressWarnings("static-method")
 	public void setUser(String customerName, String userName) {
 		UserImpl user = null;
 		ProvidedRepository repository = ProvidedRepositoryFactory.get();
 		ExternalContext ec = FacesContext.getCurrentInstance().getExternalContext();
+		String userPrincipal = null;
 		if (ec.getUserPrincipal() == null) { // not logged in
-			user = repository.retrieveUser(new StringBuilder(64).append(customerName).append('/').append(userName).toString());
+			userPrincipal = new StringBuilder(64).append(customerName).append('/').append(userName).toString();
 		}
 		else {
-			user = repository.retrieveUser(ec.getUserPrincipal().toString());
+			userPrincipal = ec.getUserPrincipal().toString();
 		}
+		user = repository.retrieveUser(userPrincipal);
+		HttpServletRequest request = (HttpServletRequest) ec.getRequest();
+		HttpSession session = request.getSession(true);
 		if (user != null) {
-			WebUtil.setSessionId(user, (HttpServletRequest) ec.getRequest());
-		}
-		ec.getSessionMap().put(WebContext.USER_SESSION_ATTRIBUTE_NAME, user);
+			WebUtil.setSessionId(user, request);
+			session.setAttribute(WebContext.USER_SESSION_ATTRIBUTE_NAME, user);
+			WebUtil.addSessionAndAuditConcurrentSessionWarning(user, request, session);
 
-		AbstractPersistence persistence = AbstractPersistence.get();
-		persistence.setUser(user);
+			AbstractPersistence persistence = AbstractPersistence.get();
+			persistence.setUser(user);
+		}
 	}
-	
-	public boolean isCanTextSearch() {
-		return getUser().canTextSearch();
-	}
-	
-	public boolean isCanSwitchMode() {
-		return getUser().canSwitchMode();
-	}
-	
+
 	/**
-	 * Sets the UX/UI preference in the session.
-	 * @param uxui	The UX/UI name.
+	 * Returns whether the current user can perform text search operations.
+	 *
+	 * @return {@code true} when text search is available
+	 */
+	public boolean isCanTextSearch() {
+		User u = getUser();
+		return ((u != null) && (u.canTextSearch()));
+	}
+
+	/**
+	 * Returns whether the current user can switch UX/UI mode.
+	 *
+	 * @return {@code true} when mode switching is available
+	 */
+	public boolean isCanSwitchMode() {
+		User u = getUser();
+		return ((u != null) && (u.canSwitchMode()));
+	}
+
+	/**
+	 * Sets the UX/UI preference used when the next request is resolved.
+	 *
+	 * <p>This authorised mode switch changes only the session preference. It does not mutate
+	 * the current request selection; callers reload or navigate to start a newly resolved request.
+	 *
+	 * @param uxui the UX/UI name
 	 */
 	public void setUxUi(String uxui) {
 		if (! isCanSwitchMode()) {
-			throw new SecurityException("switch modes", getUser().getName());
+			User u = getUser();
+			throw new SecurityException("switch modes", (u == null) ? "anonymous" : u.getName());
 		}
-		
+
 		ExternalContext ec = FacesContext.getCurrentInstance().getExternalContext();
 		if (uxui == null) {
-			ec.getSessionMap().remove(AbstractWebContext.UXUI);
+			ec.getSessionMap().remove(AbstractWebContext.UXUI_SESSION_ATTRIBUTE_NAME);
 		}
 		else {
-			ec.getSessionMap().put(AbstractWebContext.UXUI, uxui);
+			ec.getSessionMap().put(AbstractWebContext.UXUI_SESSION_ATTRIBUTE_NAME, uxui);
 		}
 	}
 }

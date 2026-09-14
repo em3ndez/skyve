@@ -11,7 +11,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.skyve.CORE;
 import org.skyve.EXT;
 import org.skyve.domain.Bean;
-import org.skyve.domain.app.admin.ReportDataset.DatasetType;
 import org.skyve.domain.messages.Message;
 import org.skyve.domain.messages.ValidationException;
 import org.skyve.impl.util.UtilImpl;
@@ -25,14 +24,20 @@ import org.skyve.metadata.user.User;
 import org.skyve.util.Binder;
 import org.skyve.web.WebContext;
 
-import modules.admin.JobSchedule.JobScheduleBizlet;
-import modules.admin.ReportDataset.ReportDatasetExtension;
-import modules.admin.ReportParameter.ReportParameterExtension;
-import modules.admin.User.UserBizlet;
+import jakarta.annotation.Nonnull;
+import jakarta.inject.Inject;
+import modules.admin.JobSchedule.JobCronExpression;
+import modules.admin.User.UserService;
 import modules.admin.domain.ReportTemplate;
-import modules.admin.domain.ReportTemplate.ReportType;
 
+/**
+ * Orchestrates report template editing, scheduling options, and dynamic domain values.
+ */
 public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
+	private static final String HOUR_PREFIX = "hour";
+	private static final String DAY_PREFIX = "day";
+	private static final String MONTH_PREFIX = "month";
+	private static final String WEEKDAY_PREFIX = "weekday";
 
 	public static final String FREEMARKER_HTML_TEMPLATE_EXTENSION = "ftlh";
 
@@ -45,13 +50,26 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 	private static final String ANY_CODE = "?";
 	private static final Integer ANY_CODE_SPEC = Integer.valueOf(98);
 
+	@Inject
+	@SuppressWarnings("java:S6813") // allow member injection
+	private transient UserService userService;
+
+	/**
+	 * Returns constant domain values for schedule selectors and module lists.
+	 * @param attributeName the attributeName value
+	 * @return the result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public List<DomainValue> getConstantDomainValues(String attributeName) throws Exception {
 
 		// list of modules
 		if (ReportTemplate.moduleNamePropertyName.equals(attributeName)
 				|| ReportTemplate.generateModuleNamePropertyName.equals(attributeName)) {
-			return CORE.getUser().getCustomer().getModules().stream()
+			return CORE.getUser()
+					.getCustomer()
+					.getModules()
+					.stream()
 					.map(m -> new DomainValue(m.getName(), m.getTitle()))
 					.collect(Collectors.toList());
 		} else if (ReportTemplate.allHoursPropertyName.equals(attributeName) ||
@@ -75,6 +93,13 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 		return super.getConstantDomainValues(attributeName);
 	}
 
+	/**
+	 * Returns dynamic domain values for document selectors scoped to selected modules.
+	 * @param attributeName the attributeName value
+	 * @param bean the bean value
+	 * @return the result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public List<DomainValue> getDynamicDomainValues(String attributeName, ReportTemplateExtension bean) throws Exception {
 		// list documents within modules
@@ -93,15 +118,27 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 		return super.getDynamicDomainValues(attributeName, bean);
 	}
 
+	/**
+	 * Returns role variants used for report visibility restrictions.
+	 * @param attributeName the attributeName value
+	 * @return the result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public List<DomainValue> getVariantDomainValues(String attributeName) throws Exception {
 		if (ReportTemplate.restrictToRolePropertyName.equals(attributeName)) {
-			return UserBizlet.getCustomerRoleValues(CORE.getUser());
+			return userService.getCustomerRoleValues(CORE.getUser());
 		}
 
 		return super.getVariantDomainValues(attributeName);
 	}
 
+	/**
+	 * Initialises default schedule selector state for new report templates.
+	 * @param bean the bean value
+	 * @return the result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public ReportTemplateExtension newInstance(ReportTemplateExtension bean) throws Exception {
 		ReportTemplateExtension template = super.newInstance(bean);
@@ -113,6 +150,15 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 		return template;
 	}
 
+	/**
+	 * Normalises edit-state defaults and restores scheduled recipients when opening existing templates.
+	 * @param actionName the implicit action being executed
+	 * @param bean the report template bean
+	 * @param parentBean the parent bean for the current context
+	 * @param webContext the current web context
+	 * @return the report template bean after pre-execute processing
+	 * @throws Exception if pre-execute processing fails
+	 */
 	@Override
 	public ReportTemplateExtension preExecute(ImplicitActionName actionName, ReportTemplateExtension bean,
 			Bean parentBean, WebContext webContext) throws Exception {
@@ -139,6 +185,13 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 		return super.preExecute(actionName, bean, parentBean, webContext);
 	}
 
+	/**
+	 * Handles report-type and scheduling rerender transitions.
+	 * @param source the source value
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public void preRerender(String source, ReportTemplateExtension bean, WebContext webContext) throws Exception {
 		if (ReportTemplate.reportTypePropertyName.equals(source)) {
@@ -158,12 +211,18 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 		super.preRerender(source, bean, webContext);
 	}
 
+	/**
+	 * Hydrates schedule selection flags from persisted cron expressions.
+	 * @param bean the bean value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void postLoad(ReportTemplateExtension bean) throws Exception {
 		super.postLoad(bean);
 
 		if (StringUtils.isNotBlank(bean.getCronExpression())) {
-			JobScheduleBizlet.JobCronExpression expression = new JobScheduleBizlet.JobCronExpression(bean.getCronExpression());
+			JobCronExpression expression = new JobCronExpression(bean.getCronExpression());
 
 			Set<Integer> hours = expression.getHours();
 			Set<Integer> days = expression.getDaysOfMonth();
@@ -175,11 +234,11 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 			} else {
 				bean.setAllHours(SELECTED_CODE);
 				for (int i = 0, l = 24; i < l; i++) {
-					Binder.set(bean, "hour" + i, hours.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
+					Binder.set(bean, HOUR_PREFIX + i, hours.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
 				}
 			}
 
-			if (days.contains(ALL_CODE_SPEC) | days.contains(ANY_CODE_SPEC)) {
+			if (days.contains(ALL_CODE_SPEC) || days.contains(ANY_CODE_SPEC)) {
 				bean.setAllDays(ALL_CODE);
 			} else if (expression.getLastDayOfMonth()) {
 				if (expression.getNearestWeekday()) {
@@ -190,7 +249,7 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 			} else {
 				bean.setAllDays(SELECTED_CODE);
 				for (int i = 1, l = 32; i < l; i++) {
-					Binder.set(bean, "day" + i, days.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
+					Binder.set(bean, DAY_PREFIX + i, days.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
 				}
 			}
 
@@ -199,7 +258,7 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 			} else {
 				bean.setAllMonths(SELECTED_CODE);
 				for (int i = 1, l = 13; i < l; i++) {
-					Binder.set(bean, "month" + i, months.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
+					Binder.set(bean, MONTH_PREFIX + i, months.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
 				}
 			}
 
@@ -208,35 +267,42 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 			} else {
 				bean.setAllWeekdays(SELECTED_CODE);
 				for (int i = 1, l = 8; i < l; i++) {
-					Binder.set(bean, "weekday" + i, weekdays.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
+					Binder.set(bean, WEEKDAY_PREFIX + i, weekdays.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
 				}
 			}
 		}
 	}
 
+	/**
+	 * Unschedules job execution before deleting scheduled report templates.
+	 * @param bean the bean value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public void preDelete(ReportTemplateExtension bean) throws Exception {
 		super.preDelete(bean);
 		if (UtilImpl.JOB_SCHEDULER && Boolean.TRUE.equals(bean.getScheduled())) {
-			EXT.getJobScheduler().unscheduleReport(bean, CORE.getUser().getCustomer());
+			EXT.getJobScheduler().unscheduleReport(bean.getBizId(), CORE.getCustomer().getName());
 		}
 	}
 
+	/**
+	 * Persists schedule configuration and registers/unregisters report jobs as required.
+	 * @param bean the bean value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	public void preSave(ReportTemplateExtension bean) throws Exception {
 		JobScheduler jobScheduler = EXT.getJobScheduler();
-		
+
 		// update the templateName if not set or needs to be changed
 		if (bean.getTemplateName() == null || bean.originalValues().containsKey(ReportTemplate.namePropertyName)) {
 			bean.setTemplateName(String.format("%s.%s", bean.getName(), FREEMARKER_HTML_TEMPLATE_EXTENSION));
 		}
 
-		if (UtilImpl.JOB_SCHEDULER && (bean.isNotPersisted() || bean.originalValues().containsKey(ReportTemplate.namePropertyName))) {
-			jobScheduler.addReportJob(bean.getName());
-		}
-
 		// update the scheduling if enabled
-		final Customer customer = CORE.getCustomer();
+		final String customerName = CORE.getCustomer().getName();
 		if (Boolean.TRUE.equals(bean.getScheduled())) {
 			if (bean.getRunAs() == null) {
 				throw new ValidationException(ReportTemplate.runAsPropertyName,
@@ -253,7 +319,7 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 				expression.append(ALL_CODE);
 			} else {
 				for (int i = 0, l = 24; i < l; i++) {
-					if (Boolean.TRUE.equals(Binder.get(bean, "hour" + i))) {
+					if (Boolean.TRUE.equals(Binder.get(bean, HOUR_PREFIX + i))) {
 						expression.append(i).append(',');
 					}
 				}
@@ -276,7 +342,7 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 				expression.append(LAST_WEEK_DAY_CODE);
 			} else {
 				for (int i = 1, l = 32; i < l; i++) {
-					if (Boolean.TRUE.equals(Binder.get(bean, "day" + i))) {
+					if (Boolean.TRUE.equals(Binder.get(bean, DAY_PREFIX + i))) {
 						expression.append(i).append(',');
 					}
 				}
@@ -289,7 +355,7 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 				expression.append(ALL_CODE);
 			} else {
 				for (int i = 1, l = 13; i < l; i++) {
-					if (Boolean.TRUE.equals(Binder.get(bean, "month" + i))) {
+					if (Boolean.TRUE.equals(Binder.get(bean, MONTH_PREFIX + i))) {
 						expression.append(i).append(',');
 					}
 				}
@@ -302,7 +368,7 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 				expression.append(ANY_CODE);
 			} else {
 				for (int i = 1, l = 8; i < l; i++) {
-					if (Boolean.TRUE.equals(Binder.get(bean, "weekday" + i))) {
+					if (Boolean.TRUE.equals(Binder.get(bean, WEEKDAY_PREFIX + i))) {
 						expression.append(i).append(',');
 					}
 				}
@@ -313,17 +379,18 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 
 			if (UtilImpl.JOB_SCHEDULER) {
 				// Re-schedule the job
-				jobScheduler.unscheduleReport(bean, customer);
+				jobScheduler.unscheduleReport(bean.getBizId(), customerName);
 
 				// Determine the job schedule user
 				StringBuilder userPrincipal = new StringBuilder(128);
-				userPrincipal.append(customer.getName());
+				userPrincipal.append(customerName);
 				userPrincipal.append('/').append(bean.getRunAs().getUserName());
+				@Nonnull
 				User user = CORE.getRepository().retrieveUser(userPrincipal.toString());
-				jobScheduler.scheduleReport(bean, user);
+				jobScheduler.scheduleReport(bean.toJobSchedule(), user);
 			}
 		} else if (UtilImpl.JOB_SCHEDULER && Boolean.TRUE.equals(bean.originalValues().get(ReportTemplate.scheduledPropertyName))) {
-			jobScheduler.unscheduleReport(bean, customer);
+			jobScheduler.unscheduleReport(bean.getBizId(), customerName);
 		}
 
 		// populate the edit users to email collection
@@ -334,7 +401,14 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 		super.preSave(bean);
 	}
 
+	/**
+	 * Executes validate.
+	 * @param bean the bean value
+	 * @param e the e value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void validate(ReportTemplateExtension bean, ValidationException e) throws Exception {
 		super.validate(bean, e);
 
@@ -345,21 +419,23 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 			}
 
 			if (bean.getUsersToEmail().isEmpty()) {
-				e.getMessages().add(new Message(ReportTemplate.usersToEmailPropertyName,
-						"Please provide at least one user to email the report to"));
+				e.getMessages()
+						.add(new Message(ReportTemplate.usersToEmailPropertyName,
+								"Please provide at least one user to email the report to"));
 			}
 
 			if ((bean.getAllDays() != null && !bean.getAllDays().equals(ALL_CODE))
 					&& (bean.getAllWeekdays() != null && !bean.getAllWeekdays().equals(ALL_CODE))) {
-				e.getMessages().add(new Message(
-						new String[] { ReportTemplate.allDaysPropertyName, ReportTemplate.allWeekdaysPropertyName },
-						"Choose week days or days of the month, but not both"));
+				e.getMessages()
+						.add(new Message(
+								new String[] { ReportTemplate.allDaysPropertyName, ReportTemplate.allWeekdaysPropertyName },
+								"Choose week days or days of the month, but not both"));
 			}
 
 			if (SELECTED_CODE.equals(bean.getAllHours())) {
 				boolean found = false;
 				for (int i = 0, l = 24; i < l; i++) {
-					if (Boolean.TRUE.equals(Binder.get(bean, "hour" + i))) {
+					if (Boolean.TRUE.equals(Binder.get(bean, HOUR_PREFIX + i))) {
 						found = true;
 						break;
 					}
@@ -371,7 +447,7 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 			if (SELECTED_CODE.equals(bean.getAllDays())) {
 				boolean found = false;
 				for (int i = 1, l = 32; i < l; i++) {
-					if (Boolean.TRUE.equals(Binder.get(bean, "day" + i))) {
+					if (Boolean.TRUE.equals(Binder.get(bean, DAY_PREFIX + i))) {
 						found = true;
 						break;
 					}
@@ -383,7 +459,7 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 			if (SELECTED_CODE.equals(bean.getAllMonths())) {
 				boolean found = false;
 				for (int i = 1, l = 13; i < l; i++) {
-					if (Boolean.TRUE.equals(Binder.get(bean, "month" + i))) {
+					if (Boolean.TRUE.equals(Binder.get(bean, MONTH_PREFIX + i))) {
 						found = true;
 						break;
 					}
@@ -395,7 +471,7 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 			if (SELECTED_CODE.equals(bean.getAllWeekdays())) {
 				boolean found = false;
 				for (int i = 1, l = 8; i < l; i++) {
-					if (Boolean.TRUE.equals(Binder.get(bean, "weekday" + i))) {
+					if (Boolean.TRUE.equals(Binder.get(bean, WEEKDAY_PREFIX + i))) {
 						found = true;
 						break;
 					}
@@ -407,7 +483,7 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 			}
 		}
 
-		validateReportParameters(bean, e);
+		bean.validateReportParameters(e);
 	}
 
 	/**
@@ -425,50 +501,5 @@ public class ReportTemplateBizlet extends Bizlet<ReportTemplateExtension> {
 		results.sort(Comparator.comparing(DomainValue::getLocalisedDescription));
 
 		return results;
-	}
-
-	/**
-	 * Validates that all ReportParameters for this template are used by at least one ReportDataset query.
-	 * 
-	 * @param bean The ReportTemplate to validate
-	 * @param e The ValidationException any errors will be added to
-	 */
-	private static void validateReportParameters(ReportTemplateExtension bean, ValidationException e) {
-		// skip validation for jasper reports
-		if (bean.getReportType() == ReportType.jasper) {
-			return;
-		}
-
-		for (ReportParameterExtension param : bean.getParameters()) {
-			boolean inUse = false;
-
-			for (ReportDatasetExtension dataset : bean.getDatasets()) {
-				// skip constants as they can't accept parameters
-				if (dataset.getDatasetType() == DatasetType.constant) {
-					continue;
-				}
-
-				// class datasets always inject all parameters
-				if (dataset.getDatasetType() == DatasetType.classValue) {
-					inUse = true;
-					break;
-				}
-
-				// check bizQL or SQL datasets for all parameters
-				if (dataset.getDatasetType() == DatasetType.bizQL || dataset.getDatasetType() == DatasetType.SQL) {
-					if (dataset.containsParameter(param)) {
-						inUse = true;
-						break;
-					}
-				}
-			}
-
-			if (inUse == false) {
-				e.getMessages()
-						.add(new Message(String.format(
-								"Parameter %s is not in use by any dataset. Please include it in a dataset or remove it.",
-								param.getName())));
-			}
-		}
 	}
 }

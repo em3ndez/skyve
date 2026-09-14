@@ -37,6 +37,7 @@ import org.skyve.bizport.SheetKey;
 import org.skyve.domain.Bean;
 import org.skyve.domain.ChildBean;
 import org.skyve.domain.PersistentBean;
+import org.skyve.domain.messages.DomainException;
 import org.skyve.domain.messages.UploadException;
 import org.skyve.domain.messages.UploadException.Problem;
 import org.skyve.domain.types.DateOnly;
@@ -70,6 +71,10 @@ import jakarta.annotation.Nonnull;
  */
 public final class POISheet implements BizPortSheet {
 	private static final String INVALID_CELL_TYPE_MESSAGE_KEY = "bizport.invalidCellType";
+
+	private static final String INVALID_VALUE_TITLE = "Not a valid value";
+	private static final String UNKNOWN_ATTRIBUTE_TYPE = "unkown";
+	private static final String WORKBOOK_DATA_NOT_MATERIALIZED = "This workbook data has not been materialized";
 
 	// Rows 0, 1 and 2 hold sheet metadata and the title Row.
 	private static final int START_ROW = 3;
@@ -140,6 +145,7 @@ public final class POISheet implements BizPortSheet {
 	 *
 	 * @param sheet	The excel worksheet.
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	POISheet(Customer customer, POIWorkbook parent, Sheet sheet, UploadException problems) {
 		title = sheet.getSheetName();
 
@@ -149,7 +155,13 @@ public final class POISheet implements BizPortSheet {
 		Cell documentCell = nameRow.getCell(DOCUMENT_COLUMN, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
 		Cell collectionCell = nameRow.getCell(COLLECTION_COLUMN, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
 		String moduleName = (moduleCell == null) ? null : moduleCell.getStringCellValue();
+		if (moduleName == null) {
+			throw new DomainException("Sheet " + title + " does not have a module name specified in cell A1");
+		}
 		String documentName = (documentCell == null) ? null : documentCell.getStringCellValue();
+		if (documentName == null) {
+			throw new DomainException("Sheet " + title + " does not have a document name specified in cell B1");
+		}
 		String collectionBinding = (collectionCell == null) ? null : collectionCell.getStringCellValue();
 		Module module = customer.getModule(moduleName);
 		Document document = module.getDocument(customer, documentName);
@@ -192,8 +204,7 @@ public final class POISheet implements BizPortSheet {
 				else { // check if we are dealing with a reference
 					TargetMetaData target = Binder.getMetaDataForBinding(customer, module, document, binding);
 					Attribute attribute = target.getAttribute();
-					if (attribute instanceof Reference) {
-						Reference reference = (Reference) attribute;
+					if (attribute instanceof Reference reference) {
 						Document owningDocument = target.getDocument();
 						Module owningModule = customer.getModule(owningDocument.getOwningModuleName());
 						Document referenceDocument = owningModule.getDocument(customer, reference.getDocumentName());
@@ -471,7 +482,7 @@ public final class POISheet implements BizPortSheet {
 					validation.setSuppressDropDownArrow(false); // NB - Does the opposite for some reason.
 					validation.setShowErrorBox(true);
 					validation.setErrorStyle(DataValidation.ErrorStyle.STOP);
-					validation.createErrorBox("Not a valid value", "Please enter a valid date");
+					validation.createErrorBox(INVALID_VALUE_TITLE, "Please enter a valid date");
 					validation.setEmptyCellAllowed(true);
 					xssfSheet.addValidationData(validation);
 					break;
@@ -484,7 +495,7 @@ public final class POISheet implements BizPortSheet {
 					validation.setSuppressDropDownArrow(false); // NB - Does the opposite for some reason.
 					validation.setShowErrorBox(true);
 					validation.setErrorStyle(DataValidation.ErrorStyle.STOP);
-					validation.createErrorBox("Not a valid value", "Please enter a valid time");
+					validation.createErrorBox(INVALID_VALUE_TITLE, "Please enter a valid time");
 					validation.setEmptyCellAllowed(true);
 					xssfSheet.addValidationData(validation);
 					break;
@@ -498,7 +509,7 @@ public final class POISheet implements BizPortSheet {
 					validation.setSuppressDropDownArrow(false); // NB - Does the opposite for some reason.
 					validation.setShowErrorBox(true);
 					validation.setErrorStyle(DataValidation.ErrorStyle.STOP);
-					validation.createErrorBox("Not a valid value", "Please enter a valid whole number");
+					validation.createErrorBox(INVALID_VALUE_TITLE, "Please enter a valid whole number");
 					validation.setEmptyCellAllowed(true);
 					xssfSheet.addValidationData(validation);
 					break;
@@ -513,7 +524,7 @@ public final class POISheet implements BizPortSheet {
 					validation.setSuppressDropDownArrow(false); // NB - Does the opposite for some reason.
 					validation.setShowErrorBox(true);
 					validation.setErrorStyle(DataValidation.ErrorStyle.STOP);
-					validation.createErrorBox("Not a valid value", "Please enter a valid decimal number");
+					validation.createErrorBox(INVALID_VALUE_TITLE, "Please enter a valid decimal number");
 					validation.setEmptyCellAllowed(true);
 					xssfSheet.addValidationData(validation);
 			}
@@ -535,7 +546,7 @@ public final class POISheet implements BizPortSheet {
 					validation.setSuppressDropDownArrow(true);
 					validation.setShowErrorBox(true);
 					validation.setErrorStyle(DataValidation.ErrorStyle.STOP);
-					validation.createErrorBox("Not a valid value", "Please enter a valid date");
+					validation.createErrorBox(INVALID_VALUE_TITLE, "Please enter a valid date");
 					validation.setEmptyCellAllowed(true);
 					hssfSheet.addValidationData(validation);
 					break;
@@ -548,7 +559,7 @@ public final class POISheet implements BizPortSheet {
 					validation.setSuppressDropDownArrow(true);
 					validation.setShowErrorBox(true);
 					validation.setErrorStyle(DataValidation.ErrorStyle.STOP);
-					validation.createErrorBox("Not a valid value", "Please enter a valid time");
+					validation.createErrorBox(INVALID_VALUE_TITLE, "Please enter a valid time");
 					validation.setEmptyCellAllowed(true);
 					hssfSheet.addValidationData(validation);
 					break;
@@ -562,7 +573,7 @@ public final class POISheet implements BizPortSheet {
 					validation.setSuppressDropDownArrow(true);
 					validation.setShowErrorBox(true);
 					validation.setErrorStyle(DataValidation.ErrorStyle.STOP);
-					validation.createErrorBox("Not a valid value", "Please enter a valid whole number.");
+					validation.createErrorBox(INVALID_VALUE_TITLE, "Please enter a valid whole number.");
 					validation.setEmptyCellAllowed(true);
 					hssfSheet.addValidationData(validation);
 					break;
@@ -577,7 +588,7 @@ public final class POISheet implements BizPortSheet {
 					validation.setSuppressDropDownArrow(true);
 					validation.setShowErrorBox(true);
 					validation.setErrorStyle(DataValidation.ErrorStyle.STOP);
-					validation.createErrorBox("Not a valid value", "Please enter a valid decimal number.");
+					validation.createErrorBox(INVALID_VALUE_TITLE, "Please enter a valid decimal number.");
 					validation.setEmptyCellAllowed(true);
 					hssfSheet.addValidationData(validation);
 					break;
@@ -614,7 +625,7 @@ public final class POISheet implements BizPortSheet {
 	@Override
 	public boolean moveToRow(Object... rowKey) {
 		if (sheet == null) {
-			throw new IllegalStateException("This workbook data has not been materialized");
+			throw new IllegalStateException(WORKBOOK_DATA_NOT_MATERIALIZED);
 		}
 
 		Integer index = indices.get(buildRowKey(rowKey));
@@ -628,7 +639,7 @@ public final class POISheet implements BizPortSheet {
 	@Override
 	public void addRow(Object... rowKey) {
         if (sheet == null) {
-            throw new IllegalStateException("This workbook data has not been materialized");
+            throw new IllegalStateException(WORKBOOK_DATA_NOT_MATERIALIZED);
         }
 
         // A row may already exist if it has been created to make static domain values
@@ -709,14 +720,14 @@ public final class POISheet implements BizPortSheet {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
+	@SuppressWarnings({"unchecked", "java:S3776"}) // Complexity OK
 	public <T> T getValue(String columnBinding,
 							AttributeType attributeType,
 							UploadException problems) {
 		T result = null;
 
 		if (sheet == null) {
-			throw new IllegalStateException("This workbook data has not been materialized");
+			throw new IllegalStateException(WORKBOOK_DATA_NOT_MATERIALIZED);
 		}
 		BizPortColumn column = getColumn(columnBinding);
 		if (column == null) {
@@ -736,7 +747,7 @@ public final class POISheet implements BizPortSheet {
 				else {
 					addErrorAtCurrentRow(problems,
 											column,
-											Util.i18n(INVALID_CELL_TYPE_MESSAGE_KEY, (attributeType == null) ? "unkown" : attributeType.toString(), "String"));
+											Util.nullSafeI18n(INVALID_CELL_TYPE_MESSAGE_KEY, (attributeType == null) ? UNKNOWN_ATTRIBUTE_TYPE : attributeType.toString(), "String"));
 				}
 				break;
 			case BOOLEAN:
@@ -746,7 +757,7 @@ public final class POISheet implements BizPortSheet {
 				else {
 					addErrorAtCurrentRow(problems,
 											column,
-											Util.i18n(INVALID_CELL_TYPE_MESSAGE_KEY, (attributeType == null) ? "unkown" : attributeType.toString(), "Boolean"));
+											Util.nullSafeI18n(INVALID_CELL_TYPE_MESSAGE_KEY, (attributeType == null) ? UNKNOWN_ATTRIBUTE_TYPE : attributeType.toString(), "Boolean"));
 				}
 				break;
 			case NUMERIC:
@@ -768,7 +779,7 @@ public final class POISheet implements BizPortSheet {
 						else {
 							addErrorAtCurrentRow(problems,
 													column,
-													Util.i18n(INVALID_CELL_TYPE_MESSAGE_KEY, (attributeType == null) ? "unkown" : attributeType.toString(), "Date"));
+													Util.nullSafeI18n(INVALID_CELL_TYPE_MESSAGE_KEY, (attributeType == null) ? UNKNOWN_ATTRIBUTE_TYPE : attributeType.toString(), "Date"));
 						}
 					}
 				}
@@ -794,7 +805,7 @@ public final class POISheet implements BizPortSheet {
 					else {
 						addErrorAtCurrentRow(problems,
 												column,
-												Util.i18n(INVALID_CELL_TYPE_MESSAGE_KEY, (attributeType == null) ? "unkown" : attributeType.toString(), "Numeric"));
+												Util.nullSafeI18n(INVALID_CELL_TYPE_MESSAGE_KEY, (attributeType == null) ? UNKNOWN_ATTRIBUTE_TYPE : attributeType.toString(), "Numeric"));
 					}
 				}
 				break;
@@ -819,9 +830,10 @@ public final class POISheet implements BizPortSheet {
 	}
 	
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void setValue(String columnBinding, Object value) {
 		if (sheet == null) {
-			throw new IllegalStateException("This workbook data has not been materialized");
+			throw new IllegalStateException(WORKBOOK_DATA_NOT_MATERIALIZED);
 		}
 		BizPortColumn column = getColumn(columnBinding);
 		if (column == null) {
@@ -836,11 +848,11 @@ public final class POISheet implements BizPortSheet {
 			cell = currentRow.createCell(column.getIndex());
 		}
 
-		if (value instanceof String) {
-			cell.setCellValue((String) value);
+		if (value instanceof String string) {
+			cell.setCellValue(string);
 		}
-		else if (value instanceof Enumeration) {
-			cell.setCellValue(((Enumeration) value).toCode());
+		else if (value instanceof Enumeration enumeration) {
+			cell.setCellValue(enumeration.toCode());
 		}
 		else if (value instanceof DateOnly) {
 			cell.setCellValue((Date) value);
@@ -850,22 +862,22 @@ public final class POISheet implements BizPortSheet {
 			cell.setCellValue((Date) value);
 			cell.setCellStyle(parent.dateTimeStyle);
 		}
-		else if (value instanceof TimeOnly) {
-			cell.setCellValue(DateUtil.convertTime(((TimeOnly) value).toString()));
+		else if (value instanceof TimeOnly timeOnly) {
+			cell.setCellValue(DateUtil.convertTime(timeOnly.toString()));
 			cell.setCellStyle(parent.timeStyle);
 		}
 		else if (value instanceof Timestamp) {
 			cell.setCellValue((Date) value);
 			cell.setCellStyle(parent.timestampStyle);
 		}
-		else if (value instanceof Number) {
-			cell.setCellValue(((Number) value).doubleValue());
+		else if (value instanceof Number number) {
+			cell.setCellValue(number.doubleValue());
 		}
-		else if (value instanceof Boolean) {
-			cell.setCellValue(((Boolean) value).booleanValue());
+		else if (value instanceof Boolean bool) {
+			cell.setCellValue(bool.booleanValue());
 		}
-		else if (value instanceof Geometry) {
-			cell.setCellValue(new WKTWriter().write((Geometry) value));
+		else if (value instanceof Geometry geometry) {
+			cell.setCellValue(new WKTWriter().write(geometry));
 		}
 
 		// if this column is a foreign key or parent key, setup the description for it

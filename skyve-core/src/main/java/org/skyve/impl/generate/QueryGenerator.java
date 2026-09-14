@@ -6,8 +6,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.impl.metadata.repository.LocalDesignRepository;
+import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.impl.metadata.repository.module.BizQLMetaData;
 import org.skyve.impl.metadata.repository.module.MetaDataQueryColumnMetaData;
 import org.skyve.impl.metadata.repository.module.MetaDataQueryContentColumnMetaData;
@@ -16,7 +16,6 @@ import org.skyve.impl.metadata.repository.module.MetaDataQueryProjectedColumnMet
 import org.skyve.impl.metadata.repository.module.ModuleMetaData;
 import org.skyve.impl.metadata.repository.module.QueryMetaData;
 import org.skyve.impl.metadata.repository.module.SQLMetaData;
-import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.util.XMLMetaData;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.document.Document;
@@ -28,8 +27,18 @@ import org.skyve.metadata.module.query.MetaDataQueryDefinition;
 import org.skyve.metadata.module.query.QueryDefinition;
 import org.skyve.metadata.module.query.SQLDefinition;
 import org.skyve.metadata.repository.ProvidedRepository;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
+/**
+ * Generates query-related artefacts from module metadata.
+ *
+ * <p>Builds query helper classes and constants used by generated domain code.
+ */
 public class QueryGenerator {
+
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(QueryGenerator.class);
+
 	private QueryGenerator() {
 		// do nothing
 	}
@@ -48,14 +57,14 @@ public class QueryGenerator {
 		return result;
 	}
 
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public static String generateQueryXML(Customer customer, Module module, boolean includeAssociationBizKeys) {
 		ModuleMetaData newModule = new ModuleMetaData();
 
 		List<QueryMetaData> metaDataQueries = newModule.getQueries();
 		List<QueryDefinition> queries = generate(customer, module, includeAssociationBizKeys);
 		for (QueryDefinition query : queries) {
-			if (query instanceof MetaDataQueryDefinition) {
-				MetaDataQueryDefinition documentQuery = (MetaDataQueryDefinition) query;
+			if (query instanceof MetaDataQueryDefinition documentQuery) {
 				MetaDataQueryMetaData documentQueryMetaData = new MetaDataQueryMetaData();
 				documentQueryMetaData.setName(documentQuery.getName());
 				documentQueryMetaData.setDescription(documentQuery.getDescription());
@@ -65,8 +74,7 @@ public class QueryGenerator {
 				List<MetaDataQueryColumnMetaData> metaDataColumns = documentQueryMetaData.getColumns();
 				for (MetaDataQueryColumn queryColumn : documentQuery.getColumns()) {
 					MetaDataQueryColumnMetaData metaDataColumn = null;
-					if (queryColumn instanceof MetaDataQueryContentColumn) {
-						MetaDataQueryContentColumn contentQueryColumn = (MetaDataQueryContentColumn) queryColumn;
+					if (queryColumn instanceof MetaDataQueryContentColumn contentQueryColumn) {
 						MetaDataQueryContentColumnMetaData metaDataContentColumn = new MetaDataQueryContentColumnMetaData();
 						metaDataColumn = metaDataContentColumn;
 						metaDataContentColumn.setDisplay(contentQueryColumn.getDisplay());
@@ -92,8 +100,7 @@ public class QueryGenerator {
 				}
 				metaDataQueries.add(documentQueryMetaData);
 			}
-			else if (query instanceof SQLDefinition) {
-				SQLDefinition sql = (SQLDefinition) query;
+			else if (query instanceof SQLDefinition sql) {
 				SQLMetaData sqlMetaData = new SQLMetaData();
 				sqlMetaData.setName(sql.getName());
 				sqlMetaData.setDescription(sql.getDescription());
@@ -105,8 +112,7 @@ public class QueryGenerator {
 				}
 				metaDataQueries.add(sqlMetaData);
 			}
-			else if (query instanceof BizQLDefinition) {
-				BizQLDefinition bizQL = (BizQLDefinition) query;
+			else if (query instanceof BizQLDefinition bizQL) {
 				BizQLMetaData bizQLMetaData = new BizQLMetaData();
 				bizQLMetaData.setName(bizQL.getName());
 				bizQLMetaData.setDescription(bizQL.getDescription());
@@ -146,7 +152,7 @@ public class QueryGenerator {
 		Customer customer = repository.getCustomer(customerName);
 		Module module = repository.getModule(customer, moduleName);
 		File file = new File("./generatedQueries.xml");
-		UtilImpl.LOGGER.info("Output is written to " + file.getCanonicalPath());
+		LOGGER.info("Output is written to {}", file.getCanonicalPath());
 		try (PrintWriter out = new PrintWriter(file)) {
 			out.println(generateQueryXML(customer, module, includeAssociationBizKeys));
 			out.flush();

@@ -24,26 +24,41 @@ import org.skyve.util.Binder;
 import org.skyve.util.OWASP;
 import org.skyve.util.Util;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
-import modules.admin.ModulesUtil;
 import modules.admin.User.UserExtension;
+import modules.admin.User.UserService;
 import modules.admin.domain.Audit;
 import modules.admin.domain.Audit.Operation;
 import modules.admin.domain.Generic;
 import modules.admin.domain.Job;
 import modules.admin.domain.UserDashboard;
 
+/**
+ * Builds personalised dashboard tiles using audit activity and module access rules.
+ */
 public class UserDashboardExtension extends UserDashboard {
+	@Inject
+	@SuppressWarnings("java:S6813") // allow member injection
+	private transient UserService userService;
 
 	private static final long serialVersionUID = -6841455574804123970L;
 
 	private static final String DEFAULT_ICON_CLASS = "fa-regular fa-file";
 	private static final int TILE_COUNT_LIMIT = 6;
-	
+	private static final long TWO_WEEKS_IN_MILLIS = 1_209_600_000L;
+
 	private final Set<Tile> tiles = new HashSet<>();
 
-	// used for 14 day dashboard calculations
-	public static final Long TWO_WEEKS_AGO = Long.valueOf(System.currentTimeMillis() - 1209600000L);
+	/**
+	 * Returns the lower-bound timestamp used for 14 day dashboard calculations.
+	 *
+	 * @return Current time minus fourteen days, in milliseconds.
+	 */
+	public static Long twoWeeksAgo() {
+		return Long.valueOf(System.currentTimeMillis() - TWO_WEEKS_IN_MILLIS);
+	}
 
 	/**
 	 * Returns true if the current logged in user has access to the Jobs document.
@@ -59,8 +74,14 @@ public class UserDashboardExtension extends UserDashboard {
 	}
 
 	@Inject
+	@SuppressWarnings("java:S6813") // allow member injection
 	private transient Persistence persistence;
 
+	/**
+	 * Rebuilds dashboard favourites collection from generated tile markup.
+	 *
+	 * @return A regenerated favourites collection.
+	 */
 	@Override
 	public List<Generic> getFavourites() {
 		super.getFavourites().clear();
@@ -74,8 +95,9 @@ public class UserDashboardExtension extends UserDashboard {
 	 * 
 	 * @return The HTML markup for the favourites
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void createFavourites() {
-		UserExtension currentUser = ModulesUtil.currentAdminUser();
+		UserExtension currentUser = userService.currentAdminUser();
 
 		// temporarily elevate user permissions to view Audit records
 		persistence.withDocumentPermissionScopes(DocumentPermissionScope.customer, p -> {
@@ -98,12 +120,15 @@ public class UserDashboardExtension extends UserDashboard {
 				Customer customer = p.getUser().getCustomer();
 				for (Module module : customer.getModules()) {
 					// check if user has access to the home document
-					Document document = module.getDocument(customer, module.getHomeDocumentName());
+					String homeDocumentName = module.getHomeDocumentName();
+					if (homeDocumentName == null) {
+						continue;
+					}
+					Document document = module.getDocument(customer, homeDocumentName);
 					if (ViewType.list.equals(module.getHomeRef())) {
 						if (CORE.getUser().canCreateDocument(document)) {
 							String reason = "Suggested for creation";
-							addTile(createTile(Operation.insert, module.getName(), module.getHomeDocumentName(), null,
-									reason));
+							addTile(createTile(Operation.insert, module.getName(), homeDocumentName, null, reason));
 						}
 					} else {
 						// exclude user dashboard - we are already here
@@ -126,14 +151,15 @@ public class UserDashboardExtension extends UserDashboard {
 	}
 
 	/**
-	 * Records most popularly updated by the filter user
-	 * 
-	 * @return
+	 * Returns most frequently updated records for the given user in the last two weeks.
+	 *
+	 * @param filterUser Optional user filter.
+	 * @return Projected audit rows ordered by descending count.
 	 */
 	private List<Bean> popularUpdates(UserExtension filterUser) {
 
 		DocumentQuery q = persistence.newDocumentQuery(Audit.MODULE_NAME, Audit.DOCUMENT_NAME);
-		q.getFilter().addGreaterThan(Audit.millisPropertyName, TWO_WEEKS_AGO);
+		q.getFilter().addGreaterThan(Audit.millisPropertyName, twoWeeksAgo());
 		q.getFilter().addNotEquals(Audit.operationPropertyName, Operation.delete);
 		if (filterUser != null) {
 			q.getFilter().addEquals(Audit.userNamePropertyName, filterUser.getUserName());
@@ -154,14 +180,14 @@ public class UserDashboardExtension extends UserDashboard {
 	}
 
 	/**
-	 * Documents most recently created by the filter user
-	 * 
-	 * @param filterUser
-	 * @return
+	 * Returns most recently inserted documents for the given user.
+	 *
+	 * @param filterUser Optional user filter.
+	 * @return Projected insert audit rows ordered by recency.
 	 */
 	private List<Bean> recentInsertDocuments(UserExtension filterUser) {
 		DocumentQuery q = persistence.newDocumentQuery(Audit.MODULE_NAME, Audit.DOCUMENT_NAME);
-		q.getFilter().addGreaterThan(Audit.millisPropertyName, TWO_WEEKS_AGO);
+		q.getFilter().addGreaterThan(Audit.millisPropertyName, twoWeeksAgo());
 		q.getFilter().addEquals(Audit.operationPropertyName, Operation.insert);
 		q.getFilter().addNotEquals(Audit.auditModuleNamePropertyName, Audit.MODULE_NAME);
 		if (filterUser != null) {
@@ -177,13 +203,14 @@ public class UserDashboardExtension extends UserDashboard {
 	}
 
 	/**
-	 * Construct a list of tile shortcuts to perform the operation on the audited beans
-	 * 
-	 * @param audits
-	 * @param operation
-	 * @param top
-	 * @param reason
+	 * Creates tiles from grouped audit projections, preferring highest-frequency rows.
+	 *
+	 * @param audits Projected audit rows.
+	 * @param operation Operation represented by the tile.
+	 * @param top Maximum number of tiles to produce.
+	 * @param reason Reason text shown on the tile.
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void createTilesCommon(List<Bean> audits, Operation operation, int top, String reason) {
 
 		try {
@@ -191,18 +218,24 @@ public class UserDashboardExtension extends UserDashboard {
 			for (Bean audit : audits) {
 				String moduleName = (String) Binder.get(audit, Audit.auditModuleNamePropertyName);
 				String documentName = (String) Binder.get(audit, Audit.auditDocumentNamePropertyName);
-				Customer customer = CORE.getCustomer();
-				Module module = customer.getModule(moduleName);
-				Document document = module.getDocument(customer, documentName);
+				if ((moduleName == null) || (documentName == null)) {
+					LOGGER.debug("{} tile skipped for an audit without a module or document", reason);
+				} else {
+					Customer customer = CORE.getCustomer();
+					Module module = customer.getModule(moduleName);
+					Document document = module.getDocument(customer, documentName);
 
-				if (CORE.getUser().canAccessDocument(document)) {
-					String id = (String) Binder.get(audit, Audit.auditBizIdPropertyName);
-					if (id != null) {
-						Bean exists = persistence.retrieve(moduleName, documentName, id);
-						if (exists != null) {
-							boolean added = addTile(createTile(Operation.update, moduleName, documentName, exists, reason));
-							if (added) {
-								count++;
+					if (! document.isPersistable()) {
+						LOGGER.debug("{} tile skipped for non-persistable document: {}.{}", reason, moduleName, documentName);
+					} else if (CORE.getUser().canAccessDocument(document)) {
+						String id = (String) Binder.get(audit, Audit.auditBizIdPropertyName);
+						if (id != null) {
+							Bean exists = persistence.retrieve(moduleName, documentName, id);
+							if (exists != null) {
+								boolean added = addTile(createTile(Operation.update, moduleName, documentName, exists, reason));
+								if (added) {
+									count++;
+								}
 							}
 						}
 					}
@@ -211,18 +244,20 @@ public class UserDashboardExtension extends UserDashboard {
 					break;
 				}
 			}
-		} catch (@SuppressWarnings("unused") Exception e) {
-			// TODO: handle exception
-			Util.LOGGER.warning("Failed to create " + reason + " tile.");
+		} catch (Exception e) {
+			LOGGER.warn("Failed to create {} tile.", reason, e);
 		}
 	}
 
 	/**
-	 * When two actions happen at a similar timestamp, the latest will be the most senior
-	 * 
-	 * @param audits
-	 * @param operation
+	 * Creates tiles from recent audit projections while avoiding duplicate document types.
+	 *
+	 * @param audits Projected audit rows sorted by recency.
+	 * @param operation Operation represented by the tile.
+	 * @param top Maximum number of tiles to produce.
+	 * @param reason Reason text shown on the tile.
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void createTilesRecent(List<Bean> audits, Operation operation, int top, String reason) {
 
 		int count = 0;
@@ -232,12 +267,15 @@ public class UserDashboardExtension extends UserDashboard {
 			Timestamp timestamp = (Timestamp) Binder.get(audit, Audit.timestampPropertyName);
 			String moduleName = (String) Binder.get(audit, Audit.auditModuleNamePropertyName);
 			String documentName = (String) Binder.get(audit, Audit.auditDocumentNamePropertyName);
-			if (checkModuleDocumentCanBeRead(moduleName, documentName)) {
+			if ((moduleName == null) || (documentName == null)) {
+				LOGGER.debug("{} tile skipped for an audit without a module or document", reason);
+			} else if (checkModuleDocumentCanBeRead(moduleName, documentName)) {
 				if (Operation.update.equals(operation)) {
 					String id = (String) Binder.get(audit, Audit.auditBizIdPropertyName);
-					Bean exists = persistence.retrieve(moduleName, documentName, id);
-					if (exists != null) {
-						if ((lastTime == null || lastTime.before(timestamp))
+					if (id != null) {
+						Bean exists = persistence.retrieve(moduleName, documentName, id);
+						if ((exists != null)
+								&& (lastTime == null || lastTime.before(timestamp))
 								&& !documents.contains(documentName)) {
 							boolean added = addTile(createTile(operation, moduleName, documentName, exists, reason));
 							lastTime = timestamp;
@@ -246,14 +284,12 @@ public class UserDashboardExtension extends UserDashboard {
 							}
 						}
 					}
-				} else {
-					if ((lastTime == null || lastTime.before(timestamp))
+				} else if ((lastTime == null || lastTime.before(timestamp))
 							&& !documents.contains(documentName)) {
-						boolean added = addTile(createTile(operation, moduleName, documentName, null, reason));
-						lastTime = timestamp;
-						if (added) {
-							count++;
-						}
+					boolean added = addTile(createTile(operation, moduleName, documentName, null, reason));
+					lastTime = timestamp;
+					if (added) {
+						count++;
 					}
 				}
 				if (count == top) {
@@ -283,28 +319,34 @@ public class UserDashboardExtension extends UserDashboard {
 	}
 
 	/**
-	 * create a clickable tile markup for the action
-	 * 
-	 * @param moduleName
-	 * @param documentName
-	 * @param reason
-	 * @param action
-	 * @return
+	 * Creates a tile descriptor for a requested document operation.
+	 *
+	 * @param operation The requested operation.
+	 * @param moduleName The target module name.
+	 * @param documentName The target document name.
+	 * @param bean Optional bean instance for edit/view operations.
+	 * @param reason Reason text shown on the tile.
+	 * @return A tile descriptor, or {@code null} when access checks fail.
 	 */
-	private static Tile createTile(Operation operation, String moduleName, String documentName, Bean bean, String reason) {
-
-		if (!checkModuleDocumentCanBeRead(moduleName, documentName)) {
+	@SuppressWarnings({ "java:S3776", "java:S6541" }) // complexity OK
+	private static @Nullable Tile createTile(@Nonnull Operation operation,
+												@Nonnull String moduleName,
+												@Nullable String documentName,
+												@Nullable Bean bean,
+												@Nullable String reason) {
+		if ((documentName == null) || (!checkModuleDocumentCanBeRead(moduleName, documentName))) {
 			return null;
 		}
 
 		if (bean != null
-				&& !CORE.getUser().canReadBean(bean.getBizId(), bean.getBizModule(), bean.getBizDocument(), bean.getBizCustomer(),
-						bean.getBizDataGroupId(), bean.getBizUserId())) {
+				&& !CORE.getUser()
+						.canReadBean(bean.getBizId(), bean.getBizModule(), bean.getBizDocument(), bean.getBizCustomer(),
+								bean.getBizDataGroupId(), bean.getBizUserId())) {
 			return null;
 		}
 
 		StringBuilder link = new StringBuilder();
-		link.append(Util.getHomeUrl());
+		link.append(Util.getBaseUrl());
 		link.append("?a=e&m=").append(moduleName).append("&d=").append(documentName);
 		if (bean != null) {
 			link.append("&i=").append(bean.getBizId());
@@ -391,7 +433,7 @@ public class UserDashboardExtension extends UserDashboard {
 								+ "&_w=24&_h=24";
 						icon = String.format("<span class='icon'>"
 								+ "  <img src='%1$s'/>"
-								+ "</span>", imgSrc);
+								+ "</span>", OWASP.escapeHtml(imgSrc));
 					}
 					break;
 				}
@@ -417,13 +459,11 @@ public class UserDashboardExtension extends UserDashboard {
 	}
 
 	/**
-	 * Since we are generating favourites from the audit history, it could be the case that:
-	 * - the referenced module no longer exists, or can no longer be accessed by the user
-	 * - the referenced document no longer exists, or can no longer be accessed by the user
-	 * 
-	 * @param moduleName
-	 * @param documentName
-	 * @return
+	 * Checks that referenced module/document still exists and is readable by the current user.
+	 *
+	 * @param moduleName The module name to check.
+	 * @param documentName The document name to check.
+	 * @return {@code true} when the document exists and can be read.
 	 */
 	private static boolean checkModuleDocumentCanBeRead(String moduleName, String documentName) {
 		Customer customer = CORE.getCustomer();
@@ -447,15 +487,15 @@ public class UserDashboardExtension extends UserDashboard {
 	}
 
 	/**
-	 * Queries the 20 most recently updated audit records, filtered by the specified user if provided.
-	 * 
-	 * @param The user to filter the audits by
-	 * @return The last 20 audits in the system
+	 * Returns recent non-delete audit updates for optional user filter.
+	 *
+	 * @param filterUser Optional user filter.
+	 * @return Up to 20 projected audit rows sorted by recency.
 	 */
 	private List<Bean> recentUpdates(UserExtension filterUser) {
 
 		DocumentQuery q = persistence.newDocumentQuery(Audit.MODULE_NAME, Audit.DOCUMENT_NAME);
-		q.getFilter().addGreaterThan(Audit.millisPropertyName, TWO_WEEKS_AGO);
+		q.getFilter().addGreaterThan(Audit.millisPropertyName, twoWeeksAgo());
 		q.getFilter().addNotEquals(Audit.operationPropertyName, Operation.delete);
 		if (filterUser != null) {
 			q.getFilter().addEquals(Audit.userNamePropertyName, filterUser.getUserName());

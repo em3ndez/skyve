@@ -14,11 +14,10 @@ import java.io.InputStream;
 import java.io.StringReader;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
-import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -26,13 +25,17 @@ import javax.imageio.ImageIO;
 import javax.imageio.ImageReadParam;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
+import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.transform.OutputKeys;
 import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerException;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
 
+import org.apache.batik.transcoder.TranscoderException;
 import org.apache.batik.transcoder.TranscoderInput;
 import org.apache.batik.transcoder.TranscoderOutput;
 import org.apache.batik.transcoder.image.ImageTranscoder;
@@ -42,11 +45,11 @@ import org.skyve.metadata.model.document.DynamicImage.ImageFormat;
 import org.skyve.metadata.repository.Repository;
 import org.skyve.util.FileUtil;
 import org.skyve.util.Util;
-import org.w3c.dom.Element;
 import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
@@ -58,6 +61,8 @@ import net.coobird.thumbnailator.util.exif.Orientation;
  * Image Utility methods.
  */
 public class ImageUtil {
+	private ImageUtil() {}
+
 	private static final int FIRST_IMAGE_INDEX = 0;
 	
 	private static final Color TRANSPARENT = new Color(0, 0, 0, 0);
@@ -146,7 +151,7 @@ public class ImageUtil {
 								Integer.valueOf(imageWidth),
 								Integer.valueOf(imageHeight),
 								xml.substring(5));
-		return xml.getBytes(Util.UTF8);
+		return xml.getBytes(StandardCharsets.UTF_8);
 	}
 	
 	/**
@@ -166,7 +171,7 @@ public class ImageUtil {
 												@Nullable String rgbHexForegroundColour)
 	throws IOException {
 		List<List<Point>> lines = new ArrayList<>();
-		Matcher lineMatcher = Pattern.compile("(\\[(?:,?\\[-?[\\d\\.]+,-?[\\d\\.]+\\])+\\])").matcher(json);
+		Matcher lineMatcher = Pattern.compile("(\\[(?:,?\\[-?[\\d\\.]+,-?[\\d\\.]+\\])++\\])").matcher(json);
 		while (lineMatcher.find()) {
 			Matcher pointMatcher = Pattern.compile("\\[(-?[\\d\\.]+),(-?[\\d\\.]+)\\]").matcher(lineMatcher.group(1));
 			List<Point> line = new ArrayList<>();
@@ -204,78 +209,37 @@ public class ImageUtil {
 	}
 	
 	/**
-	 * Ensure SVG-Edit svg is valid by
-	 * 1) Making sure rx and ry attributes are present in ellipses. if one is missing, set it to the other.
-	 * 2) Removing ANY attribute that has a value of "null".
-	 * 
-	 * @param svg	The SVG produced by SVG-Edit
-	 * @return	The cleansed SVG
-	 * @throws Exception
+	 * Walk the SVG DOM and replace "transparent" attribute values with "none", which is the
+	 * equivalent that Batik's older CSS engine accepts. Handles both presentation attributes
+	 * (e.g. fill="transparent") and inline style properties (e.g. style="stroke: transparent;").
 	 */
-	public static @Nonnull String cleanseSVGEdit(@Nonnull String svg) throws Exception {
-		DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-		factory.setNamespaceAware(true);
-		org.w3c.dom.Document doc = factory.newDocumentBuilder().parse(new InputSource(new StringReader(svg)));
-		cleanseNodes(doc.getChildNodes(), new TreeSet<>());
-
-		Transformer transformer = TransformerFactory.newInstance().newTransformer();
-		transformer.setOutputProperty(OutputKeys.INDENT, "no");
-		StreamResult result = new StreamResult(new StringWriter(svg.length()));
-		DOMSource source = new DOMSource(doc);
-		transformer.transform(source, result);
-		try (Writer w = result.getWriter()) {
-			return w.toString();
-		}
-	}
-
-	private static void cleanseNodes(@Nonnull NodeList nodes, @Nonnull Set<String> namesToRemove) {
-		// iterate backwards so we can remove unwanted nodes
-		for (int i = nodes.getLength() - 1; i >= 0; i--) {
+	private static void normaliseTransparentForBatik(@Nonnull NodeList nodes) {
+		for (int i = 0; i < nodes.getLength(); i++) {
 			Node node = nodes.item(i);
-			String localName = node.getLocalName();
-			NamedNodeMap nodeMap = node.getAttributes();
-			// Remove comment nodes
-			// NB the "Layer 1" <title/> node needs to remain for svg-edit to be able 
-			// to create editable shapes inside that layer - the <g/>
-			if ((node.getNodeType() == Node.COMMENT_NODE)) {
-				node.getParentNode().removeChild(node);
-			}
-			else {
-				if (nodeMap != null) {
-					// fix rx & ry
-					if ("ellipse".equals(localName)) {
-						Element ellipse = (Element) node;
-						String rx = Util.processStringValue(ellipse.getAttribute("rx"));
-						String ry = Util.processStringValue(ellipse.getAttribute("ry"));
-						if ((rx == null) && (ry != null)) {
-							ellipse.setAttribute("rx", ry);
-						}
-						else if ((rx != null) && (ry == null)) {
-							ellipse.setAttribute("ry", rx);
-						}
+			NamedNodeMap attrs = node.getAttributes();
+			if (attrs != null) {
+				for (int j = 0; j < attrs.getLength(); j++) {
+					Node attr = attrs.item(j);
+					String name = attr.getLocalName();
+					String value = attr.getNodeValue();
+					if ("style".equals(name)) {
+						// Replace transparent in CSS property values, e.g. "fill: transparent; stroke: transparent"
+						attr.setNodeValue(value.replaceAll("([:,])(\\s*)transparent\\b", "$1$2none"));
 					}
-	
-					// fix "null" nodes
-					namesToRemove.clear();
-					for (int j = 0; j < nodeMap.getLength(); j++) {
-						Node nodeAttr = nodeMap.item(j);
-						String value = nodeAttr.getTextContent();
-						if ("null".equals(value)) {
-							namesToRemove.add(nodeAttr.getLocalName());
-						}
-					}
-					for (String name : namesToRemove) {
-						nodeMap.removeNamedItem(name);
+					else if ("transparent".equals(value)) {
+						// Presentation attribute, e.g. fill="transparent"
+						attr.setNodeValue("none");
 					}
 				}
-				cleanseNodes(node.getChildNodes(), namesToRemove);
 			}
+			normaliseTransparentForBatik(node.getChildNodes());
 		}
 	}
-	
+
 	/**
 	 * Batik Transcoder used in burnSvg().
 	 */
+	@SuppressWarnings("java:S110") // Batik's ImageTranscoder hierarchy exceeds 5 parents; not in our control
 	private static class BufferedImageTranscoder extends ImageTranscoder {
 		private BufferedImage image = null;
 
@@ -301,10 +265,34 @@ public class ImageUtil {
 	 * @param svg	The SVG markup to burn in.
 	 */
 	public static void burnSvg(@Nonnull BufferedImage image, @Nonnull String svg)
-	throws Exception {
+	throws ParserConfigurationException, SAXException, IOException, TransformerException, TranscoderException {
 		BufferedImageTranscoder imageTranscoder = new BufferedImageTranscoder(image);
 
-		ByteArrayInputStream bais = new ByteArrayInputStream(svg.getBytes());
+		// Strip <style> elements before parsing - Batik requires xml-apis-ext to load
+		// SVGOMStyleElement, but font-face declarations embedded by Excalidraw are not
+		// needed for rendering the vector shapes.
+		String svgForBatik = svg.replaceAll("(?s)<style[^>]*>.*?</style>", "");
+
+		// Batik uses an old SVG/CSS spec that does not recognise "transparent" as a paint value.
+		// Parse the SVG as DOM and replace transparent attribute values and inline style uses
+		// with "none", which is the correct SVG 1.1 equivalent, before handing to Batik.
+		@SuppressWarnings("java:S2755") // fixed with feature secure processing below
+		DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+		factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+		factory.setNamespaceAware(true);
+		org.w3c.dom.Document doc = factory.newDocumentBuilder().parse(new InputSource(new StringReader(svgForBatik)));
+		normaliseTransparentForBatik(doc.getChildNodes());
+		@SuppressWarnings("java:S2755") // fixed with feature secure processing below
+		Transformer transformer = TransformerFactory.newInstance().newTransformer();
+		factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+		transformer.setOutputProperty(OutputKeys.INDENT, "no");
+		StringWriter sw = new StringWriter(svgForBatik.length());
+		transformer.transform(new DOMSource(doc), new StreamResult(sw));
+		try (Writer w = sw) {
+			svgForBatik = w.toString();
+		}
+
+		ByteArrayInputStream bais = new ByteArrayInputStream(svgForBatik.getBytes(StandardCharsets.UTF_8));
 		TranscoderInput input = new TranscoderInput(bais);
 		imageTranscoder.transcode(input, null);
 	}

@@ -3,10 +3,10 @@ package org.skyve.impl.web.service.smartclient;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.Collections;
 import java.util.List;
-import java.util.logging.Level;
 
 import org.skyve.EXT;
 import org.skyve.content.MimeType;
@@ -23,6 +23,7 @@ import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.AbstractWebContext;
 import org.skyve.impl.web.UserAgent;
+import org.skyve.impl.web.WebErrorUtil;
 import org.skyve.impl.web.WebUtil;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.Attribute;
@@ -35,6 +36,11 @@ import org.skyve.metadata.user.UserAccess;
 import org.skyve.persistence.DocumentQuery;
 import org.skyve.util.Binder.TargetMetaData;
 import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
@@ -42,30 +48,55 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
- * Service for complete mechanism.
+ * Completes SmartClient lookup and completion requests.
  */
 public class SmartClientCompleteServlet extends HttpServlet {
 	private static final long serialVersionUID = 1L;
+	
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(SmartClientCompleteServlet.class);
+	private static final Logger BIZLET_LOGGER = Category.BIZLET.logger();
 
+	private static final String MALFORMED_URL = "Mal-formed URL";
+	private static final String VALUE_FIELD = "value";
+
+	/**
+	 * Handles SmartClient completion requests submitted with HTTP GET.
+	 *
+	 * @param request inbound HTTP request
+	 * @param response outbound HTTP response
+	 * @throws ServletException if request validation fails
+	 * @throws IOException if the response cannot be written
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doGet(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
-		UtilImpl.LOGGER.info("SmartClientComplete - get....");
+		LOGGER.info("SmartClientComplete - get....");
 		processRequest(request, response);
 	}
 
+	/**
+	 * Handles SmartClient completion requests submitted with HTTP POST.
+	 *
+	 * @param request inbound HTTP request
+	 * @param response outbound HTTP response
+	 * @throws ServletException if request validation fails
+	 * @throws IOException if the response cannot be written
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doPost(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
-		UtilImpl.LOGGER.info("SmartClientComplete - post....");
+		LOGGER.info("SmartClientComplete - post....");
 		processRequest(request, response);
 	}
 
 	// NB - Never throw ServletException as this will halt the SmartClient Relogin flow.
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	private static void processRequest(HttpServletRequest request, HttpServletResponse response)
 	throws IOException {
 		response.setContentType(MimeType.json.toString());
-		response.setCharacterEncoding(Util.UTF8);
+		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 		response.addHeader("Cache-control", "private,no-cache,no-store"); // never
 		response.addDateHeader("Expires", 0); // never
 		
@@ -92,7 +123,7 @@ public class SmartClientCompleteServlet extends HttpServlet {
 					String attributeName = UtilImpl.processStringValue(request.getParameter("_attr"));
 					attributeName = BindUtil.unsanitiseBinding(attributeName);
 					if (attributeName == null) {
-						throw new ServletException("Mal-formed URL");
+						throw new ServletException(MALFORMED_URL);
 					}
 					final String binding = attributeName;
 					
@@ -149,13 +180,13 @@ public class SmartClientCompleteServlet extends HttpServlet {
 			        	throw e;
 			        }
 					catch (Exception e) {
-						throw new ServletException("Mal-formed URL", e);
+						throw new ServletException(MALFORMED_URL, e);
 					}
 					if ((attribute == null) && (! BindUtil.isImplicit(attributeName))) {
-						throw new ServletException("Mal-formed URL");
+						throw new ServletException(MALFORMED_URL);
 					}
 
-					String value = UtilImpl.processStringValue(request.getParameter("value"));
+					String value = UtilImpl.processStringValue(request.getParameter(VALUE_FIELD));
 
 					String _startRow = request.getParameter("_startRow");
 					int startRow = (_startRow == null) ? 0 : Integer.parseInt(_startRow);
@@ -164,7 +195,7 @@ public class SmartClientCompleteServlet extends HttpServlet {
 
 					if (complete == CompleteType.previous) {
 						final String userName = user.getName();
-						final UxUi uxui = UserAgent.getUxUi(request);
+						final UxUi uxui = UserAgent.getSelection(request).getUxUi();
 						EXT.checkAccess(user, UserAccess.previousComplete(formModuleName, formDocumentName, binding), uxui.getName());
 
 						if (! user.canReadDocument(document)) {
@@ -193,7 +224,7 @@ public class SmartClientCompleteServlet extends HttpServlet {
 								
 								if (totalRows > 0) {
 									q = persistence.newDocumentQuery(moduleName, documentName);
-									q.addBoundProjection(attributeName, "value");
+									q.addBoundProjection(attributeName, VALUE_FIELD);
 									q.setDistinct(true);
 									if (value != null) {
 										sb.setLength(0);
@@ -223,7 +254,7 @@ public class SmartClientCompleteServlet extends HttpServlet {
 							message.setLength(message.length() - 1); // remove last comma
 						}
 						message.append("]}}");
-						pw.append(message);
+						Util.chunkCharsToWriter(message, pw);
 					}
 					else {
 			        	List<String> result = null;
@@ -232,9 +263,9 @@ public class SmartClientCompleteServlet extends HttpServlet {
 						if (! vetoed) {
 							Bizlet<Bean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 							if (bizlet != null) {
-								if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "complete", "Entering " + bizlet.getClass().getName() + ".complete: " + attributeName + ", " + value + ", " + bean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.complete: {}, {}, {}", bizlet.getClass().getName(), attributeName, value, bean);
 								result = bizlet.complete(attributeName, value, bean);
-								if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "complete", "Exiting " + bizlet.getClass().getName() + ".complete: " + attributeName + ", " + value + ", " + bean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.complete: {}, {}, {}", bizlet.getClass().getName(), attributeName, value, bean);
 							}
 							internalCustomer.interceptAfterComplete(attributeName, value, bean, result);
 						}
@@ -258,23 +289,23 @@ public class SmartClientCompleteServlet extends HttpServlet {
 							message.setLength(message.length() - 1); // remove last comma
 						}
 						message.append("]}}");
-						pw.append(message);
+						Util.chunkCharsToWriter(message, pw);
 					}
+					
+					Monitoring.measure(RequestKey.complete(document, attributeName));
 				}
 				catch (InvocationTargetException e) {
 					throw e.getTargetException();
 				}
 			}
 			catch (Throwable t) {
-				t.printStackTrace();
 				persistence.rollback();
 
-				SmartClientEditServlet.produceErrorResponse(t, Operation.fetch, false, pw);
+				String reference = WebErrorUtil.logUnexpectedAndGetReference(LOGGER, "SmartClient complete request failed", t);
+				SmartClientEditServlet.produceErrorResponse(t, Operation.fetch, false, pw, reference);
 			}
 			finally {
-				if (persistence != null) {
-					persistence.commit(true);
-				}
+				persistence.commit(true);
 			}
 		}
 	}

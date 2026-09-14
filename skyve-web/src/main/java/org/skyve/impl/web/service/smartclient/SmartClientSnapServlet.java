@@ -22,6 +22,7 @@ import org.skyve.impl.snapshot.SnapshotAdapter;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.AbstractWebContext;
 import org.skyve.impl.web.UserAgent;
+import org.skyve.impl.web.WebErrorUtil;
 import org.skyve.impl.web.WebUtil;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.document.Document;
@@ -35,6 +36,8 @@ import org.skyve.persistence.DocumentQuery;
 import org.skyve.persistence.Persistence;
 import org.skyve.util.OWASP;
 import org.skyve.util.Util;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
 
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
@@ -42,21 +45,44 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 
+/**
+ * Servlet handling SmartClient snapshot operations, including listing, creating, updating, and deleting snapshots.
+ * Snapshots are persisted representations of list-grid state, allowing users to save and restore
+ * specific configurations of their list-grid views.
+ */
 public class SmartClientSnapServlet extends HttpServlet {
 	private static final long serialVersionUID = 1L;
+
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(SmartClientSnapServlet.class);
 	
+	/**
+	 * Handles SmartClient snapshot GET requests by delegating to the shared request processor.
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doGet(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		processRequest(request, response);
 	}
 
+	/**
+	 * Handles SmartClient snapshot POST requests by delegating to the shared request processor.
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doPost(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		processRequest(request, response);
 	}
 
+	/**
+	 * Processes snapshot list/create/update/delete operations and writes response payloads.
+	 *
+	 * @param request inbound HTTP request
+	 * @param response outbound HTTP response
+	 * @throws IOException when response writing fails
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private static void processRequest(HttpServletRequest request,
 										HttpServletResponse response)
 	throws IOException {
@@ -106,7 +132,7 @@ public class SmartClientSnapServlet extends HttpServlet {
 						Module module = customer.getModule(moduleName);
 						documentOrQueryOrModelName = dataSource.substring(_Index + 1);
 
-						UxUi uxui = UserAgent.getUxUi(request);
+						UxUi uxui = UserAgent.getSelection(request).getUxUi();
 
 						int __Index = documentOrQueryOrModelName.indexOf("__");
 						// model type of request
@@ -127,16 +153,13 @@ public class SmartClientSnapServlet extends HttpServlet {
 							else {
 								EXT.checkAccess(user, UserAccess.queryAggregate(moduleName, documentOrQueryOrModelName), uxui.getName());
 							}
-							if (query == null) {
-								throw new ServletException("DataSource does not reference a valid query " + documentOrQueryOrModelName);
-							}
 						}
 					}
 
 					HttpSession session = request.getSession();
 
 					if ("L".equals(action)) {
-						String result = list(moduleName, documentOrQueryOrModelName, smartClientRequest);
+						StringBuilder result = list(moduleName, documentOrQueryOrModelName, smartClientRequest);
 						sb.append(result);
 					}
 					else if ("U".equals(action)) {
@@ -155,7 +178,7 @@ public class SmartClientSnapServlet extends HttpServlet {
 						delete(snapId);
 					}
 
-					pw.append(sb);
+					Util.chunkCharsToWriter(sb, pw);
 					pw.flush();
 
 					// Replace CSRF token
@@ -166,36 +189,50 @@ public class SmartClientSnapServlet extends HttpServlet {
 				}
 			}
 			catch (Throwable t) {
-				t.printStackTrace();
-				if (persistence != null) {
-					persistence.rollback();
-				}
+				persistence.rollback();
 
 				pw.append("isc.warn('");
-				if (t instanceof MessageException) {
+				if (t instanceof MessageException me) {
+					LOGGER.warn("SmartClient snapshot operation failed with message exception for action {}.", action, me);
 					SmartClientEditServlet.appendErrorText("The Snapshot operation was unsuccessful",
-															((MessageException) t).getMessages(),
+															me.getMessages(),
 															pw);
 				}
 				else {
-					pw.append("The Snapshot operation was unsuccessful: ");
-					pw.append(OWASP.escapeJsString(t.getMessage()));
+					String reference = WebErrorUtil.logUnexpectedAndGetReference(LOGGER, "SmartClient snapshot operation failed for action " + action, t);
+					appendUnexpectedWarning(reference, pw);
 				}
 				pw.append("');");
 				pw.flush();
 			}
 			finally {
-				if (persistence != null) {
-					persistence.commit(true);
-				}
+				persistence.commit(true);
 			}
 		}
 	}
 
-	private static String list(String moduleName,
-								String queryName,
-								boolean smartClientRequest)
-	throws Exception {
+	/**
+	 * Appends a generic escaped warning message to the response writer.
+	 *
+	 * @param reference support reference token
+	 * @param pw response writer
+	 */
+	static void appendUnexpectedWarning(String reference, PrintWriter pw) {
+		pw.append("The Snapshot operation was unsuccessful. ");
+		pw.append(WebErrorUtil.escapeJsStringWithHtmlFormatting(WebErrorUtil.genericMessage(reference)));
+	}
+
+	/**
+	 * Lists snapshots for the supplied module/query combination.
+	 *
+	 * @param moduleName snapshot module name
+	 * @param queryName snapshot query/model name
+	 * @param smartClientRequest whether payloads should be adapted for SmartClient
+	 * @return JSON array payload of snapshots
+	 */
+	private static StringBuilder list(String moduleName,
+										String queryName,
+										boolean smartClientRequest) {
 		Persistence p = CORE.getPersistence();
 		DocumentQuery q = p.newDocumentQuery(AppConstants.ADMIN_MODULE_NAME, AppConstants.SNAPSHOT_DOCUMENT_NAME)
 							.addBoundProjection(Bean.DOCUMENT_ID)
@@ -213,8 +250,8 @@ public class SmartClientSnapServlet extends HttpServlet {
 		sb.append('[');
 		List<Bean> results = q.projectedResults();
 		for (Bean bean : results) {
-			String escapedCode = OWASP.escapeJsString((String) BindUtil.get(bean, Bean.DOCUMENT_ID));
-			String escapedDescription = OWASP.escapeJsString((String) BindUtil.get(bean, AppConstants.NAME_ATTRIBUTE_NAME));
+			String escapedCode = OWASP.escapeJsStringWithHtmlFormatting((String) BindUtil.get(bean, Bean.DOCUMENT_ID));
+			String escapedDescription = OWASP.escapeJsStringWithHtmlFormatting((String) BindUtil.get(bean, AppConstants.NAME_ATTRIBUTE_NAME));
 			String snapshot = (String) BindUtil.get(bean, AppConstants.SNAPSHOT_ATTRIBUTE_NAME);
 
 			snapshot = smartClientRequest ? SnapshotAdapter.toSmartClient(snapshot) : SnapshotAdapter.toVue(snapshot);
@@ -241,9 +278,20 @@ public class SmartClientSnapServlet extends HttpServlet {
 		}
 		sb.append(']');
 
-		return sb.toString();
+		return sb;
 	}
 
+	/**
+	 * Creates a snapshot definition.
+	 *
+	 * @param snapModuleName module name associated with the snapshot
+	 * @param snapQueryName query/model name associated with the snapshot
+	 * @param snapName user-visible snapshot name
+	 * @param snapshot snapshot JSON payload
+	 * @param smartClientRequest whether payload is SmartClient format
+	 * @return created snapshot business id
+	 * @throws Exception when validation or persistence fails
+	 */
 	private static String create(String snapModuleName,
 									String snapQueryName,
 									String snapName,
@@ -273,6 +321,14 @@ public class SmartClientSnapServlet extends HttpServlet {
 		return snap.getBizId();
 	}
 
+	/**
+	 * Updates an existing snapshot definition.
+	 *
+	 * @param snapId snapshot business id
+	 * @param snapshot snapshot JSON payload
+	 * @param smartClientRequest whether payload is SmartClient format
+	 * @throws Exception when validation, security, or persistence fails
+	 */
 	private static void update(String snapId, String snapshot, boolean smartClientRequest)
 	throws Exception {
 		// Validate snapshot definition
@@ -294,6 +350,12 @@ public class SmartClientSnapServlet extends HttpServlet {
 		p.save(snap);
 	}
 
+	/**
+	 * Deletes an existing snapshot definition.
+	 *
+	 * @param snapId snapshot business id
+	 * @throws Exception when security or persistence operations fail
+	 */
 	private static void delete(String snapId)
 	throws Exception {
 		Persistence p = CORE.getPersistence();

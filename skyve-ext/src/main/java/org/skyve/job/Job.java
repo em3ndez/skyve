@@ -1,6 +1,7 @@
 package org.skyve.job;
 
 import org.skyve.impl.job.AbstractSkyveJob;
+import org.skyve.impl.util.UtilImpl;
 
 /**
  * Extension point for Jobs.
@@ -36,6 +37,16 @@ public abstract class Job extends AbstractSkyveJob {
 	public boolean shouldRollbackOnCancel() {
 		return true;
 	}
+	
+	/**
+	 * Indicates whether the job should be silent in terms of notifications and system logging.
+	 * Job Implementations can override this to true if required.
+	 * @return	the default, false.
+	 */
+	@Override
+	public boolean shouldBeSilent() {
+		return false;
+	}
 
 	/**
 	 * execute another job as part of this job in the same thread.
@@ -44,6 +55,7 @@ public abstract class Job extends AbstractSkyveJob {
 	public final void execute(Job job) throws Exception {
 		job.setBean(getBean());
 		job.setLog(getLog());
+		UtilImpl.inject(job);
 		job.execute();
 	}
 }

@@ -13,6 +13,8 @@ import org.skyve.impl.domain.ChangeTrackingArrayList;
 
 /**
  * Snapshots
+ * <br/>
+ * Document that lets users organise and reorder their saved snapshots for a specific module and query.
  * 
  * @navhas n snapshotsToReorder 0..n Snapshot
  * @stereotype "transient"
@@ -86,12 +88,6 @@ public class Snapshots extends AbstractTransientBean {
 	public String getBizKey() {
 		return toString();
 
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof Snapshots) && 
-					this.getBizId().equals(((Snapshots) o).getBizId()));
 	}
 
 	/**

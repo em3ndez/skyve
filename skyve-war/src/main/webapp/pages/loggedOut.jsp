@@ -10,7 +10,7 @@
 <%@page import="org.skyve.web.WebContext"%>
 <%
 	String basePath = Util.getSkyveContextUrl() + "/";
-	boolean mobile = UserAgent.getType(request).isMobile();
+	boolean mobile = UserAgent.detectType(request).isMobile();
 	String referer = WebUtil.getRefererHeader(request);
 	User user = null;
 	HttpSession session = request.getSession(false); // don't make a new one
@@ -20,7 +20,7 @@
 	Locale locale = (user == null) ? request.getLocale() : user.getLocale();
 %>
 <!DOCTYPE html>
-<html dir="<%=Util.isRTL(locale) ? "rtl" : "ltr"%>">
+<html dir="<%=Util.isRTL(locale) ? "rtl" : "ltr"%>" lang="<%=locale.getLanguage()%>" xml:lang="<%=locale.getLanguage()%>">
 	<head>
 		<!-- Standard Meta -->
 	    <meta charset="utf-8" />
@@ -63,9 +63,9 @@
 		            	</div>
 						<% if ((referer == null) || referer.contains("/login") || referer.contains("/pages/")) { // no referer or came from the login or other jsp page %>
 							<% if (UtilImpl.CUSTOMER == null) { %>
-								<a href="<%=Util.getSkyveContextUrl()%><%=Util.getHomeUri()%><%=(user == null) ? "" : ("?customer=" + user.getCustomerName())%>" class="ui fluid large blue submit button"><%=Util.i18n("page.login.submit.label", locale)%></a>
+								<a href="<%=Util.getBaseUrl()%><%=(user == null) ? "" : ("?customer=" + user.getCustomerName())%>" class="ui fluid large blue submit button"><%=Util.i18n("page.login.submit.label", locale)%></a>
 							<% } else { %>
-								<a href="<%=Util.getSkyveContextUrl()%><%=Util.getHomeUri()%>" class="ui fluid large blue submit button"><%=Util.i18n("page.login.submit.label", locale)%></a>
+								<a href="<%=Util.getBaseUrl()%>" class="ui fluid large blue submit button"><%=Util.i18n("page.login.submit.label", locale)%></a>
 							<% } %>
 						<% } else { %>
 							<a href="<%=referer%>" class="ui fluid large blue submit button"><%=Util.i18n("page.login.banner", locale)%></a>

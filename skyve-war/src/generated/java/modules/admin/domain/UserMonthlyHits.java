@@ -18,6 +18,8 @@ import org.skyve.util.Util;
 
 /**
  * User Monthly Hits
+ * <br/>
+ * Usage analytics that tracks monthly activity counts by user and device type for system statistics.
  * 
  * @depend - - - Device
  * @stereotype "persistent"
@@ -61,7 +63,7 @@ public class UserMonthlyHits extends AbstractPersistentBean {
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum Device implements Enumeration {
+	public enum Device implements Enumeration {
 		phone("P", "Phone"),
 		tablet("T", "Tablet"),
 		desktop("D", "Desktop"),
@@ -191,12 +193,6 @@ public class UserMonthlyHits extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof UserMonthlyHits) && 
-					this.getBizId().equals(((UserMonthlyHits) o).getBizId()));
 	}
 
 	/**

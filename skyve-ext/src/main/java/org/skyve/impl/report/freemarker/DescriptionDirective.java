@@ -58,6 +58,7 @@ public class DescriptionDirective implements TemplateDirectiveModel {
 	private static final String PARAM_ESCAPE = "escape";
 
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void execute(Environment env, Map params, TemplateModel[] loopVars, TemplateDirectiveBody body)
 			throws TemplateException, IOException {
 		if (params.isEmpty()) {
@@ -99,10 +100,10 @@ public class DescriptionDirective implements TemplateDirectiveModel {
 				bindingParam = ((TemplateScalarModel) paramValue)
 						.getAsString();
 			} else if (paramName.equals(PARAM_ESCAPE)) {
-				if (paramValue instanceof TemplateBooleanModel) {
-					escapeParam = ((TemplateBooleanModel) paramValue).getAsBoolean();
-				} else if (paramValue instanceof TemplateScalarModel) {
-					escapeParam = Boolean.parseBoolean(((TemplateScalarModel) paramValue).getAsString());
+				if (paramValue instanceof TemplateBooleanModel bool) {
+					escapeParam = bool.getAsBoolean();
+				} else if (paramValue instanceof TemplateScalarModel scalar) {
+					escapeParam = Boolean.parseBoolean(scalar.getAsString());
 				} else {
 					throw new TemplateModelException(String.format("The '%s' parameter must be a boolean.", PARAM_ESCAPE));
 				}
@@ -114,16 +115,16 @@ public class DescriptionDirective implements TemplateDirectiveModel {
 
 		// do the actual directive execution
 		try (Writer out = env.getOut()) {
-		if (beanParam != null && bindingParam != null) {
-			String description = getDescription(beanParam, bindingParam);
-			if (escapeParam) {
-				description = OWASP.escapeHtml(description);
-			}
-			if (description != null) {
-				out.write(description);
+			if (beanParam != null && bindingParam != null) {
+				String description = getDescription(beanParam, bindingParam);
+				if (escapeParam) {
+					description = OWASP.escapeHtml(description);
+				}
+				if (description != null) {
+					out.write(description);
+				}
 			}
 		}
-	}
 	}
 
 	/**

@@ -28,8 +28,6 @@ import org.skyve.impl.bind.BindUtil;
 import org.skyve.impl.metadata.model.document.AssociationImpl;
 import org.skyve.impl.metadata.model.document.field.Decimal10;
 import org.skyve.impl.metadata.model.document.field.Decimal5;
-import org.skyve.impl.metadata.model.document.field.LengthField;
-import org.skyve.impl.metadata.model.document.field.LongInteger;
 import org.skyve.impl.metadata.model.document.field.Text;
 import org.skyve.impl.metadata.model.document.field.TextFormat;
 import org.skyve.impl.metadata.model.document.field.validator.DecimalValidator;
@@ -49,13 +47,25 @@ import org.skyve.metadata.user.User;
 import org.skyve.persistence.DocumentQuery;
 import org.skyve.persistence.DocumentQuery.AggregateFunction;
 import org.skyve.util.Binder;
-import org.skyve.util.Util;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
 
 import com.mifmif.common.regex.Generex;
 
+import jakarta.annotation.Nonnull;
+
+/**
+ * Generates and mutates deterministic/random test data for Skyve domain documents.
+ *
+ * <p>This utility supports fixture-driven value sourcing, metadata-aware attribute
+ * updates, and random document instance construction for generated tests.
+ */
 public class TestUtil {
 
-	private static final Random RANDOM = new Random();
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(TestUtil.class);
+
+	@SuppressWarnings("java:S2245") // It's ok that this is not cryptographically strong as it's only used for generating test data
+    private static final Random RANDOM = new Random();
 	private static final String NUMBERS = "0123456789";
 	private static final String LETTERS = "abcdefghijklmnopqrstuvwxyz";
 	private static final String ALPHA_NUMERIC = LETTERS + NUMBERS;
@@ -91,11 +101,11 @@ public class TestUtil {
 	 * @return The randomly constructed bean.
 	 * @throws Exception
 	 */
-	public static <T extends Bean> T constructRandomInstance(User user,
-			Module module,
-			Document document,
-			int depth)
-			throws Exception {
+	public static @Nonnull <T extends Bean> T constructRandomInstance(@Nonnull User user,
+																		@Nonnull Module module,
+																		@Nonnull Document document,
+																		int depth)
+	throws Exception {
 		return TestUtil.constructRandomInstance(user, module, document, 1, depth);
 	}
 
@@ -213,17 +223,17 @@ public class TestUtil {
 	 */
 	public static List<String> retrieveExcludedUpdateAttributes(Module module, Document document) {
 		String className = String.format("modules.%1$s.%2$s.%2$sFactory", module.getName(), document.getName());
-		Util.LOGGER.fine("Looking for factory class " + className);
+		LOGGER.debug("Looking for factory class {}", className);
 		try {
 			Class<?> c = Thread.currentThread().getContextClassLoader().loadClass(className);
 			if (c.isAnnotationPresent(SkyveFactory.class)) {
-				Util.LOGGER.fine("Found class " + c.getName());
+				LOGGER.debug("Found class {}", c.getName());
 				SkyveFactory annotation = c.getAnnotation(SkyveFactory.class);
 				return Arrays.asList(annotation.excludedUpdateAttributes());
 			}
 		}
 		catch (Exception e) {
-			Util.LOGGER.fine("Could not find factory class for: " + e.getMessage());
+			LOGGER.debug("Could not find factory class for: {}", e.getMessage());
 		}
 		return Collections.emptyList();
 	}
@@ -241,13 +251,13 @@ public class TestUtil {
 		return null;
 	}
 
-	@SuppressWarnings("incomplete-switch") // content type missing from switch statement
-	private static <T extends Bean> T constructRandomInstance(User user,
-			Module module,
-			Document document,
-			int currentDepth,
-			int maxDepth)
-			throws Exception {
+	@SuppressWarnings({"incomplete-switch", "java:S3776"}) // content type missing from switch statement; Complexity OK
+	private static @Nonnull <T extends Bean> T constructRandomInstance(@Nonnull User user,
+																		@Nonnull Module module,
+																		@Nonnull Document document,
+																		int currentDepth,
+																		int maxDepth)
+	throws Exception {
 		T result = document.newInstance(user);
 		Customer customer = user.getCustomer();
 		for (Attribute attribute : document.getAllAttributes(customer)) {
@@ -259,14 +269,16 @@ public class TestUtil {
 					if (currentDepth < maxDepth) {
 						AssociationImpl association = (AssociationImpl) attribute;
 						Module associationModule = module;
-						String associationModuleRef = module.getDocumentRefs().get(association.getDocumentName())
-								.getReferencedModuleName();
+						String associationModuleRef = module.getDocumentRefs().get(association.getDocumentName()).getReferencedModuleName();
 						if (associationModuleRef != null) {
 							associationModule = customer.getModule(associationModuleRef);
 						}
 						Document associationDocument = associationModule.getDocument(customer, association.getDocumentName());
-						Bean value = TestUtil.constructRandomInstance(user, associationModule, associationDocument,
-								currentDepth + 1, maxDepth);
+						Bean value = TestUtil.constructRandomInstance(user,
+																		associationModule,
+																		associationDocument,
+																		currentDepth + 1,
+																		maxDepth);
 						BindUtil.setAssociation(result, name, value);
 					}
 					break;
@@ -340,8 +352,8 @@ public class TestUtil {
 	 * @return True if the string contains a period followed by at least one character, false otherwise
 	 */
 	private static boolean hasExtension(final String filename) {
-		if (filename != null && filename.length() > 0 && filename.indexOf(".") > 0) {
-			if ((filename.substring(filename.indexOf(".") + 1)).length() > 0) {
+		if (filename != null && ! filename.isEmpty() && filename.indexOf(".") > 0) {
+			if (! (filename.substring(filename.indexOf(".") + 1)).isEmpty()) {
 				return true;
 			}
 		}
@@ -359,14 +371,13 @@ public class TestUtil {
 		Decimal min = new Decimal2(0), max = new Decimal2(10000);
 
 		DecimalValidator validator = null;
-		if (attribute instanceof org.skyve.impl.metadata.model.document.field.Decimal2) {
-			org.skyve.impl.metadata.model.document.field.Decimal2 field = (org.skyve.impl.metadata.model.document.field.Decimal2) attribute;
+		if (attribute instanceof org.skyve.impl.metadata.model.document.field.Decimal2 field) {
 			validator = field.getValidator();
-		} else if (attribute instanceof Decimal5) {
-			Decimal5 field = (Decimal5) attribute;
+		}
+		else if (attribute instanceof Decimal5 field) {
 			validator = field.getValidator();
-		} else if (attribute instanceof Decimal10) {
-			Decimal10 field = (Decimal10) attribute;
+		}
+		else if (attribute instanceof Decimal10 field) {
 			validator = field.getValidator();
 		}
 
@@ -384,9 +395,19 @@ public class TestUtil {
 						.add(new Decimal2(1)).intValue())).add(min);
 	}
 
+	/**
+	 * Returns a pseudo-random email string constrained to the requested total length.
+	 *
+	 * <p>The result is generated as {@code local@domain.cc}, where local and domain
+	 * parts are uppercase alphabetic characters and {@code cc} is a two-character
+	 * alphabetic suffix.
+	 *
+	 * @param length The requested total email length
+	 * @return A pseudo-random email string
+	 */
 	public static String randomEmail(int length) {
-		int addressLength = (int) Math.floor((length - 2) / 2);
-		int domainLength = (int) Math.floor((length - 2) / 2) - 2;
+		int addressLength = (int) Math.floor((length - 2) / 2.0);
+		int domainLength = (int) Math.floor((length - 2) / 2.0) - 2;
 
 		char[] address = new char[addressLength];
 		for (int i = 0; i < addressLength; i++) {
@@ -494,12 +515,12 @@ public class TestUtil {
 	 * @param attribute The attribute to generate the random integer for
 	 * @return A random integer
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public static Integer randomInteger(Attribute attribute) {
 		int min = 0, max = 10000;
 
 		// if there is a min and max make sure it is within the range
-		if (attribute instanceof org.skyve.impl.metadata.model.document.field.Integer) {
-			org.skyve.impl.metadata.model.document.field.Integer field = (org.skyve.impl.metadata.model.document.field.Integer) attribute;
+		if (attribute instanceof org.skyve.impl.metadata.model.document.field.Integer field) {
 			IntegerValidator validator = field.getValidator();
 			if (validator != null) {
 				if (validator.getMin() != null) {
@@ -509,8 +530,8 @@ public class TestUtil {
 					max = validator.getMax().intValue();
 				}
 			}
-		} else if (attribute instanceof org.skyve.impl.metadata.model.document.field.LongInteger) {
-			LongInteger field = (LongInteger) attribute;
+		}
+		else if (attribute instanceof org.skyve.impl.metadata.model.document.field.LongInteger field) {
 			LongValidator validator = field.getValidator();
 			if (validator != null) {
 				if (validator.getMin() != null) {
@@ -533,7 +554,7 @@ public class TestUtil {
 	 * @param regularExpression The regular expression to comply to
 	 * @return A regex compliant random string, or null
 	 */
-	static String randomRegex(String regularExpression, Integer length) {
+	public static String randomRegex(String regularExpression, Integer length) {
 		// strip anchors as they are not supported
 		String expression = regularExpression;
 		if (regularExpression.startsWith("^") && regularExpression.endsWith("$")) {
@@ -554,7 +575,7 @@ public class TestUtil {
 
 			return result;
 		} catch (@SuppressWarnings("unused") Exception e) {
-			Util.LOGGER.warning("Couldnt generate compliant string for expression " + regularExpression);
+			LOGGER.warn("Couldnt generate compliant string for expression {}", regularExpression);
 		}
 		return null;
 	}
@@ -584,6 +605,7 @@ public class TestUtil {
 	 * @return A string containing random data for the text attribute
 	 * @throws IOException
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public static String randomText(String customerName, Module module, Document document, Attribute attribute)
 			throws IOException {
 		if (attribute != null) {
@@ -595,17 +617,17 @@ public class TestUtil {
 				final String key = attributeKey(module, document, attribute.getName());
 				if (DATA_MAP_CACHE.containsKey(key)) {
 					fileName = DATA_MAP_CACHE.get(key);
-					Util.LOGGER.fine(String.format("Loaded %s filename from cache", key));
+					LOGGER.debug("Loaded {} filename from cache", key);
 				} else {
 					String className = String.format("modules.%1$s.%2$s.%2$sFactory", module.getName(), document.getName());
-					Util.LOGGER.fine("Looking for factory class " + className);
+					LOGGER.debug("Looking for factory class {}", className);
 					try {
 						Class<?> c = Thread.currentThread().getContextClassLoader().loadClass(className);
 						if (c != null) {
-							Util.LOGGER.fine("Found class " + c.getName());
+							LOGGER.debug("Found class {}", c.getName());
 							if (c.isAnnotationPresent(DataMap.class)) {
 								DataMap annotation = c.getAnnotation(DataMap.class);
-								Util.LOGGER.fine(
+								LOGGER.debug(
 										String.format("attributeName: %s fileName: %s", annotation.attributeName(),
 												annotation.fileName()));
 								if (attribute.getName().equals(annotation.attributeName())) {
@@ -616,8 +638,7 @@ public class TestUtil {
 								SkyveFactory annotation = c.getAnnotation(SkyveFactory.class);
 								DataMap[] values = annotation.value();
 								for (DataMap map : values) {
-									Util.LOGGER.fine(
-											String.format("attributeName: %s fileName: %s", map.attributeName(), map.fileName()));
+									LOGGER.debug("attributeName: {} fileName: {}", map.attributeName(), map.fileName());
 									if (attribute.getName().equals(map.attributeName())) {
 										fileName = map.fileName();
 										DATA_MAP_CACHE.put(key, fileName);
@@ -632,18 +653,16 @@ public class TestUtil {
 				}
 
 				// check if there is a data file for this field
-				Util.LOGGER.fine(String.format(
-						"Looking for test data file in data/%s.txt", fileName != null ? fileName : attribute.getName()));
+				LOGGER.debug("Looking for test data file in data/{}.txt", fileName != null ? fileName : attribute.getName());
 				String value = randomValueFromFile(customerName, module, document, attribute.getName(), fileName);
 				if (value != null) {
-					Util.LOGGER.fine(String.format("Random %s: %s", attribute.getName(), value));
+					LOGGER.debug("Random {}: {}", attribute.getName(), value);
 					return value;
 				}
 			}
 
 			// check if this string has a format mask
-			if (attribute instanceof Text) {
-				Text text = (Text) attribute;
+			if (attribute instanceof Text text) {
 				length = Integer.valueOf(text.getLength());
 
 				if (text.getFormat() != null) {
@@ -669,7 +688,7 @@ public class TestUtil {
 				} else {
 					// check if this is an email address
 					if (text.getValidator() != null && ValidatorType.email.equals(text.getValidator().getType())) {
-						return randomEmail(((LengthField) text).getLength());
+						return randomEmail(text.getLength());
 					} else if (text.getValidator() != null && text.getValidator().getRegularExpression() != null) {
 						// check if this string has a regex via a validator type
 						String xeger = randomRegex(text.getValidator().getRegularExpression(), length);
@@ -705,13 +724,13 @@ public class TestUtil {
 							// trim to last sentence boundary
 							out = out.substring(0, out.lastIndexOf(".") + 1).trim();
 						}
-						if (out.length() > 0) {
-							Util.LOGGER.fine(String.format("Random %s for %s with length %d(%d): %s",
+						if (! out.isEmpty()) {
+							LOGGER.debug("Random {} for {} with length {}({}): {}",
 									attribute.getAttributeType(),
 									attribute.getName(),
 									Integer.valueOf(r),
 									length,
-									out));
+									out);
 							return out;
 						}
 					}
@@ -728,12 +747,8 @@ public class TestUtil {
 	private static String randomText(Module module, Document document, Attribute attribute) throws IOException {
 		String customerName = null;
 		User user = CORE.getUser();
-		if (user != null) {
-			Customer customer = CORE.getCustomer();
-			if (customer != null) {
-				customerName = customer.getName();
-			}
-		}
+		Customer customer = user.getCustomer();
+		customerName = customer.getName();
 		return randomText(customerName, module, document, attribute);
 	}
 
@@ -761,6 +776,7 @@ public class TestUtil {
 	 * @return A random value from the data file if it exists, null otherwise
 	 * @throws IOException
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private static String randomValueFromFile(String customerName, final Module module, final Document document,
 			final String attributeName,
 			final String... fileName) throws IOException {
@@ -770,7 +786,7 @@ public class TestUtil {
 			List<String> values = null;
 			if (DATA_CACHE.containsKey(key)) {
 				values = DATA_CACHE.get(key);
-				Util.LOGGER.fine(String.format("Loaded %s list from cache", key));
+				LOGGER.debug("Loaded {} list from cache", key);
 			} else {
 				String fileToLoad = attributeName;
 				if (fileName != null && fileName.length == 1 && fileName[0] != null) {
@@ -782,19 +798,21 @@ public class TestUtil {
 					fileToLoad = fileToLoad + ".txt";
 				}
 
-				Util.LOGGER.fine("Attempting to find on the classpath: " + String.format("data/%s", fileToLoad));
+				LOGGER.debug("Attempting to find on the classpath: data/{}", fileToLoad);
 				File file = CORE.getRepository().findResourceFile(String.format("data/%s",
 						fileToLoad),
 						customerName,
 						(module == null) ? null : module.getName());
-				if ((file != null) && file.exists()) {
+				if (file.exists()) {
 					try (InputStream inputStream = new FileInputStream(file)) {
 						values = readFromInputStream(inputStream);
 						DATA_CACHE.put(key, values);
-						Util.LOGGER.fine(String.format("Caching attribute %s with filename %s", key, fileToLoad));
+						LOGGER.debug("Caching attribute {} with filename {}", key, fileToLoad);
 						if (values != null && values.size() > 0) {
-							Util.LOGGER.fine(String.format("Loaded %s list from %s. Found %d values.", attributeName, fileToLoad,
-									Integer.valueOf(values.size())));
+							LOGGER.debug("Loaded {} list from {}. Found {} values.",
+											attributeName,
+											fileToLoad,
+											Integer.valueOf(values.size()));
 						}
 					}
 				}
@@ -850,7 +868,8 @@ public class TestUtil {
 	}
 
 	// Used by findRandomDocumentQueryResult().
-	private static Random random = new Random();
+	@SuppressWarnings("java:S2245") // It's ok that this is not cryptographically strong as it's only used for generating test data
+	private static Random documentQueryRandom = new Random();
 	
 	/**
 	 * <p>
@@ -869,7 +888,8 @@ public class TestUtil {
 
 		aq.clearProjections();
 		q.addAggregateProjection(AggregateFunction.Count, Bean.DOCUMENT_ID, "CountOfId");
-		long count = q.scalarResult(Number.class).longValue();
+		Number n = q.scalarResult(Number.class);
+		long count = (n == null) ? 0 : n.longValue();
 
 		// we just need a random number
 		if (count > Integer.MAX_VALUE) {
@@ -878,7 +898,7 @@ public class TestUtil {
 			return null;
 		}
 
-		int randomIndex = random.nextInt((int) count - 1);
+		int randomIndex = (count == 1) ? 0 : documentQueryRandom.nextInt((int) count - 1);
 
 		// get the random record
 		aq.clearProjections();

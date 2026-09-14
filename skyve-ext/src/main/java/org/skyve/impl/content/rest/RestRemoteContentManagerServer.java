@@ -6,7 +6,8 @@ import org.skyve.content.BeanContent;
 import org.skyve.content.ContentManager;
 import org.skyve.domain.Bean;
 import org.skyve.impl.cache.StateUtil;
-import org.skyve.util.Util;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.ws.rs.DELETE;
@@ -76,6 +77,11 @@ public class RestRemoteContentManagerServer {
 	protected static final String ATTACHMENT_PATH = "/attachment";
 	protected static final String BEAN_PATH = "/bean";
 
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(RestRemoteContentManagerServer.class);
+
+	/**
+	 * Performs put.
+	 */
 	@PUT
 	@Path(BEAN_PATH)
 	@Produces(MediaType.TEXT_PLAIN)
@@ -83,17 +89,20 @@ public class RestRemoteContentManagerServer {
 	public Response put(String content) {
 		try (ContentManager cm = EXT.newContentManager()) {
 			BeanContent result = StateUtil.decode64(content);
-			Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.put() received for " + result.getBizId());
+			LOGGER.info("Remote call to RestRemoteContentManagerServer.put() received for {}", result.getBizId());
 		
 			cm.put(result);
 			return Response.ok().build();
 		}
 		catch (Exception e) {
-			e.printStackTrace();
+			LOGGER.error(e.getMessage(), e);
 		}
 		return Response.serverError().build();
 	}
 	
+	/**
+	 * Performs put.
+	 */
 	@PUT
 	@Path(ATTACHMENT_PATH)
 	@Produces(MediaType.TEXT_PLAIN)
@@ -101,17 +110,20 @@ public class RestRemoteContentManagerServer {
 	public Response put(String content, @QueryParam("index") boolean index) {
 		try (ContentManager cm = EXT.newContentManager()) {
 			AttachmentContent result = StateUtil.decode64(content);
-			Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.put() received for " + result.getBizId() + " attribute " + result.getAttributeName());
+			LOGGER.info("Remote call to RestRemoteContentManagerServer.put() received for {} attribute {}", result.getBizId(), result.getAttributeName());
 
 			cm.put(result, index);
 			return Response.ok(result.getContentId()).build();
 		}
 		catch (Exception e) {
-			e.printStackTrace();
+			LOGGER.error(e.getMessage(), e);
 		}
 		return Response.serverError().build();
 	}
 
+	/**
+	 * Performs update.
+	 */
 	@POST
 	@Path(ATTACHMENT_PATH)
 	@Produces(MediaType.TEXT_PLAIN)
@@ -119,23 +131,26 @@ public class RestRemoteContentManagerServer {
 	public Response update(String content) {
 		try (ContentManager cm = EXT.newContentManager()) {
 			AttachmentContent result = StateUtil.decode64(content);
-			Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.update() received for " + result.getContentId());
+			LOGGER.info("Remote call to RestRemoteContentManagerServer.update() received for {}", result.getContentId());
 
 			cm.update(result);
 			return Response.ok().build();
 		}
 		catch (Exception e) {
-			e.printStackTrace();
+			LOGGER.error(e.getMessage(), e);
 		}
 		return Response.serverError().build();
 	}
 	
+	/**
+	 * Returns the attachment.
+	 */
 	@GET
 	@Path(ATTACHMENT_PATH + "/{contentId}")
 	@Produces(MediaType.TEXT_PLAIN)
 	@SuppressWarnings("static-method")
 	public Response getAttachment(@PathParam("contentId") String contentId) {
-		Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.getAttachment() received for " + contentId);
+		LOGGER.info("Remote call to RestRemoteContentManagerServer.getAttachment() received for {}", contentId);
 		try (ContentManager cm = EXT.newContentManager()) {
 			AttachmentContent content = cm.getAttachment(contentId);
 			if (content != null) {
@@ -145,39 +160,45 @@ public class RestRemoteContentManagerServer {
 			return Response.status(Status.NOT_FOUND).build();
 		}
 		catch (Exception e) {
-			e.printStackTrace();
+			LOGGER.error(e.getMessage(), e);
 		}
 		return Response.serverError().build();
 	}
 
+	/**
+	 * Removes the bean.
+	 */
 	@DELETE
 	@Path(BEAN_PATH + "/{bizId}")
 	@Produces(MediaType.TEXT_PLAIN)
 	@SuppressWarnings("static-method")
 	public Response removeBean(@PathParam(Bean.DOCUMENT_ID) String bizId) {
-		Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.removeBean() received for " + bizId);
+		LOGGER.info("Remote call to RestRemoteContentManagerServer.removeBean() received for {}", bizId);
 		try (ContentManager cm = EXT.newContentManager()) {
 			cm.removeBean(bizId);
 			return Response.ok().build();
 		}
 		catch (Exception e) {
-			e.printStackTrace();
+			LOGGER.error(e.getMessage(), e);
 		}
 		return Response.serverError().build();
 	}
 
+	/**
+	 * Removes the attachment.
+	 */
 	@DELETE
 	@Path(ATTACHMENT_PATH + "/{contentId}")
 	@Produces(MediaType.TEXT_PLAIN)
 	@SuppressWarnings("static-method")
 	public Response removeAttachment(@PathParam("contentId") String contentId) {
-		Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.removeAttachment() received for " + contentId);
+		LOGGER.info("Remote call to RestRemoteContentManagerServer.removeAttachment() received for {}", contentId);
 		try (ContentManager cm = EXT.newContentManager()) {
 			cm.removeAttachment(contentId);
 			return Response.ok().build();
 		}
 		catch (Exception e) {
-			e.printStackTrace();
+			LOGGER.error(e.getMessage(), e);
 		}
 		return Response.serverError().build();
 	}

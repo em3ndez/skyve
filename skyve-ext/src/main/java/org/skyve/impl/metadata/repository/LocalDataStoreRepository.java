@@ -6,6 +6,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -13,7 +14,6 @@ import java.util.TreeMap;
 import org.skyve.EXT;
 import org.skyve.dataaccess.sql.SQLDataAccess;
 import org.skyve.domain.Bean;
-import org.skyve.domain.DynamicBean;
 import org.skyve.domain.app.AppConstants;
 import org.skyve.domain.messages.DomainException;
 import org.skyve.domain.messages.SecurityException;
@@ -22,12 +22,18 @@ import org.skyve.impl.metadata.repository.customer.CustomerRoleMetaData;
 import org.skyve.impl.metadata.user.RoleImpl;
 import org.skyve.impl.metadata.user.UserImpl;
 import org.skyve.impl.util.UtilImpl;
+import org.skyve.job.JobSchedule;
+import org.skyve.job.UserJobSchedule;
 import org.skyve.metadata.MetaDataException;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.module.Module;
 import org.skyve.metadata.user.Role;
 import org.skyve.metadata.user.User;
+import org.skyve.persistence.AutoClosingIterable;
 import org.skyve.persistence.SQL;
+import org.skyve.util.logging.Category;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 /**
  * Adds security integration to LocalDesignRepository.
@@ -35,6 +41,22 @@ import org.skyve.persistence.SQL;
  * @author Mike
  */
 public class LocalDataStoreRepository extends LocalDesignRepository {
+    private static final Logger QUERY_LOGGER = Category.QUERY.logger();
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(LocalDataStoreRepository.class);
+
+    private static final String INNER_JOIN = "inner join ";
+
+	public LocalDataStoreRepository() {
+		super();
+	}
+
+	/**
+	 * Creates a repository rooted at a specific metadata path for tests.
+	 */
+	LocalDataStoreRepository(String absolutePath) {
+		super(absolutePath);
+	}
+
 	@Override
 	public UserImpl retrieveUser(String userPrincipal) {
 		if (userPrincipal == null) {
@@ -54,9 +76,9 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 	}
 	
 	@Override
-	public void populatePermissions(User user) {
+	public boolean populatePermissions(User user) {
 		try (Connection connection = EXT.getDataStoreConnection()) {
-			populateUser(user, connection);
+			return populateUser(user, connection);
 		}
 		catch (SQLException e) {
 			throw new MetaDataException("Could not obtain a data store connection", e);
@@ -67,12 +89,17 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 	public void resetUserPermissions(User user) {
 		UserImpl impl = (UserImpl) user;
 		impl.clearAllPermissionsAndMenus();
-		populatePermissions(user);
+
+		if (!populatePermissions(user)) {
+			throw new SecurityException("the system", user.getName());
+		}
+
 		resetMenus(user);
 	}
 	
 	@Override
-	public void populateUser(User user, Connection connection) {
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
+	public boolean populateUser(User user, Connection connection) {
 		UserImpl internalUser = (UserImpl) user;
 		try {
 			Customer customer = user.getCustomer();
@@ -93,6 +120,7 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 			
 			StringBuilder sql = new StringBuilder(512);
 			sql.append("select u.bizId, " +
+						"u.inactive, " +
 						"u.password, " +
 						"u.passwordExpired, " +
 						"u.passwordLastChanged, " +
@@ -104,9 +132,9 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 						"u.homeModule, " +
 						"r.roleName ");
 			sql.append("from ").append(ADM_SecurityUser).append(" u ");
-			sql.append("inner join ").append(ADM_SecurityUserRole).append(" r ");
+			sql.append(INNER_JOIN).append(ADM_SecurityUserRole).append(" r ");
 			sql.append("on r.parent_id = u.bizId ");
-			sql.append("inner join ").append(ADM_Contact).append(" c ");
+			sql.append(INNER_JOIN).append(ADM_Contact).append(" c ");
 			sql.append("on u.contact_id = c.bizId ");
 			sql.append("left outer join ").append(ADM_Configuration).append(" p ");
 			sql.append("on u.bizId = p.publicUser_id ");
@@ -116,6 +144,7 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 			}
 			sql.append("union " +
 						"select u.bizId, " +
+						"u.inactive, " +
 						"u.password, " +
 						"u.passwordExpired, " +
 						"u.passwordLastChanged, " +
@@ -127,13 +156,13 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 						"u.homeModule, " +
 						"r.roleName ");
 			sql.append("from ").append(ADM_SecurityUser).append(" u ");
-			sql.append("inner join ").append(ADM_SecurityUser_groups).append(" gs ");
+			sql.append(INNER_JOIN).append(ADM_SecurityUser_groups).append(" gs ");
 			sql.append("on gs.owner_id = u.bizId ");
-			sql.append("inner join ").append(ADM_SecurityGroup).append(" g ");
+			sql.append(INNER_JOIN).append(ADM_SecurityGroup).append(" g ");
 			sql.append("on g.bizId = gs.element_id ");
-			sql.append("inner join ").append(ADM_SecurityGroupRole).append(" r ");
+			sql.append(INNER_JOIN).append(ADM_SecurityGroupRole).append(" r ");
 			sql.append("on r.parent_id = g.bizId ");
-			sql.append("inner join ").append(ADM_Contact).append(" c ");
+			sql.append(INNER_JOIN).append(ADM_Contact).append(" c ");
 			sql.append("on u.contact_id = c.bizId ");
 			sql.append("left outer join ").append(ADM_Configuration).append(" p ");
 			sql.append("on u.bizId = p.publicUser_id ");
@@ -143,7 +172,7 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 			}
 
 			String query = sql.toString();
-			if (UtilImpl.QUERY_TRACE) UtilImpl.LOGGER.info(query + " executed on thread " + Thread.currentThread() + ", connection = " + connection);
+			if (UtilImpl.QUERY_TRACE) QUERY_LOGGER.info("{} executed on thread {}, connection = {}", query, Thread.currentThread(), connection);
 			try (PreparedStatement s = connection.prepareStatement(query)) {
 				s.setString(1, user.getName());
 				if (UtilImpl.CUSTOMER == null) { // multi-tenant
@@ -160,12 +189,18 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 					while (rs.next()) {
 						if (firstRow) {
 							internalUser.setId(rs.getString(1)); // bizId
-							internalUser.setPasswordHash(rs.getString(2)); // password
+
+							// Check if user is inactive
+							if (rs.getBoolean(2)) { // inactive
+								return false;
+							}
 							
+							internalUser.setPasswordHash(rs.getString(3)); // password
+
 							// Determine if a password change is required
-							boolean passwordChangeRequired = rs.getBoolean(3); // passwordExpired
-							Timestamp passwordLastChanged = rs.getTimestamp(4);
-							String publicUserId = rs.getString(5);
+							boolean passwordChangeRequired = rs.getBoolean(4); // passwordExpired
+							Timestamp passwordLastChanged = rs.getTimestamp(5);
+							String publicUserId = rs.getString(6);
 							// the public user never requires a password change
 							if (publicUserId != null) {
 								passwordChangeRequired = false;
@@ -185,15 +220,16 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 							}
 							internalUser.setPasswordChangeRequired(passwordChangeRequired);
 
-							internalUser.setContactId(rs.getString(6)); // contactId
-							internalUser.setContactName(rs.getString(7)); // contactName
-							internalUser.setContactImageId(rs.getString(8)); // contactImageId
-							internalUser.setDataGroupId(rs.getString(9)); // dataGroupId
-							internalUser.setHomeModuleName(rs.getString(10)); // homeModule
+							internalUser.setContactId(rs.getString(7)); // contactId
+							internalUser.setContactName(rs.getString(8)); // contactName
+							internalUser.setContactImageId(rs.getString(9)); // contactImageId
+							internalUser.setDataGroupId(rs.getString(10)); // dataGroupId
+							internalUser.setHomeModuleName(rs.getString(11)); // homeModule
+							
 							firstRow = false;
 						}
 
-						String moduleDotRoleName = rs.getString(11); // roleName
+						String moduleDotRoleName = rs.getString(12); // roleName
 						int dotIndex = moduleDotRoleName.indexOf('.');
 						if (dotIndex > 0) {
 							String moduleName = moduleDotRoleName.substring(0, dotIndex);
@@ -215,7 +251,7 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 						}
 					}
 					if (firstRow) { // no data for this user
-						throw new SecurityException("the system", "The user " + user.getName());
+						return false;
 					}
 				}
 			}
@@ -226,28 +262,36 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 		catch (Exception e) {
 			throw new MetaDataException(e);
 		}
+
+		return true;
 	}
 	
 	@Override
-	public List<Bean> retrieveAllJobSchedulesForAllCustomers() {
-		List<Bean> result = new ArrayList<>();
+	public List<UserJobSchedule> retrieveAllScheduledJobsForAllCustomers() {
+		List<UserJobSchedule> result = new ArrayList<>();
 		
 		// Principal -> User
 		Map<String, User> users = new TreeMap<>();
 		
-		Module admin = getModule(null, "admin");
+		Module admin = getModule(null, AppConstants.ADMIN_MODULE_NAME);
 		@SuppressWarnings("null")
-		String ADM_JobSchedule = admin.getDocument(null, "JobSchedule").getPersistent().getPersistentIdentifier();
+		final String admJobSchedule = admin.getDocument(null, AppConstants.JOB_SCHEDULE_DOCUMENT_NAME).getPersistent().getPersistentIdentifier();
 		@SuppressWarnings("null")
-		String ADM_SecurityUser = admin.getDocument(null, "User").getPersistent().getPersistentIdentifier();
+		final String admSecurityUser = admin.getDocument(null, AppConstants.USER_DOCUMENT_NAME).getPersistent().getPersistentIdentifier();
 
 		StringBuilder sql = new StringBuilder(256);
-		sql.append("select s.bizId, s.bizCustomer, s.jobName, s.startTime, s.endTime, s.cronExpression, s.disabled,  u.userName from ");
-		sql.append(ADM_JobSchedule).append(" s inner join ").append(ADM_SecurityUser).append(" u on s.runAs_id = u.bizId order by u.bizCustomer");
+		sql.append("select s.bizId, s.bizCustomer, s.jobName, s.startTime, s.endTime, s.cronExpression, s.disabled, u.userName from ");
+		sql.append(admJobSchedule).append(" s inner join ").append(admSecurityUser).append(" u on s.runAs_id = u.bizId order by u.bizCustomer");
 		
-		try (SQLDataAccess da = EXT.newSQLDataAccess()) {
-			List<Object[]> rows = da.newSQL(sql.toString()).tupleResults();
+		try (SQLDataAccess da = EXT.newSQLDataAccess();
+				AutoClosingIterable<Object[]> rows = da.newSQL(sql.toString()).tupleIterable()) {
 			for (Object[] row : rows) {
+				// Discard jobs that are disabled.
+				// NB Done here as SQL for booleans is dialect specific
+				if (Boolean.TRUE.equals(row[6])) { // disabled
+					continue;
+				}
+
 				StringBuilder userPrincipalBuilder = new StringBuilder(128);
 				userPrincipalBuilder.append(row[1]); // bizCustomer
 				userPrincipalBuilder.append('/').append(row[7]); // userName
@@ -258,17 +302,17 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 					users.put(userPrincipal, user);
 				}
 
-				Map<String, Object> properties = new TreeMap<>();
-				properties.put(Bean.DOCUMENT_ID, row[0]); // bizId
-				properties.put("jobName", row[2]);
-				properties.put("startTime", row[3]);
-				properties.put("endTime", row[4]);
-				properties.put("cronExpression", row[5]);
-				properties.put("disabled", row[6]);
-				properties.put("user", user);
-				
-				DynamicBean jobSchedule = new DynamicBean("admin", "JobSchedule", properties);
-				result.add(jobSchedule);
+				JobSchedule jobSchedule = new JobSchedule();
+				jobSchedule.setUuid((String) row[0]);
+				jobSchedule.setJobName((String) row[2]);
+				jobSchedule.setStartTime((Date) row[3]);
+				jobSchedule.setEndTime((Date) row[4]);
+				jobSchedule.setCronExpression((String) row[5]);
+
+				if (user == null) {
+					throw new DomainException("Could not schedule job " + jobSchedule.getJobName() + " as user " + userPrincipal + " does not exist");
+				}
+				result.add(new UserJobSchedule(jobSchedule, user));
 			}
 		}
 		catch (RuntimeException e) {
@@ -282,49 +326,52 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 	}
 	
 	@Override
-	public List<Bean> retrieveAllReportSchedulesForAllCustomers() {
-		List<Bean> result = new ArrayList<>();
+	public List<UserJobSchedule> retrieveAllScheduledReportsForAllCustomers() {
+		List<UserJobSchedule> result = new ArrayList<>();
 
 		// Principal -> User
 		Map<String, User> users = new TreeMap<>();
 
-		Module admin = getModule(null, "admin");
+		Module admin = getModule(null, AppConstants.ADMIN_MODULE_NAME);
 		@SuppressWarnings("null")
-		String ADM_ReportTemplate = admin.getDocument(null, "ReportTemplate").getPersistent().getPersistentIdentifier();
+		String admReportTemplate = admin.getDocument(null, AppConstants.REPORT_TEMPLATE_DOCUMENT_NAME).getPersistent().getPersistentIdentifier();
 		@SuppressWarnings("null")
-		String ADM_SecurityUser = admin.getDocument(null, "User").getPersistent().getPersistentIdentifier();
+		String admSecurityUser = admin.getDocument(null, AppConstants.USER_DOCUMENT_NAME).getPersistent().getPersistentIdentifier();
 
 		StringBuilder sql = new StringBuilder(256);
-		sql.append("select s.bizId, s.bizCustomer, s.name, s.startTime, s.endTime, s.cronExpression, s.scheduled,  u.userName from ");
-		sql.append(ADM_ReportTemplate).append(" s left join ").append(ADM_SecurityUser).append(" u on s.runAs_id = u.bizId").append(" order by u.bizCustomer");
+		sql.append("select s.bizId, s.bizCustomer, s.name, s.startTime, s.endTime, s.cronExpression, s.scheduled, u.userName from ");
+		sql.append(admReportTemplate).append(" s left join ").append(admSecurityUser).append(" u on s.runAs_id = u.bizId").append(" order by u.bizCustomer");
 
-		try (SQLDataAccess da = EXT.newSQLDataAccess()) {
-			List<Object[]> rows = da.newSQL(sql.toString()).tupleResults();
+		try (SQLDataAccess da = EXT.newSQLDataAccess();
+				AutoClosingIterable<Object[]> rows = da.newSQL(sql.toString()).tupleIterable()) {
 			for (Object[] row : rows) {
-				User user = null;
-				if (row[7] != null) {
-					StringBuilder userPrincipalBuilder = new StringBuilder(128);
-					userPrincipalBuilder.append(row[1]); // bizCustomer
-					userPrincipalBuilder.append('/').append(row[7]); // userName
-					String userPrincipal = userPrincipalBuilder.toString();
-					user = users.get(userPrincipal);
-					if (user == null) {
-						user = retrieveUser(userPrincipal);
-						users.put(userPrincipal, user);
-					}
+				// Discard reports that are not scheduled.
+				// NB Done here as SQL for booleans is dialect specific
+				if (! Boolean.TRUE.equals(row[6])) { // scheduled
+					continue;
+				}
+				
+				StringBuilder userPrincipalBuilder = new StringBuilder(128);
+				userPrincipalBuilder.append(row[1]); // bizCustomer
+				userPrincipalBuilder.append('/').append(row[7]); // userName
+				String userPrincipal = userPrincipalBuilder.toString();
+				User user = users.get(userPrincipal);
+				if (user == null) {
+					user = retrieveUser(userPrincipal);
+					users.put(userPrincipal, user);
 				}
 
-				Map<String, Object> properties = new TreeMap<>();
-				properties.put(Bean.DOCUMENT_ID, row[0]); // bizId
-				properties.put("name", row[2]);
-				properties.put("startTime", row[3]);
-				properties.put("endTime", row[4]);
-				properties.put("cronExpression", row[5]);
-				properties.put("scheduled", row[6]);
-				properties.put("user", user);
+				JobSchedule jobSchedule = new JobSchedule();
+				jobSchedule.setUuid((String) row[0]);
+				jobSchedule.setJobName((String) row[2]);
+				jobSchedule.setStartTime((Date) row[3]);
+				jobSchedule.setStartTime((Date) row[4]);
+				jobSchedule.setCronExpression((String) row[5]);
 
-				DynamicBean reportSchedule = new DynamicBean("admin", "ReportTemplate", properties);
-				result.add(reportSchedule);
+				if (user == null) {
+					throw new DomainException("Could not schedule report " + jobSchedule.getJobName() + " as user " + userPrincipal + " does not exist");
+				}
+				result.add(new UserJobSchedule(jobSchedule, user));
 			}
 		}
 		catch (RuntimeException e) {
@@ -351,11 +398,10 @@ public class LocalDataStoreRepository extends LocalDesignRepository {
 			if (UtilImpl.CUSTOMER == null) { // multi-tenant
 				s.putParameter(Bean.CUSTOMER_NAME, customerName, false);
 			}
-			result = s.retrieveScalar(String.class);
+			result = s.scalarResult(String.class);
 		}
 		catch (Exception e) {
-			UtilImpl.LOGGER.warning("Could not retrieve public user for customer " + customerName);
-			e.printStackTrace();
+			LOGGER.warn("Could not retrieve public user for customer {}", customerName, e);
 		}
 		
 		return result;

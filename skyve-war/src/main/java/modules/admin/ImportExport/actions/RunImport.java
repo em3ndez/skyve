@@ -22,23 +22,42 @@ import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
 import org.skyve.persistence.Persistence;
 import org.skyve.util.Binder;
-import org.skyve.util.Util;
+import org.skyve.util.logging.SkyveLoggerFactory;
 import org.skyve.web.WebContext;
+import org.slf4j.Logger;
 
-import modules.admin.ImportExportColumn.ImportExportColumnBizlet;
+import modules.admin.ImportExport.ImportExportUtil;
 import modules.admin.domain.ImportExport;
-import modules.admin.domain.ImportExport.LoadType;
 import modules.admin.domain.ImportExport.RollbackErrors;
 import modules.admin.domain.ImportExportColumn;
 
+/**
+ * Imports spreadsheet data into a target document using configured bindings.
+ */
 public class RunImport implements ServerSideAction<ImportExport> {
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(RunImport.class);
 
+	/**
+	 * Executes the import workflow for an uploaded spreadsheet file.
+	 * <p>
+	 * The action validates headers, maps configured bindings, iterates data rows,
+	 * saves each resolved bean, and writes user-visible import results.
+	 *
+	 * @param bean
+	 *        the import/export configuration bean
+	 * @param webContext
+	 *        the current web context used for growl feedback
+	 * @return a result wrapping {@code bean}
+	 * @throws Exception
+	 *         if the import pipeline fails
+	 */
 	@Override
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	public ServerSideActionResult<ImportExport> execute(ImportExport bean, WebContext webContext)
 			throws Exception {
 
 		if (bean.getImportFileAbsolutePath() != null) {
-			
+
 			File importFile = new File(bean.getImportFileAbsolutePath());
 			UploadException exception = new UploadException();
 
@@ -54,7 +73,8 @@ public class RunImport implements ServerSideAction<ImportExport> {
 
 				POISheetLoader loader = new POISheetLoader(poiStream, 0, bean.getModuleName(), bean.getDocumentName(), exception);
 				loader.setDebugMode(Boolean.TRUE.equals(bean.getDetailedLogging()));
-				if (LoadType.createAll.equals(bean.getLoadType())) {
+				if (bean.getLoadType() != null
+						&& bean.getLoadType().equals(ImportExportUtil.CREATE_EVERYTHING_EVEN_IF_THERE_MIGHT_BE_DUPLICATES)) {
 					loader.setActivityType(LoaderActivityType.CREATE_ALL);
 				} else {
 					loader.setActivityType(LoaderActivityType.CREATE_FIND);
@@ -82,7 +102,8 @@ public class RunImport implements ServerSideAction<ImportExport> {
 							StringBuilder sb = new StringBuilder();
 							sb.append("The column title ").append(bean.getImportExportColumns().get(i).getColumnName());
 							sb.append(" doesn't match the title of the column in the file (").append(columnName).append(")");
-							throw new ValidationException(new Message(Binder.createIndexedBinding(ImportExport.importExportColumnsPropertyName, i), sb.toString()));
+							throw new ValidationException(new Message(
+									Binder.createIndexedBinding(ImportExport.importExportColumnsPropertyName, i), sb.toString()));
 						}
 						i++;
 					}
@@ -93,16 +114,21 @@ public class RunImport implements ServerSideAction<ImportExport> {
 				for (ImportExportColumn col : bean.getImportExportColumns()) {
 
 					String resolvedBinding = col.getBindingName();
-					if (ImportExportColumnBizlet.EXPRESSION.equals(col.getBindingName())) {
+					if (ImportExportUtil.EXPRESSION.equals(col.getBindingName())) {
 						if (col.getBindingExpression() != null) {
 							if (col.getBindingExpression().indexOf("{") > -1) {
-								resolvedBinding = col.getBindingExpression().substring(col.getBindingExpression().indexOf("{") + 1, col.getBindingExpression().lastIndexOf("}"));
+								resolvedBinding = col.getBindingExpression()
+										.substring(col.getBindingExpression().indexOf("{") + 1,
+												col.getBindingExpression().lastIndexOf("}"));
 							} else {
 								resolvedBinding = col.getBindingExpression();
 							}
 						} else {
 							StringBuilder msg = new StringBuilder();
-							msg.append("You selected '").append(ImportExportColumnBizlet.EXPRESSION).append("' for column ").append(col.getColumnName());
+							msg.append("You selected '")
+									.append(ImportExportUtil.EXPRESSION)
+									.append("' for column ")
+									.append(col.getColumnName());
 							msg.append(" but have not provided a binding expression.");
 							throw new ValidationException(new Message(msg.toString()));
 						}
@@ -115,33 +141,33 @@ public class RunImport implements ServerSideAction<ImportExport> {
 					f.setLoadAction(null); // default behaviour
 					if (col.getLoadAction() != null) {
 						switch (col.getLoadAction()) {
-						case confirmValue:
-							f.setLoadAction(LoadAction.CONFIRM_VALUE);
-							break;
-						case lookupContains:
-							f.setLoadAction(LoadAction.LOOKUP_CONTAINS);
-							break;
-						case lookupEquals:
-							f.setLoadAction(LoadAction.LOOKUP_EQUALS);
-							break;
-						case lookupLike:
-							f.setLoadAction(LoadAction.LOOKUP_LIKE);
-							break;
-						case setValue:
-							f.setLoadAction(LoadAction.SET_VALUE);
-							break;
-						default:
-							break;
+							case confirmValue:
+								f.setLoadAction(LoadAction.CONFIRM_VALUE);
+								break;
+							case lookupContains:
+								f.setLoadAction(LoadAction.LOOKUP_CONTAINS);
+								break;
+							case lookupEquals:
+								f.setLoadAction(LoadAction.LOOKUP_EQUALS);
+								break;
+							case lookupLike:
+								f.setLoadAction(LoadAction.LOOKUP_LIKE);
+								break;
+							case setValue:
+								f.setLoadAction(LoadAction.SET_VALUE);
+								break;
+							default:
+								break;
 						}
 						sb.append(" using load action ").append(col.getLoadAction().toLocalisedDescription());
 					}
 
 					if (loader.isDebugMode()) {
-						Util.LOGGER.info(sb.toString());
+						LOGGER.info(sb.toString());
 					}
 					loader.addField(f);
 					if (loader.isDebugMode()) {
-						Util.LOGGER.info("Field added at position " + f.getIndex().toString());
+						LOGGER.info("Field added at position {}", f.getIndex().toString());
 					}
 				}
 
@@ -151,7 +177,7 @@ public class RunImport implements ServerSideAction<ImportExport> {
 
 					// stop at empty row
 					if (loader.isNoData()) {
-						Util.LOGGER.info("End of import found at " + loader.getWhere());
+						LOGGER.info("End of import found at {}", loader.getWhere());
 						break;
 					}
 
@@ -159,35 +185,37 @@ public class RunImport implements ServerSideAction<ImportExport> {
 
 					if (loader.isDebugMode()) {
 						if (b == null) {
-							Util.LOGGER.info("Loaded failed at " + loader.getWhere());
+							LOGGER.info("Loaded failed at {}", loader.getWhere());
 						} else {
-							Util.LOGGER.info(b.getBizKey() + " - Loaded successfully");
+							LOGGER.info("{} - Loaded successfully", b.getBizKey());
 						}
 					}
 					try {
-						if (b != null && (b.getBizKey() == null || b.getBizKey().trim().length() == 0)) {
+						if (b != null && (b.getBizKey() == null || b.getBizKey().trim().isEmpty())) {
 							String msg = "The new record has no value for bizKey at row " + created + ".";
 							ValidationException ve = new ValidationException(new Message(msg));
 							throw ve;
 						}
 
-						b = persistence.save(b);
-						if (loader.isDebugMode()) {
-							Util.LOGGER.info(b.getBizKey() + " - Saved successfully");
+						if (b != null) {
+							b = persistence.save(b);
+							if (loader.isDebugMode()) {
+								LOGGER.info("{} - Saved successfully", b.getBizKey());
+							}
+							persistence.evictCached(b);
+							
+							// commit and start a new transaction if selected
+							if (RollbackErrors.noRollbackErrors.equals(bean.getRollbackErrors())) {
+								persistence.commit(false);
+								persistence.begin();
+							}
+							created++;
 						}
-						persistence.evictCached(b);
-
-						// commit and start a new transaction if selected
-						if (RollbackErrors.noRollbackErrors.equals(bean.getRollbackErrors())) {
-							persistence.commit(false);
-							persistence.begin();
-						}
-						created++;
-
 					} catch (ValidationException ve) {
-						ve.printStackTrace();
+						LOGGER.error(ve.getMessage(), ve);
 						StringBuilder msg = new StringBuilder();
-						msg.append("The import succeeded but the imported record could not be saved because imported values were not valid:");
+						msg.append(
+								"The import succeeded but the imported record could not be saved because imported values were not valid:");
 						msg.append("\nCheck upload values and try again.");
 						msg.append("\n");
 						for (Message m : ve.getMessages()) {
@@ -196,17 +224,18 @@ public class RunImport implements ServerSideAction<ImportExport> {
 
 						throw new ValidationException(new Message(msg.toString()));
 					} catch (OptimisticLockException ole) {
-						ole.printStackTrace();
+						LOGGER.error(ole.getMessage(), ole);
 						StringBuilder msg = new StringBuilder();
 						msg.append("The import succeeded but the save failed.");
 						msg.append(
 								"\nCheck that you don't have duplicates in your file, or multiple rows in your file are finding the same related record, or that other users are not changing related data.");
 						throw new ValidationException(new Message(msg.toString()));
 					} catch (Exception e) {
-						e.printStackTrace();
+						LOGGER.error(e.getMessage(), e);
 						StringBuilder msg = new StringBuilder();
 						msg.append("The import succeeded but saving the records failed.");
-						msg.append("\nCheck that you are uploading to the correct binding and that you have supplied enough information for the results to be saved.");
+						msg.append(
+								"\nCheck that you are uploading to the correct binding and that you have supplied enough information for the results to be saved.");
 						throw new ValidationException(new Message(msg.toString()));
 					}
 					loadedRows++;

@@ -14,12 +14,12 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import modules.admin.Group.GroupExtension;
 import modules.admin.User.UserExtension;
+import modules.admin.UserProxy.UserProxyExtension;
 import org.skyve.CORE;
 import org.skyve.domain.messages.DomainException;
 import org.skyve.domain.types.DateTime;
 import org.skyve.domain.types.Enumeration;
 import org.skyve.domain.types.Timestamp;
-import org.skyve.impl.domain.AbstractPersistentBean;
 import org.skyve.impl.domain.ChangeTrackingArrayList;
 import org.skyve.impl.domain.types.jaxb.DateTimeMapper;
 import org.skyve.impl.domain.types.jaxb.TimestampMapper;
@@ -28,12 +28,13 @@ import org.skyve.util.Util;
 
 /**
  * User
+ * <br/>
+ * System user account
  * 
  * @depend - - - WizardState
  * @depend - - - GroupSelection
  * @navhas n dataGroup 0..1 DataGroup
  * @navhas n assignedRoles 0..n UserRole
- * @navhas n contact 1 Contact
  * @navcomposed 1 roles 0..n UserRole
  * @navhas n groups 0..n Group
  * @navhas n newGroup 0..1 Group
@@ -43,7 +44,7 @@ import org.skyve.util.Util;
 @XmlType
 @XmlRootElement
 @Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-public abstract class User extends AbstractPersistentBean implements org.skyve.domain.app.admin.User {
+public abstract class User extends UserProxyExtension implements org.skyve.domain.app.admin.User {
 	/**
 	 * For Serialization
 	 * @hidden
@@ -51,22 +52,18 @@ public abstract class User extends AbstractPersistentBean implements org.skyve.d
 	private static final long serialVersionUID = 1L;
 
 	/** @hidden */
+	@SuppressWarnings("hiding")
 	public static final String MODULE_NAME = "admin";
 
 	/** @hidden */
+	@SuppressWarnings("hiding")
 	public static final String DOCUMENT_NAME = "User";
-
-	/** @hidden */
-	public static final String userNamePropertyName = "userName";
 
 	/** @hidden */
 	public static final String passwordPropertyName = "password";
 
 	/** @hidden */
 	public static final String generatedPasswordPropertyName = "generatedPassword";
-
-	/** @hidden */
-	public static final String createdDateTimePropertyName = "createdDateTime";
 
 	/** @hidden */
 	public static final String homeModulePropertyName = "homeModule";
@@ -90,7 +87,10 @@ public abstract class User extends AbstractPersistentBean implements org.skyve.d
 	public static final String passwordLastChangedIPPropertyName = "passwordLastChangedIP";
 
 	/** @hidden */
-	public static final String passwordLastChangedRegionPropertyName = "passwordLastChangedRegion";
+	public static final String passwordLastChangedCountryCodePropertyName = "passwordLastChangedCountryCode";
+
+	/** @hidden */
+	public static final String passwordLastChangedCountryNamePropertyName = "passwordLastChangedCountryName";
 
 	/** @hidden */
 	public static final String passwordResetTokenPropertyName = "passwordResetToken";
@@ -106,9 +106,6 @@ public abstract class User extends AbstractPersistentBean implements org.skyve.d
 
 	/** @hidden */
 	public static final String lastAuthenticationFailurePropertyName = "lastAuthenticationFailure";
-
-	/** @hidden */
-	public static final String contactPropertyName = "contact";
 
 	/** @hidden */
 	public static final String dataGroupPropertyName = "dataGroup";
@@ -133,9 +130,6 @@ public abstract class User extends AbstractPersistentBean implements org.skyve.d
 
 	/** @hidden */
 	public static final String contactSelectedPropertyName = "contactSelected";
-
-	/** @hidden */
-	public static final String inactivePropertyName = "inactive";
 
 	/** @hidden */
 	public static final String groupSelectionPropertyName = "groupSelection";
@@ -182,7 +176,7 @@ public abstract class User extends AbstractPersistentBean implements org.skyve.d
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum WizardState implements Enumeration {
+	public enum WizardState implements Enumeration {
 		confirmContact("confirmContact", "confirmContact"),
 		createContact("createContact", "createContact"),
 		confirmUserNameAndPassword("confirmUserNameAndPassword", "confirmUserNameAndPassword"),
@@ -254,7 +248,7 @@ public abstract class User extends AbstractPersistentBean implements org.skyve.d
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum GroupSelection implements Enumeration {
+	public enum GroupSelection implements Enumeration {
 		existingGroups("existingGroups", "Existing groups"),
 		newGroup("newGroup", "New group");
 
@@ -320,13 +314,6 @@ public abstract class User extends AbstractPersistentBean implements org.skyve.d
 	}
 
 	/**
-	 * User Name
-	 * <br/>
-	 * Length is derived from the maximum email address length from RFC 5321
-	 **/
-	private String userName;
-
-	/**
 	 * Password
 	 * <br/>
 	 * Check Password Complexity settings for minimum required strength.
@@ -339,13 +326,6 @@ public abstract class User extends AbstractPersistentBean implements org.skyve.d
 	 * Used to temporarily hold generated passwords for further processing.
 	 **/
 	private String generatedPassword;
-
-	/**
-	 * Created
-	 * <br/>
-	 * The time and date when this user account was created.
-	 **/
-	private DateTime createdDateTime;
 
 	/**
 	 * Home Module
@@ -401,13 +381,24 @@ public abstract class User extends AbstractPersistentBean implements org.skyve.d
 	private String passwordLastChangedIP;
 
 	/**
-	 * Password Last Changed Region
+	 * Password Last Changed Country Code
 	 * <br/>
-	 * Region when password was last changed
+	 * Country Code where password was last changed
 	 * <br/>
 	 * 2-letter country-code where password was last changed. Referenced in password change notification email contents.
 	 **/
-	private String passwordLastChangedRegion;
+	private String passwordLastChangedCountryCode;
+
+	/**
+	 * Password Last Changed Country
+	 * <br/>
+	 * Country where password was last changed
+	 * <br/>
+	 * User Locale Country Name where password was last changed.
+					Referenced in password change notification email contents.
+					The getter is overridden in the extension class.
+	 **/
+	private String passwordLastChangedCountryName;
 
 	/**
 	 * Password Reset Token
@@ -449,13 +440,6 @@ public abstract class User extends AbstractPersistentBean implements org.skyve.d
 	 * Time that last authentication failure occurred
 	 **/
 	private Timestamp lastAuthenticationFailure;
-
-	/**
-	 * Contact
-	 * <br/>
-	 * The contact details for the user.
-	 **/
-	private Contact contact = null;
 
 	/**
 	 * Data Group
@@ -518,13 +502,6 @@ which are implied from the groups to which they belong.
 	 * The contact selected for this user.
 	 **/
 	private Boolean contactSelected = Boolean.valueOf(false);
-
-	/**
-	 * Inactive
-	 * <br/>
-	 * Indicates that this account has been marked as inactive and no longer in use.
-	 **/
-	private Boolean inactive;
 
 	/**
 	 * Groups
@@ -627,31 +604,7 @@ which are implied from the groups to which they belong.
 	@Override
 	@XmlTransient
 	public String getBizKey() {
-return modules.admin.User.UserBizlet.bizKey(this);
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof User) && 
-					this.getBizId().equals(((User) o).getBizId()));
-	}
-
-	/**
-	 * {@link #userName} accessor.
-	 * @return	The value.
-	 **/
-	public String getUserName() {
-		return userName;
-	}
-
-	/**
-	 * {@link #userName} mutator.
-	 * @param userName	The new value.
-	 **/
-	@XmlElement
-	public void setUserName(String userName) {
-		preset(userNamePropertyName, userName);
-		this.userName = userName;
+return ((UserExtension)this).bizKey();
 	}
 
 	/**
@@ -687,26 +640,6 @@ return modules.admin.User.UserBizlet.bizKey(this);
 	@XmlElement
 	public void setGeneratedPassword(String generatedPassword) {
 		this.generatedPassword = generatedPassword;
-	}
-
-	/**
-	 * {@link #createdDateTime} accessor.
-	 * @return	The value.
-	 **/
-	public DateTime getCreatedDateTime() {
-		return createdDateTime;
-	}
-
-	/**
-	 * {@link #createdDateTime} mutator.
-	 * @param createdDateTime	The new value.
-	 **/
-	@XmlElement
-	@XmlSchemaType(name = "dateTime")
-	@XmlJavaTypeAdapter(DateTimeMapper.class)
-	public void setCreatedDateTime(DateTime createdDateTime) {
-		preset(createdDateTimePropertyName, createdDateTime);
-		this.createdDateTime = createdDateTime;
 	}
 
 	/**
@@ -838,21 +771,38 @@ return modules.admin.User.UserBizlet.bizKey(this);
 	}
 
 	/**
-	 * {@link #passwordLastChangedRegion} accessor.
+	 * {@link #passwordLastChangedCountryCode} accessor.
 	 * @return	The value.
 	 **/
-	public String getPasswordLastChangedRegion() {
-		return passwordLastChangedRegion;
+	public String getPasswordLastChangedCountryCode() {
+		return passwordLastChangedCountryCode;
 	}
 
 	/**
-	 * {@link #passwordLastChangedRegion} mutator.
-	 * @param passwordLastChangedRegion	The new value.
+	 * {@link #passwordLastChangedCountryCode} mutator.
+	 * @param passwordLastChangedCountryCode	The new value.
 	 **/
 	@XmlElement
-	public void setPasswordLastChangedRegion(String passwordLastChangedRegion) {
-		preset(passwordLastChangedRegionPropertyName, passwordLastChangedRegion);
-		this.passwordLastChangedRegion = passwordLastChangedRegion;
+	public void setPasswordLastChangedCountryCode(String passwordLastChangedCountryCode) {
+		preset(passwordLastChangedCountryCodePropertyName, passwordLastChangedCountryCode);
+		this.passwordLastChangedCountryCode = passwordLastChangedCountryCode;
+	}
+
+	/**
+	 * {@link #passwordLastChangedCountryName} accessor.
+	 * @return	The value.
+	 **/
+	public String getPasswordLastChangedCountryName() {
+		return passwordLastChangedCountryName;
+	}
+
+	/**
+	 * {@link #passwordLastChangedCountryName} mutator.
+	 * @param passwordLastChangedCountryName	The new value.
+	 **/
+	@XmlElement
+	public void setPasswordLastChangedCountryName(String passwordLastChangedCountryName) {
+		this.passwordLastChangedCountryName = passwordLastChangedCountryName;
 	}
 
 	/**
@@ -946,26 +896,6 @@ return modules.admin.User.UserBizlet.bizKey(this);
 	public void setLastAuthenticationFailure(Timestamp lastAuthenticationFailure) {
 		preset(lastAuthenticationFailurePropertyName, lastAuthenticationFailure);
 		this.lastAuthenticationFailure = lastAuthenticationFailure;
-	}
-
-	/**
-	 * {@link #contact} accessor.
-	 * @return	The value.
-	 **/
-	public Contact getContact() {
-		return contact;
-	}
-
-	/**
-	 * {@link #contact} mutator.
-	 * @param contact	The new value.
-	 **/
-	@XmlElement
-	public void setContact(Contact contact) {
-		if (this.contact != contact) {
-			preset(contactPropertyName, contact);
-			this.contact = contact;
-		}
 	}
 
 	/**
@@ -1259,24 +1189,6 @@ return modules.admin.User.UserBizlet.bizKey(this);
 	@XmlElement
 	public void setContactSelected(Boolean contactSelected) {
 		this.contactSelected = contactSelected;
-	}
-
-	/**
-	 * {@link #inactive} accessor.
-	 * @return	The value.
-	 **/
-	public Boolean getInactive() {
-		return inactive;
-	}
-
-	/**
-	 * {@link #inactive} mutator.
-	 * @param inactive	The new value.
-	 **/
-	@XmlElement
-	public void setInactive(Boolean inactive) {
-		preset(inactivePropertyName, inactive);
-		this.inactive = inactive;
 	}
 
 	/**

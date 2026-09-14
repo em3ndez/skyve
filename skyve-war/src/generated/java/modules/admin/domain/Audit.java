@@ -22,6 +22,8 @@ import org.skyve.util.Util;
 
 /**
  * Audit
+ * <br/>
+ * Records audit trail information for data changes, capturing insert, update, and delete operations with timestamps, user details, and change details for compliance and tracking purposes.
  * 
  * @depend - - - Operation
  * @navhas n comparisonVersion 0..1 Audit
@@ -32,7 +34,7 @@ import org.skyve.util.Util;
 @XmlType
 @XmlRootElement
 @Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-public class Audit extends AbstractPersistentBean {
+public class Audit extends AbstractPersistentBean implements org.skyve.archive.support.ArchiveableBean {
 	/**
 	 * For Serialization
 	 * @hidden
@@ -81,12 +83,18 @@ public class Audit extends AbstractPersistentBean {
 	/** @hidden */
 	public static final String mePropertyName = "me";
 
+	/** @hidden */
+	public static final String archiveTimestampPropertyName = "archiveTimestamp";
+
+	/** @hidden */
+	public static final String archiveFilenamePropertyName = "archiveFilename";
+
 	/**
 	 * Operation
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum Operation implements Enumeration {
+	public enum Operation implements Enumeration {
 		insert("I", "Insert"),
 		update("U", "Update"),
 		delete("D", "Delete");
@@ -212,6 +220,16 @@ public class Audit extends AbstractPersistentBean {
 	 **/
 	private Audit me = null;
 
+	/**
+	 * Archive Timestamp
+	 **/
+	private Timestamp archiveTimestamp;
+
+	/**
+	 * Archive File
+	 **/
+	private String archiveFilename;
+
 	@Override
 	@XmlTransient
 	public String getBizModule() {
@@ -245,12 +263,6 @@ public class Audit extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof Audit) && 
-					this.getBizId().equals(((Audit) o).getBizId()));
 	}
 
 	/**
@@ -475,5 +487,43 @@ public class Audit extends AbstractPersistentBean {
 			preset(mePropertyName, me);
 			this.me = me;
 		}
+	}
+
+	/**
+	 * {@link #archiveTimestamp} accessor.
+	 * @return	The value.
+	 **/
+	public Timestamp getArchiveTimestamp() {
+		return archiveTimestamp;
+	}
+
+	/**
+	 * {@link #archiveTimestamp} mutator.
+	 * @param archiveTimestamp	The new value.
+	 **/
+	@XmlElement
+	@XmlSchemaType(name = "dateTime")
+	@XmlJavaTypeAdapter(TimestampMapper.class)
+	public void setArchiveTimestamp(Timestamp archiveTimestamp) {
+		preset(archiveTimestampPropertyName, archiveTimestamp);
+		this.archiveTimestamp = archiveTimestamp;
+	}
+
+	/**
+	 * {@link #archiveFilename} accessor.
+	 * @return	The value.
+	 **/
+	public String getArchiveFilename() {
+		return archiveFilename;
+	}
+
+	/**
+	 * {@link #archiveFilename} mutator.
+	 * @param archiveFilename	The new value.
+	 **/
+	@XmlElement
+	public void setArchiveFilename(String archiveFilename) {
+		preset(archiveFilenamePropertyName, archiveFilename);
+		this.archiveFilename = archiveFilename;
 	}
 }

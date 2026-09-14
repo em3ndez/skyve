@@ -7,7 +7,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.logging.Level;
 
 import org.skyve.domain.Bean;
 import org.skyve.domain.DynamicPersistentBean;
@@ -21,6 +20,7 @@ import org.skyve.domain.types.OptimisticLock;
 import org.skyve.impl.bind.BindUtil;
 import org.skyve.impl.metadata.customer.CustomerImpl;
 import org.skyve.impl.metadata.model.document.DocumentImpl;
+import org.skyve.impl.metadata.model.document.field.Enumeration;
 import org.skyve.impl.metadata.model.document.field.Field;
 import org.skyve.impl.util.UUIDv7;
 import org.skyve.impl.util.UtilImpl;
@@ -44,15 +44,24 @@ import org.skyve.persistence.Persistence;
 import org.skyve.persistence.SQL;
 import org.skyve.util.BeanVisitor;
 import org.skyve.util.JSON;
-import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 import jakarta.annotation.Nonnull;
 
 // TODO Need to replicate HibernateListener functions for dynamic beans
 // TODO Need to treat bizVersion and bizLock which requires change detection in DynamicBean.
 // The idea here is to completely persist all beans reachable, no matter the relationship.
+/**
+ * RDBMS-backed {@link org.skyve.persistence.DynamicPersistence} implementation
+ * that persists dynamic entity instances as JSON in a designated dynamic-entity table.
+ */
 public class RDBMSDynamicPersistence implements DynamicPersistence {
 	private static final long serialVersionUID = -6445760028486705253L;
+
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(RDBMSDynamicPersistence.class);
+	private static final Logger BIZLET_LOGGER = Category.BIZLET.logger();
 
 	private static final Integer NEW_VERSION = Integer.valueOf(0);
 
@@ -68,12 +77,25 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 	private String dynamicEntityPersistentIdentifier;
 	private String dynamicRelationPersistentIdentifier;
 
+	/**
+	 * Binds this dynamic persistence instance to its owning relational persistence context.
+	 *
+	 * <p>Threading: the supplied persistence is expected to be request- or transaction-confined.
+	 * This implementation stores the reference and reuses its user context, connection, and SQL services.
+	 *
+	 * @param persistence the parent persistence that owns the JDBC connection and user context
+	 */
 	@Override
 	public void postConstruct(@SuppressWarnings("hiding") Persistence persistence) {
 		// Note that the persistence instance here has not had a user assigned
 		this.persistence = persistence;
 	}
 
+	/**
+	 * Lazily resolves and caches persistent table identifiers for dynamic entity and relation storage.
+	 *
+	 * @param c the customer used to resolve dynamic persistent metadata
+	 */
 	private void populatePersistentIdentifiersIfNecessary(@Nonnull Customer c) {
 		if (dynamicEntityPersistentIdentifier == null) {
 			dynamicEntityPersistentIdentifier = RDBMSDynamicPersistenceListModel.getDynamicEntityPersistent(c).getPersistentIdentifier();
@@ -81,7 +103,16 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		}
 	}
 	
+	/**
+	 * Persists the dynamic portion of the supplied bean graph into the dynamic entity tables.
+	 *
+	 * <p>Side effects: deletes previously stored dynamic rows reachable from the bean, walks the bean graph,
+	 * writes JSON field payloads and dynamic relations, and refreshes the first-level dynamic cache.
+	 *
+	 * @param bean the root bean whose dynamic state should be flushed
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void persist(PersistentBean bean) {
 		Customer c = persistence.getUser().getCustomer();
 		populatePersistentIdentifiersIfNecessary(c);
@@ -91,7 +122,18 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		// Do this even if bean is transient as there might be some persistent part in the graph somewhere
 		delete(c, d, bean, true);
 
-		new BeanVisitor(false, false, false) {
+		new BeanVisitor(false, false) {
+			/**
+			 * Applies dynamic cascade rules while visiting each bean in the object graph.
+			 *
+			 * @param binding the dot binding path to the visited bean from the root bean
+			 * @param visitedDocument the document metadata for the visited bean
+			 * @param owningDocument the owning document metadata for the relation traversal step
+			 * @param owningRelation the relation used to reach the visited bean
+			 * @param visitedBean the current bean being visited
+			 * @return {@code true} to continue traversal
+			 * @throws Exception if traversal or persistence preparation fails
+			 */
 			@Override
 			protected boolean accept(String binding,
 										Document visitedDocument,
@@ -108,11 +150,10 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 					}
 					else {
 						// Persist persistent embedded associations as its own DynamicEntity
-						if ((owningRelation instanceof Association) && owningRelation.isPersistent()) {
-							Association association = (Association) owningRelation;
-							if (association.getType() == AssociationType.embedded) {
-								persistOne(c, visitedDocument, (PersistentBean) visitedBean);
-							}
+						if ((owningRelation instanceof Association association) &&
+								owningRelation.isPersistent() &&
+								(association.getType() == AssociationType.embedded)) {
+							persistOne(c, visitedDocument, (PersistentBean) visitedBean);
 						}
 					}
 				}
@@ -124,22 +165,21 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 					}
 					else {
 						// Persist persistent embedded associations as its own DynamicEntity if the owner is persisted
-						if ((owningRelation instanceof Association) && owningRelation.isPersistent()) {
-							Association association = (Association) owningRelation;
-							if (association.getType() == AssociationType.embedded) {
-								// Get the owning bean
-								Bean owningBean = null;
-								int lastDotIndex = binding.lastIndexOf('.');
-								if (lastDotIndex > 0) {
-									owningBean = (Bean) BindUtil.get(bean, binding.substring(0, lastDotIndex));
-								}
-								else {
-									owningBean = bean;
-								}
-								// If the owningBean is persisted then the embedded object has been persisted also
-								if ((owningBean != null) && owningBean.isPersisted()) {
-									persistOne(c, visitedDocument, (PersistentBean) visitedBean);
-								}
+						if ((owningRelation instanceof Association association) && 
+								owningRelation.isPersistent() && 
+								(association.getType() == AssociationType.embedded)) {
+							// Get the owning bean
+							Bean owningBean = null;
+							int lastDotIndex = binding.lastIndexOf('.');
+							if (lastDotIndex > 0) {
+								owningBean = (Bean) BindUtil.get(bean, binding.substring(0, lastDotIndex));
+							}
+							else {
+								owningBean = bean;
+							}
+							// If the owningBean is persisted then the embedded object has been persisted also
+							if ((owningBean != null) && owningBean.isPersisted()) {
+								persistOne(c, visitedDocument, (PersistentBean) visitedBean);
 							}
 						}
 					}
@@ -150,6 +190,14 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		}.visit(d, bean, c);
 	}
 	
+	/**
+	 * Persists dynamic fields and dynamic references for a single bean instance.
+	 *
+	 * @param c the active customer metadata context
+	 * @param d the document definition of {@code bean}
+	 * @param bean the bean to persist
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void persistOne(@Nonnull Customer c, @Nonnull Document d, @Nonnull PersistentBean bean) {
 		final Map<String, Object> dynamicFields = new TreeMap<>();
 		// Reference name -> emebdded association indictor
@@ -165,17 +213,16 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 			
 			// if dynamic document or dynamic field or reference to dynamic document
 			boolean dynamicAttribute = dynamicDocument;
-			if (a instanceof Field) {
+			if (a instanceof Field f) {
 				if (! dynamicAttribute) {
-					dynamicAttribute = ((Field) a).isDynamic();
+					dynamicAttribute = f.isDynamic();
 				}
 				if (dynamicAttribute) {
 					String name = a.getName();
 					dynamicFields.put(name, BindUtil.get(bean, name));
 				}
 			}
-			else if (a instanceof Reference) {
-				Reference r = (Reference) a;
+			else if (a instanceof Reference  r) {
 				if (! dynamicAttribute) {
 					dynamicAttribute = BindUtil.isDynamic(c, m, r);
 				}
@@ -199,6 +246,12 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		}
 	}
 
+	/**
+	 * Inserts one row into the dynamic-entity table containing the bean identity, audit columns, and JSON payload.
+	 *
+	 * @param bean the bean being persisted
+	 * @param json the marshalled dynamic field payload
+	 */
 	private void insertEntity(@Nonnull PersistentBean bean, @Nonnull String json) {
 		// This is automatically handled by hibernate for static domain beans
 		if (bean.getBizVersion() == null) {
@@ -225,6 +278,14 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		sql.execute();
 	}
 	
+	/**
+	 * Inserts dynamic relation rows for all non-null dynamic associations and collection elements.
+	 *
+	 * @param c the active customer metadata context
+	 * @param bean the owning bean of the relations
+	 * @param references map of relation names to embedded-association flags
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void insertReferences(@Nonnull Customer c, @Nonnull PersistentBean bean, @Nonnull Map<String, Boolean> references) {
 		String insert = "insert into " + dynamicRelationPersistentIdentifier + " (bizId, bizVersion, bizLock, bizKey, bizCustomer, bizFlagComment, bizDataGroupId, bizUserId, parent_id, relatedModuleName, relatedDocumentName, relatedId, attributeName, ordinal) " + 
 							"values (:bizId, 0, :bizLock, :bizKey, :bizCustomer, null, null, :bizUserId, :parent_id, :relatedModuleName, :relatedDocumentName, :relatedId, :attributeName, :ordinal)";
@@ -282,6 +343,15 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		}
 	}
 	
+	/**
+	 * Deletes persisted dynamic rows reachable from the supplied bean.
+	 *
+	 * <p>Side effects: cascades through dynamic relations using Skyve's dynamic-delete rules,
+	 * performs referential-integrity checks against dynamic relations, triggers dynamic bizlet delete hooks,
+	 * and evicts deleted beans from the local dynamic cache.
+	 *
+	 * @param bean the root bean whose dynamic rows should be removed
+	 */
 	@Override
 	public void delete(PersistentBean bean) {
 		Customer c = persistence.getUser().getCustomer();
@@ -294,11 +364,31 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 	// Remove the lot before save, we'll put it all back there if its required
 	// Otherwise if its an actual delete, just cascade all but aggregations.
 	// NB We don't check that the document hasDynamic here so we can clean up anything that has gone from dynamic to static
+	/**
+	 * Deletes dynamic rows related to the supplied bean, optionally in pre-save cleanup mode.
+	 *
+	 * @param customer the active customer metadata context
+	 * @param document the root document metadata
+	 * @param bean the root bean to delete from dynamic storage
+	 * @param beforeSave when {@code true}, performs pre-save cleanup semantics instead of full delete semantics
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void delete(@Nonnull Customer customer, @Nonnull Document document, @Nonnull PersistentBean bean, boolean beforeSave) {
 		final Map<String, Bean> bizIdsToDelete = new TreeMap<>();
 		
 		// Call Bizlet.preDelete() on anything that will cascade delete
-		new BeanVisitor(false, false, false) {
+		new BeanVisitor(false, false) {
+			/**
+			 * Determines whether each visited bean should be included in the dynamic delete set.
+			 *
+			 * @param binding the dot binding path to the visited bean from the root bean
+			 * @param visitedDocument the document metadata for the visited bean
+			 * @param owningDocument the owning document metadata for the relation traversal step
+			 * @param owningRelation the relation used to reach the visited bean
+			 * @param visitedBean the current bean being visited
+			 * @return {@code true} to continue traversal into children, otherwise {@code false}
+			 * @throws Exception if traversal fails
+			 */
 			@Override
 			protected boolean accept(String binding,
 										Document visitedDocument,
@@ -320,8 +410,7 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 					return true;
 				}
 
-				if (owningRelation instanceof Reference) {
-					Reference reference = (Reference) owningRelation;
+				if (owningRelation instanceof Reference reference) {
 					ReferenceType type = reference.getType();
 					// Requires cascading
 					if (! (AssociationType.aggregation.equals(type) || CollectionType.aggregation.equals(type))) {
@@ -412,6 +501,13 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		bizIdsToDelete.clear();
 	}
 
+	/**
+	 * Executes dynamic bizlet pre-delete interception and callback hooks.
+	 *
+	 * @param customer the active customer
+	 * @param document the dynamic document containing the bizlet
+	 * @param bean the bean about to be deleted
+	 */
 	private static void callBizletPreDelete(@Nonnull Customer customer, @Nonnull Document document, @Nonnull PersistentBean bean) {
 		try {
 			CustomerImpl internalCustomer = (CustomerImpl) customer;
@@ -419,9 +515,9 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 			if (! vetoed) {
 				Bizlet<Bean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 				if (bizlet != null) {
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preDelete", "Entering " + bizlet.getClass().getName() + ".preDelete: " + bean);
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.preDelete: {}", bizlet.getClass().getName(), bean);
 					bizlet.preDelete(bean);
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preDelete", "Exiting " + bizlet.getClass().getName() + ".preDelete");
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.preDelete", bizlet.getClass().getName());
 				}
 				internalCustomer.interceptAfterPreDelete(bean);
 			}
@@ -440,6 +536,13 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		}
 	}
 	
+	/**
+	 * Executes dynamic bizlet post-delete interception and callback hooks.
+	 *
+	 * @param customer the active customer
+	 * @param document the dynamic document containing the bizlet
+	 * @param bean the bean that was deleted
+	 */
 	private static void callBizletPostDelete(@Nonnull Customer customer, @Nonnull Document document, @Nonnull PersistentBean bean) {
 		try {
 			CustomerImpl internalCustomer = (CustomerImpl) customer;
@@ -447,9 +550,9 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 			if (! vetoed) {
 				Bizlet<Bean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 				if (bizlet != null) {
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postDelete", "Entering " + bizlet.getClass().getName() + ".postDelete: " + bean);
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.postDelete: {}", bizlet.getClass().getName(), bean);
 					bizlet.postDelete(bean);
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postDelete", "Exiting " + bizlet.getClass().getName() + ".postDelete");
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.postDelete", bizlet.getClass().getName());
 				}
 				internalCustomer.interceptAfterPostDelete(bean);
 			}
@@ -538,6 +641,18 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		}
 	}
 	
+	/**
+	 * Populates a bean from a tuple row and then resolves dynamic references.
+	 *
+	 * @param u the current user
+	 * @param c the current customer
+	 * @param m the module containing the document
+	 * @param d the document definition for the bean
+	 * @param bean the bean to populate
+	 * @param tuple the tuple row from dynamic storage
+	 * @throws Exception if type conversion or related-bean population fails
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void populate(@Nonnull User u,
 							@Nonnull Customer c,
 							@Nonnull Module m,
@@ -563,28 +678,29 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		for (Attribute a : d.getAllAttributes(c)) {
 			// if dynamic document or dynamic field or reference to dynamic document
 			boolean dynamicAttribute = dynamicDocument;
-			if (a instanceof Field) {
+			if (a instanceof Field f) {
 				if (! dynamicAttribute) {
-					dynamicAttribute = ((Field) a).isDynamic();
+					dynamicAttribute = f.isDynamic();
 				}
 				if (dynamicAttribute) {
 					String name = a.getName();
 					Object value = json.get(name);
-					Class<?> type = a.getAttributeType().getImplementingType();
+					Class<?> type = (a instanceof Enumeration) ? String.class : a.getImplementingType();
+					
 					if ((value != null) && (! type.equals(value.getClass()))) {
 						try {
 							value = BindUtil.fromSerialised(type, value.toString());
 						}
 						catch (Exception e) {
-							Util.LOGGER.warning("RDBMSDynamicPersistence: Schema evolution problem on populate of " + d.getOwningModuleName() + "." + d.getName() + "#" + bean.getBizId() + " :- [" + value + "] cannot be coerced to type " + type);
-							e.printStackTrace();
+                            LOGGER.warn(
+                                    "RDBMSDynamicPersistence: Schema evolution problem on populate of {}.{}#{} :- [{}] cannot be coerced to type {}",
+                                    d.getOwningModuleName(), d.getName(), bean.getBizId(), value, type, e);
 						}
 					}
 					bean.setDynamic(name, value);
 				}
 			}
-			else if (a instanceof Reference) {
-				Reference r = (Reference) a;
+			else if (a instanceof Reference r) {
 				if (! dynamicAttribute) {
 					dynamicAttribute = BindUtil.isDynamic(c, m, r);
 				}
@@ -597,7 +713,15 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		populateReferences(bean, dynamicReferenceNames);
 	}
 
-	private void populateReferences(@Nonnull PersistentBean bean, @Nonnull Set<String> dynamicReferenceNames) throws Exception {
+	/**
+	 * Populates dynamic reference attributes by resolving related identifiers in the dynamic relation table.
+	 *
+	 * @param bean the owning bean whose references are to be populated
+	 * @param dynamicReferenceNames the set of dynamic reference attribute names to populate
+	 * @throws Exception if related bean retrieval fails
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private void populateReferences(@Nonnull PersistentBean bean, @Nonnull Set<String> dynamicReferenceNames) {
 		String select = "select relatedModuleName, relatedDocumentName, relatedId, attributeName from " + dynamicRelationPersistentIdentifier + " where parent_id = :bizId order by attributeName, ordinal";
 		// Note - this following SQL gets a list instead of iterating as this method is recursive (through the populate() call for relatedBean).
 		// Hibernate can't manage multiple nested ScrollableResults for certain databases (MySQL) and closes the encapsulated ResultSet of the outer ScrollableResults prematurely.
@@ -635,36 +759,70 @@ public class RDBMSDynamicPersistence implements DynamicPersistence {
 		}
 	}
 
+	/**
+	 * Clears the local first-level cache of populated dynamic beans.
+	 */
 	@Override
 	public void evictAllCached() {
 		dynamicFirstLevelCache.clear();
 	}
 	
+	/**
+	 * Removes the supplied bean from the local first-level dynamic cache.
+	 *
+	 * @param bean the bean whose cached instance should be evicted
+	 */
 	@Override
 	public void evictCached(Bean bean) {
 		dynamicFirstLevelCache.remove(bean.getBizId());
 	}
 	
+	/**
+	 * Reports whether the supplied bean is currently present in the local dynamic cache.
+	 *
+	 * @param bean the bean to test
+	 * @return {@code true} when the bean has already been populated into this instance's cache
+	 */
 	@Override
 	public boolean cached(Bean bean) {
 		return dynamicFirstLevelCache.containsKey(bean.getBizId());
 	}
 
+	/**
+	 * Starts dynamic persistence work for the current unit of work.
+	 *
+	 * <p>This implementation is a no-op because it reuses the parent persistence connection and transaction.
+	 */
 	@Override
 	public void begin() {
 		// nothing to do as we use the parent persistence's connection
 	}
 
+	/**
+	 * Rolls back dynamic persistence work for the current unit of work.
+	 *
+	 * <p>This implementation is a no-op because rollback is delegated to the parent persistence instance.
+	 */
 	@Override
 	public void rollback() {
 		// nothing to do as we use the parent persistence's connection
 	}
 
+	/**
+	 * Commits dynamic persistence work for the current unit of work.
+	 *
+	 * <p>This implementation is a no-op because commit is delegated to the parent persistence instance.
+	 */
 	@Override
 	public void commit() {
 		// nothing to do as we use the parent persistence's connection
 	}
 	
+	/**
+	 * Releases dynamic persistence resources for the current unit of work.
+	 *
+	 * <p>This implementation is a no-op because lifecycle ownership remains with the parent persistence instance.
+	 */
 	@Override
 	public void close() {
 		// nothing to do as we use the parent persistence's connection

@@ -25,6 +25,19 @@ import com.google.common.base.MoreObjects;
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 
+/**
+ * Abstract base for all runtime model implementations (documents, reports, charts).
+ *
+ * <p>Maintains the ordered list of attributes, the set of implemented interfaces,
+ * and the persistence descriptor for the model.  Provides resolvers for inherited
+ * attributes, candidate keys, dynamic attributes, and related documents.
+ *
+ * <p>Threading: not thread-safe.  Instances are populated during metadata loading
+ * and are read-only once placed in the repository cache.
+ *
+ * @see org.skyve.metadata.model.Model
+ * @see org.skyve.impl.metadata.AbstractMetaDataMap
+ */
 public abstract class ModelImpl extends AbstractMetaDataMap implements Model {
 	private static final long serialVersionUID = -9075615768687125545L;
 
@@ -86,7 +99,7 @@ public abstract class ModelImpl extends AbstractMetaDataMap implements Model {
 	}
 	
 	@Override
-	public @Nonnull List<? extends Attribute> getAllAttributes(@Nonnull Customer customer) {
+	public @Nonnull List<? extends Attribute> getAllAttributes(Customer customer) {
 		List<Attribute> result = new ArrayList<>(attributes);
 		Extends currentInherits = inherits;
 		if (currentInherits != null) {
@@ -190,6 +203,7 @@ public abstract class ModelImpl extends AbstractMetaDataMap implements Model {
 		hasDynamic = null;
 	}
 	
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void determineHasDynamic(Set<String> modoc) {
 		Customer c = CORE.getCustomer();
 		String omn = getOwningModuleName();
@@ -206,8 +220,8 @@ public abstract class ModelImpl extends AbstractMetaDataMap implements Model {
 				hasDynamic = Boolean.TRUE;
 				return;
 			}
-			if (a instanceof Relation) {
-				String dn = ((Relation) a).getDocumentName();
+			if (a instanceof Relation relation) {
+				String dn = relation.getDocumentName();
 				ModelImpl rd = (ModelImpl) m.getDocument(c, dn);
 				if (modoc.add(rd.getOwningModuleName() + "." + dn)) {
 					if (rd.hasDynamic == null) {
@@ -277,7 +291,7 @@ public abstract class ModelImpl extends AbstractMetaDataMap implements Model {
 	public void setAbstract(boolean abstractClass) {
 		this.abstractClass = abstractClass;
 	}
-
+	
     @Override
     public String toString() {
 

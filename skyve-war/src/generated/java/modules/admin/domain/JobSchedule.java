@@ -17,6 +17,8 @@ import org.skyve.impl.domain.types.jaxb.DateTimeMapper;
 
 /**
  * Job Schedule Entry
+ * <br/>
+ * JobSchedule provides a user-friendly interface to configure automated job scheduling using cron expressions, which are passed to Quartz for execution.
  * 
  * @navhas n runAs 1 UserProxy
  * @stereotype "persistent"
@@ -1250,13 +1252,7 @@ public abstract class JobSchedule extends AbstractPersistentBean {
 	@Override
 	@XmlTransient
 	public String getBizKey() {
-return modules.admin.JobSchedule.JobScheduleBizlet.getBizKey(this);
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof JobSchedule) && 
-					this.getBizId().equals(((JobSchedule) o).getBizId()));
+return ((JobScheduleExtension)this).bizKey();
 	}
 
 	/**

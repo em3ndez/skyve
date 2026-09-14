@@ -4,11 +4,16 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
+import java.util.function.UnaryOperator;
 
+import org.skyve.EXT;
+import org.skyve.content.AttachmentContent;
 import org.skyve.domain.Bean;
 import org.skyve.domain.PersistentBean;
 import org.skyve.impl.bind.BindUtil;
+import org.skyve.impl.generate.ViewRenderer;
 import org.skyve.impl.metadata.customer.CustomerImpl;
 import org.skyve.impl.metadata.model.document.DocumentImpl;
 import org.skyve.impl.metadata.model.document.InverseOne;
@@ -72,9 +77,9 @@ import org.skyve.impl.metadata.view.widget.bound.input.CheckMembership;
 import org.skyve.impl.metadata.view.widget.bound.input.ColourPicker;
 import org.skyve.impl.metadata.view.widget.bound.input.Combo;
 import org.skyve.impl.metadata.view.widget.bound.input.Comparison;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentImage;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentLink;
+import org.skyve.impl.metadata.view.widget.bound.input.ContentDisplay;
 import org.skyve.impl.metadata.view.widget.bound.input.ContentSignature;
+import org.skyve.impl.metadata.view.widget.bound.input.ContentUpload;
 import org.skyve.impl.metadata.view.widget.bound.input.Geometry;
 import org.skyve.impl.metadata.view.widget.bound.input.GeometryMap;
 import org.skyve.impl.metadata.view.widget.bound.input.HTML;
@@ -102,11 +107,12 @@ import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.AbstractWebContext;
 import org.skyve.impl.web.DynamicImageServlet;
 import org.skyve.impl.web.WebUtil;
+import org.skyve.impl.web.content.ContentMediaClassifier;
+import org.skyve.impl.web.content.ContentMediaClassifier.ContentMediaKind;
 import org.skyve.metadata.FormatterName;
 import org.skyve.metadata.MetaDataException;
 import org.skyve.metadata.controller.ImplicitActionName;
 import org.skyve.metadata.model.Attribute;
-import org.skyve.metadata.model.Attribute.AttributeType;
 import org.skyve.metadata.model.document.Association;
 import org.skyve.metadata.model.document.Bizlet.DomainValue;
 import org.skyve.metadata.model.document.Collection;
@@ -133,10 +139,23 @@ import org.skyve.util.Binder;
 import org.skyve.util.Binder.TargetMetaData;
 import org.skyve.util.JSON;
 import org.skyve.util.OWASP;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
 import org.skyve.web.WebContext;
+
+import jakarta.annotation.Nonnull;
 
 // Note: We cannot cache the bindings required for each view as it may be different 
 // depending on the security principal
+/**
+ * Collects SmartClient view bindings and shapes JSON payloads for edit/create
+ * view rendering and apply operations.
+ *
+ * <p>Instances are request scoped. They keep per-request state such as generated
+ * format fields, child binding trees, and managed-content media-kind lookup
+ * cache, so they are not thread-safe and must not be shared between requests.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate SmartClient view JSON/markup fragments.
 public class ViewJSONManipulator extends ViewVisitor {
 	// Generate href expressions for references for smart client
 	private class HrefProcessor extends ReferenceProcessor {
@@ -181,7 +200,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 		public void processImplicitActionReference(ImplicitActionReference reference) {
 			ImplicitActionName implicitAction = reference.getImplicitActionName();
 
-			if (visitingDataWidget) {
+			if (processingDataWidget) {
 				if (ImplicitActionName.Remove.equals(implicitAction)) {
 					htmlGuts.append("javascript:").append(generateWidgetId());
 					htmlGuts.append(".remove('{bizId}')");
@@ -280,6 +299,16 @@ public class ViewJSONManipulator extends ViewVisitor {
 	HrefProcessor hrefProcessor = new HrefProcessor();
 	private StringBuilder htmlGuts = new StringBuilder(64);
 
+	/**
+	 * Request-local media-kind cache keyed by managed content id.
+	 *
+	 * <p>This avoids repeated content-manager metadata lookups when the same content
+	 * id appears in multiple auto content bindings during one SmartClient payload
+	 * render.
+	 */
+	private Map<String, ContentMediaKind> contentMediaKindCache = new TreeMap<>();
+
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	protected ViewJSONManipulator(User user,
 									Module module, 
 									Document document, 
@@ -316,10 +345,16 @@ public class ViewJSONManipulator extends ViewVisitor {
 		result.put(AbstractWebContext.CONTEXT_NAME, webId);
 		
 		// put the view title in
-		result.put("_title", BindUtil.formatMessage(view.getLocalisedTitle(), bean));
+		String title = BindUtil.formatMessage(view.getLocalisedTitle(), bean);
+		if (ViewRenderer.shouldEscape(view.getEscapeTitle())) {
+			title = OWASP.escapeHtml(title);
+		}
+		result.put("_title", title);
 
 		// put the view changed/dirty flag in
-		result.put("_changed", Boolean.valueOf(webContextToReference.getCurrentBean().hasChanged()));
+		Bean currentBean = webContextToReference.getNullableCurrentBean();
+		Boolean changed = (currentBean == null) ? Boolean.FALSE : Boolean.valueOf(currentBean.hasChanged());
+		result.put("_changed", changed);
 
 		// put web context growls and messages in
 		List<Map<String, String>> messages = webContextToReference.getGrowls();
@@ -354,7 +389,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 		}
 		else { // reference bindings (sub-bindings)
 			Object value = BindUtil.get(bean, bindingPrefix);
-			if (value instanceof List) {
+			if (value instanceof List<?>) {
 				@SuppressWarnings("unchecked")
 				List<Bean> list = (List<Bean>) value;
 				List<Map<String, Object>> values = new ArrayList<>(list.size());
@@ -367,9 +402,9 @@ public class ViewJSONManipulator extends ViewVisitor {
 			}
 			else {
 				if (value == null) {
-					UtilImpl.LOGGER.warning(String.format("Careful - the value of binding %s for %s yields null",
+					LOGGER.warn("Careful - the value of binding {} for {} yields null",
 															bindingPrefix, 
-															bean));
+															bean);
 				}
 				else {
 					Bean currentBean = (Bean) value;
@@ -381,14 +416,15 @@ public class ViewJSONManipulator extends ViewVisitor {
 		}
 	}
 	
-	protected void addBindingsAndFormatValues(ViewBindings bindings,
-												Bean aBean,
-												Map<String, Object> toAddTo,
-												String webId)
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // Complexity OK
+	protected void addBindingsAndFormatValues(@Nonnull ViewBindings bindings,
+												@Nonnull Bean aBean,
+												@Nonnull Map<String, Object> toAddTo,
+												@Nonnull String webId)
 	throws Exception {
 		// Add bindings
 		for (String binding : bindings.getBindings()) {
-			ViewBinding viewBinding = bindings.getBinding(binding);
+			ViewBinding viewBinding = Objects.requireNonNull(bindings.getBinding(binding));
 			Object value = BindUtil.get(aBean, binding);
 			if ((value == null) && viewBinding.isInstantiate()) {
 				Module m = customer.getModule(aBean.getBizModule());
@@ -398,16 +434,15 @@ public class ViewJSONManipulator extends ViewVisitor {
 			boolean escape = viewBinding.isEscape();
 			Sanitisation sanitise = viewBinding.getSanitise();
 			// escape and sanitise string values if needed
-			if ((escape || ((sanitise != null) && (! Sanitisation.none.equals(sanitise)))) && (value instanceof String)) {
-				String string = (String) value;
+			if ((escape || ((sanitise != null) && (! Sanitisation.none.equals(sanitise)))) && (value instanceof String string)) {
 				string = OWASP.sanitise(sanitise, string);
 				if (escape) {
 					string = OWASP.escapeHtml(string);
 				}
 				value = string;
 			}
-			else if (value instanceof Bean) {
-				value = ((Bean) value).getBizId();
+			else if (value instanceof Bean b) {
+				value = b.getBizId();
 			}
 			// Coerce boolean and numbers into strings if they have a domain defined
 			// because SmartClient needs strings in its FormItem "valueMap" property 
@@ -416,7 +451,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 				Attribute attribute = null;
 				try {
 					TargetMetaData target = BindUtil.getMetaDataForBinding(customer, module, document, binding);
-					attribute = (target != null) ? target.getAttribute() : null;
+					attribute = target.getAttribute();
 				}
 				catch (@SuppressWarnings("unused") MetaDataException e) {
 					// not an attribute
@@ -428,6 +463,9 @@ public class ViewJSONManipulator extends ViewVisitor {
 			}
 			toAddTo.put(BindUtil.sanitiseBinding(binding), value);
 		}
+
+		// Add media kinds
+		addAutoContentMediaKinds(bindings, aBean, toAddTo);
 		
 		// Add formats
 		String bindingKey = bindings.getBindingPrefix();
@@ -444,10 +482,14 @@ public class ViewJSONManipulator extends ViewVisitor {
 				// now format the message
 				Sanitisation sanitisation = viewFormat.getSanitise();
 				if (viewFormat.isEscape()) {
-					format = BindUtil.formatMessage(format, displayValue -> OWASP.sanitiseAndEscapeHtml(sanitisation, displayValue), aBean);
+					format = BindUtil.formatMessage(format,
+											(UnaryOperator<String>) displayValue -> OWASP.sanitiseAndEscapeHtml(sanitisation, displayValue),
+											aBean);
 				}
 				else {
-					format = BindUtil.formatMessage(format, displayValue -> OWASP.sanitise(sanitisation, displayValue), aBean);
+					format = BindUtil.formatMessage(format,
+											(UnaryOperator<String>) displayValue -> OWASP.sanitise(sanitisation, displayValue),
+											aBean);
 				}
 				// remove the display style if its true
 				format = format.replace("display:true;", "");
@@ -463,10 +505,94 @@ public class ViewJSONManipulator extends ViewVisitor {
 			constructJSONObjectFromBinding(bindings.putOrGetChild(childBinding, null), toAddTo, webId);
 		}
 	}
+
+	/**
+	 * For any auto content bindings in the given bindings, adds companion media kind entries to the given map.
+	 *
+	 * <p>For each auto content binding, if the binding value is a non-blank string, it is treated as a content id
+	 * and looked up in the content manager to determine the media kind. A companion entry is then added to the
+	 * map with a key of "_" + the sanitised binding and a value of the media kind name.
+	 *
+	 * @param bindings the view bindings to check for auto content bindings
+	 * @param aBean the bean to evaluate the binding values against
+	 * @param toAddTo the map to add media kind entries to
+	 */
+	private void addAutoContentMediaKinds(@Nonnull ViewBindings bindings,
+											@Nonnull Bean aBean,
+											@Nonnull Map<String, Object> toAddTo) {
+		for (String binding : bindings.getAutoContentBindings()) {
+			Object value = BindUtil.get(aBean, binding);
+			if (value instanceof String contentId) {
+				String trimmed = contentId.trim();
+				if (! trimmed.isEmpty()) {
+					ContentMediaKind mediaKind = resolveContentMediaKind(trimmed);
+					toAddTo.put(companionFieldName(binding), mediaKind.name());
+				}
+			}
+		}
+	}
+
+	/**
+	 * For a given auto content binding, returns the name of the companion media kind entry.
+	 *
+	 * <p>The companion media kind entry is used to store the media kind for an auto content binding in the JSON
+	 * payload. The key is generated by prefixing the sanitised binding with an underscore.
+	 *
+	 * @param binding the auto content binding to generate the companion field name for
+	 * @return the name of the companion media kind entry for the given binding
+	 * 
+	 */
+	static @Nonnull String companionFieldName(@Nonnull String binding) {
+		return '_' + BindUtil.sanitiseBinding(binding);
+	}
+
+	/**
+	 * Resolves the media kind for a given content id, using a request-local cache to avoid repeated lookups.
+	 *
+	 * <p>If the media kind for the given content id is not already in the cache, it is loaded using
+	 * {@link #loadContentMediaKind(String)} and then stored in the cache before being returned.
+	 *
+	 * @param contentId the content id to resolve the media kind for
+	 * @return the resolved media kind for the given content id
+	 */
+	protected @Nonnull ContentMediaKind resolveContentMediaKind(@Nonnull String contentId) {
+		ContentMediaKind result = contentMediaKindCache.get(contentId);
+		if (result == null) {
+			result = loadContentMediaKind(contentId);
+			contentMediaKindCache.put(contentId, result);
+		}
+		return result;
+	}
+
+	/**
+	 * Loads the media kind for a given content id from the content manager.
+	 *
+	 * <p>This method is called by {@link #resolveContentMediaKind(String)} when the media kind for a content id is
+	 * not already in the cache. It attempts to load the content using the content manager and classify its media
+	 * kind based on its content type and file name. If the content cannot be loaded for any reason, it defaults
+	 * to {@link ContentMediaKind#link}.
+	 *
+	 * @param contentId the content id to load the media kind for
+	 * @return the loaded media kind for the given content id, or {@link ContentMediaKind#link} if it cannot be loaded
+	 */
+	@SuppressWarnings("static-method")
+	protected @Nonnull ContentMediaKind loadContentMediaKind(@Nonnull String contentId) {
+		// Instance seam lets tests prove request caching without a live content store.
+		try (org.skyve.content.ContentManager cm = EXT.newContentManager()) {
+			AttachmentContent content = cm.getAttachment(contentId);
+			return (content == null) ?
+						ContentMediaKind.link :
+						ContentMediaClassifier.classify(content.getContentType(), content.getFileName());
+		}
+		catch (@SuppressWarnings("unused") Exception e) {
+			return ContentMediaKind.link;
+		}
+	}
+	
 /*	
 	private static void displayViewBindings(ViewBindings bindings) {
 		for (String binding : bindings.getBindings()) {
-			UtilImpl.LOGGER.info(bindings.getFullyQualifiedBindingPrefix() + " - " + bindings.getBindingPrefix() + " : " + binding);
+			UtilImpl.LOGGER.info("{} - {} : {}", bindings.getFullyQualifiedBindingPrefix(), bindings.getBindingPrefix(), binding);
 		}
 		
 		for (String binding : bindings.getChildren()) {
@@ -483,7 +609,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 		applyJSON(bindingTree, document, values, bean, persistence, webContext);
 	}
 
-	@SuppressWarnings("unchecked")
+	@SuppressWarnings({"unchecked", "java:S3776"}) // Complexity OK
 	protected void applyJSON(ViewBindings bindings,
 								Document appliedToDoc,
 								Map<String, Object> values,
@@ -491,12 +617,16 @@ public class ViewJSONManipulator extends ViewVisitor {
 								AbstractPersistence persistence,
 								WebContext webContext)
 	throws Exception {
-//UtilImpl.LOGGER.info("FQ BINDING PREFIX = " + bindings.getFullyQualifiedBindingPrefix());
+//UtilImpl.LOGGER.info("FQ BINDING PREFIX = {}", bindings.getFullyQualifiedBindingPrefix());
 
 		applyJSONProperties(bindings, appliedToDoc, values, appliedTo, persistence, webContext);
 
 		for (String childBindingPrefix : bindings.getChildren()) {
 			ViewBindings childBindings = bindings.putOrGetChild(childBindingPrefix, null);
+			String unsanitisedChildBindingPrefix = BindUtil.unsanitiseBinding(childBindingPrefix);
+			if (unsanitisedChildBindingPrefix == null) {
+				continue;
+			}
 			// Get the reference target metadata
 			TargetMetaData target = BindUtil.getMetaDataForBinding(customer, 
 																	module, 
@@ -507,8 +637,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 		    	throw new MetaDataException("No target relation for binding " + childBindingPrefix);
 		    }
 			Document relatedDocument = module.getDocument(customer, relation.getDocumentName());
-			AttributeType relationType = relation.getAttributeType();
-			if (List.class.equals(relationType.getImplementingType())) { // relation is a collection (or many to many inverse)
+			if (List.class.equals(relation.getImplementingType())) { // relation is a collection (or many to many inverse)
 				// We get the JSON list and apply all elements to the existing elements
 				// in the persisted list.
 				//*Any persisted elements that are not present in the JSON list are removed
@@ -520,7 +649,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 				// the rows should exist this will be a List of bizId Strings.
 				// If the rows are aggregated/composed (grid widget),
 				// then each row property is updated to add or modify the rows.
-				List<Object> requestList = (List<Object>) BindUtil.get(values, BindUtil.unsanitiseBinding(childBindingPrefix));
+				List<Object> requestList = (List<Object>) BindUtil.get(values, unsanitisedChildBindingPrefix);
 				// If the requestList is null then it was not sent from the client - it is irrelevant.
 				// A data grid binding can be struck out of the request when a zoom out occurs.
 				// This ensures that old values are not updated when the view is refreshed - see EditView.js where action == 'ZoomOut'
@@ -531,8 +660,8 @@ public class ViewJSONManipulator extends ViewVisitor {
 				// sort requestList by bizOrdinal if appropriate
 //				if (! requestList.isEmpty()) {
 //					Object first = requestList.get(0);
-//					if (first instanceof Map) {
-//						if (((Map<String, Object>) first).containsKey(ChildBean.ORDINAL_KEY)) {
+//					if (first instanceof Map map) {
+//						if (map.containsKey(ChildBean.ORDINAL_KEY)) {
 //							BindUtil.sortCollectionByOrdering(requestList, CORE.newOrdering(ChildBean.ORDINAL_KEY, SortDirection.ascending));
 //						}
 //					}
@@ -551,8 +680,8 @@ public class ViewJSONManipulator extends ViewVisitor {
 					for (Object requestListItem : requestList) {
 						String thisBizId = null;
 						Map<String, Object> thisMap = null;
-						if (requestListItem instanceof String) { // reference
-							thisBizId = (String) requestListItem;
+						if (requestListItem instanceof String bizId) { // reference
+							thisBizId = bizId;
 						}
 						else {
 							thisMap = (Map<String, Object>) requestListItem;
@@ -565,6 +694,9 @@ public class ViewJSONManipulator extends ViewVisitor {
 	
 						if (thisBean == null) { // DNE in beanList
 							if (thisMap == null) { // reference
+								if (thisBizId == null) {
+									throw new MetaDataException("Missing bizId for child binding " + childBindingPrefix);
+								}
 								thisBean = WebUtil.findReferencedBean(relatedDocument, thisBizId, persistence, bean, webContext);
 							}
 							else {
@@ -605,23 +737,20 @@ public class ViewJSONManipulator extends ViewVisitor {
 						BindUtil.removeElementFromCollection(appliedTo, childBindingPrefix, newIndex);
 					}
 					
-					if (relation instanceof Collection) { // NB it could be an inverse
-						BindUtil.sortCollectionByMetaData(appliedTo, customer, module, appliedToDoc, childBindingPrefix);
-					}
+					BindUtil.orderByMetaData(appliedTo, childBindingPrefix);
 				}
 			}
 			else { // relation is an association (or one to one / one to many inverse)
 				// Get the existing bean referenced
 				Bean referencedBean = (Bean) BindUtil.get(appliedTo, childBindingPrefix);
-				Object requestObject = BindUtil.get(values, BindUtil.unsanitiseBinding(childBindingPrefix));
+				Object requestObject = BindUtil.get(values, unsanitisedChildBindingPrefix);
 				if (requestObject == null) {
 					if (referencedBean != null) {
 						BindUtil.setAssociation(appliedTo, childBindingPrefix, null);
 					}
 				}
 				else {
-					if (requestObject instanceof String) { // a bizId
-						String requestBizId = (String) requestObject;
+					if (requestObject instanceof String requestBizId) { // a bizId
 						// find the existing bean with retrieve if not the same as in the request
 						if ((referencedBean == null) || (! referencedBean.getBizId().equals(requestBizId))) {
 							referencedBean = WebUtil.findReferencedBean(relatedDocument, requestBizId, persistence, bean, webContext);
@@ -650,7 +779,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 										WebContext webContext)
 	throws Exception {
 		for (String binding : bindings.getBindings()) {
-//UtilImpl.LOGGER.info(currentBindings.getFullyQualifiedBindingPrefix() + " : " + binding);
+//UtilImpl.LOGGER.info("{} : {}", currentBindings.getFullyQualifiedBindingPrefix(), binding);
 			ViewBinding vb = bindings.getBinding(binding);
 			if ((vb != null) && vb.isMutable()) {
 				applyJSONProperty(documentToApply, binding, valuesToApply, beanToApplyTo, persistence, webContext);
@@ -658,6 +787,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 		}
 	}
 	
+	@SuppressWarnings("java:S3776") // Complexity OK
 	protected void applyJSONProperty(Document startingDocument,
 										String binding, 
 										Map<String, Object> values, 
@@ -692,8 +822,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 				// Don't try to traverse an embedded association or inverseOne object here recursively.
 				// The correct bindings are created when visiting the view during the apply.
 				// So here we only need to effect the replacement of bizId Strings with retrieved objects
-				else if (relatedValue instanceof String) { // a bizId (not a JSON object)
-					String relatedId = (String) relatedValue;
+				else if (relatedValue instanceof String relatedId) { // a bizId (not a JSON object)
 					// old value id and new value id are different
 					if ((oldRelatedBean == null) || (! oldRelatedBean.getBizId().equals(relatedId))) {
 						newRelatedBean = WebUtil.findReferencedBean(relatedDocument, relatedId, persistence, bean, webContext);
@@ -710,17 +839,17 @@ public class ViewJSONManipulator extends ViewVisitor {
 			else if ((attribute != null) ||
 					binding.endsWith(PersistentBean.FLAG_COMMENT_NAME) ||
 					binding.endsWith(Bean.ORDINAL_NAME)) {
-//UtilImpl.LOGGER.info("SET " + targetBean + '.' + binding + " = " + values.get(valueKey));
+//UtilImpl.LOGGER.info("SET {}.{} = {}", targetBean, binding, values.get(valueKey));
 				Object value = values.get(valueKey);
-				if (value instanceof String) {
-					value = OWASP.unescapeHtmlChars((String) value);
+				if (value instanceof String string) {
+					value = OWASP.unescapeHtmlChars(string);
 				}
 				BindUtil.populateProperty(user, targetBean, binding, value, true);
 			}
 		}
 		catch (MetaDataException e) {
 			// do nothing useful as the binding isn't an attribute
-			UtilImpl.LOGGER.warning(e.toString());
+			LOGGER.warn(e.toString());
 		}
 	}
 	
@@ -770,6 +899,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 	 * 
 	 * @param binding	The binding for the domain values lookup.
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void putVariantAndDynamicDomainValuesInValueMaps(String binding) {
 		String safeBinding = BindUtil.sanitiseBinding(binding);
 		if (! valueMaps.containsKey(safeBinding)) {
@@ -802,8 +932,8 @@ public class ViewJSONManipulator extends ViewVisitor {
 						// for example in a view with <datagrid binding="collectionName"><column binding="dynamic"/></dataGrid>
 						// the binding is "collectionName.dynamic".
 						Object owner = BindUtil.get(bean, binding.substring(0, lastDotIndex));
-						if (owner instanceof Bean) {
-							owningBean = (Bean) owner;
+						if (owner instanceof Bean b) {
+							owningBean = b;
 						}
 					}
 					catch (Exception e) {
@@ -1058,36 +1188,38 @@ public class ViewJSONManipulator extends ViewVisitor {
 									boolean parentVisible,
 									boolean parentEnabled) {
 		if (visitingDataWidget) {
-			if (htmlGuts.length() > 0) {
-				htmlGuts.append("&nbsp;");
+			if (processingDataWidget) {
+				if (! htmlGuts.isEmpty()) {
+					htmlGuts.append("&nbsp;");
+				}
+				// TODO - should make the URL dependent on the image format
+				htmlGuts.append("<img src=\"dynamic.png?_n=").append(image.getName());
+				htmlGuts.append("&_doc={bizModule}.{bizDocument}");
+				
+				Integer pixelWidth = image.getPixelHeight();
+				Integer pixelHeight = image.getPixelHeight();
+				Integer initialPixelWidth = image.getImageInitialPixelWidth();
+				Integer initialPixelHeight = image.getImageInitialPixelHeight();
+				if (pixelWidth != null) {
+					htmlGuts.append('&').append(DynamicImageServlet.IMAGE_WIDTH_NAME).append('=').append(pixelWidth);
+				}
+				else {
+					htmlGuts.append('&').append(DynamicImageServlet.IMAGE_WIDTH_NAME).append('=').append(initialPixelWidth);
+				}
+				if (pixelHeight != null) {
+					htmlGuts.append('&').append(DynamicImageServlet.IMAGE_HEIGHT_NAME).append('=').append(pixelHeight);
+				}
+				else {
+					htmlGuts.append('&').append(DynamicImageServlet.IMAGE_HEIGHT_NAME).append('=').append(initialPixelHeight);
+				}
+				htmlGuts.append('&').append(DynamicImageServlet.IMAGE_WIDTH_ZOOM_NAME).append("=100&");
+				htmlGuts.append(DynamicImageServlet.IMAGE_HEIGHT_ZOOM_NAME).append("=100&");
+	
+				htmlGuts.append(AbstractWebContext.CONTEXT_NAME).append("={CONTEXT}&");
+				htmlGuts.append(Bean.DOCUMENT_ID).append("={bizId}");
+				appendHtmlGutsStyle(image.getPixelWidth(), image.getPixelHeight(), null, image.getInvisibleConditionName());
+				htmlGuts.append("/>");
 			}
-			// TODO - should make the URL dependent on the image format
-			htmlGuts.append("<img src=\"dynamic.png?_n=").append(image.getName());
-			htmlGuts.append("&_doc={bizModule}.{bizDocument}");
-			
-			Integer pixelWidth = image.getPixelHeight();
-			Integer pixelHeight = image.getPixelHeight();
-			Integer initialPixelWidth = image.getImageInitialPixelWidth();
-			Integer initialPixelHeight = image.getImageInitialPixelHeight();
-			if (pixelWidth != null) {
-				htmlGuts.append('&').append(DynamicImageServlet.IMAGE_WIDTH_NAME).append('=').append(pixelWidth);
-			}
-			else {
-				htmlGuts.append('&').append(DynamicImageServlet.IMAGE_WIDTH_NAME).append('=').append(initialPixelWidth);
-			}
-			if (pixelHeight != null) {
-				htmlGuts.append('&').append(DynamicImageServlet.IMAGE_HEIGHT_NAME).append('=').append(pixelHeight);
-			}
-			else {
-				htmlGuts.append('&').append(DynamicImageServlet.IMAGE_HEIGHT_NAME).append('=').append(initialPixelHeight);
-			}
-			htmlGuts.append('&').append(DynamicImageServlet.IMAGE_WIDTH_ZOOM_NAME).append("=100&");
-			htmlGuts.append(DynamicImageServlet.IMAGE_HEIGHT_ZOOM_NAME).append("=100&");
-
-			htmlGuts.append(AbstractWebContext.CONTEXT_NAME).append("={CONTEXT}&");
-			htmlGuts.append(Bean.DOCUMENT_ID).append("={bizId}");
-			appendHtmlGutsStyle(image.getPixelWidth(), image.getPixelHeight(), null, image.getInvisibleConditionName());
-			htmlGuts.append("/>");
 		}
 		else {
 			addCondition(image.getInvisibleConditionName());
@@ -1104,55 +1236,27 @@ public class ViewJSONManipulator extends ViewVisitor {
 									boolean parentVisible,
 									boolean parentEnabled) {
 		if (visitingDataWidget) {
-			if (htmlGuts.length() > 0) {
-				htmlGuts.append("&nbsp;");
+			if (processingDataWidget) {
+				if (! htmlGuts.isEmpty()) {
+					htmlGuts.append("&nbsp;");
+				}
+				htmlGuts.append("<img src=\"resources?_n=").append(image.getRelativeFile());
+				htmlGuts.append("&_doc={bizModule}.{bizDocument}&_b=null\"");
+				appendHtmlGutsStyle(image.getPixelWidth(), image.getPixelHeight(), null, image.getInvisibleConditionName());
+				htmlGuts.append("/>");
 			}
-			htmlGuts.append("<img src=\"resources?_n=").append(image.getRelativeFile());
-			htmlGuts.append("&_doc={bizModule}.{bizDocument}&_b=null\"");
-			appendHtmlGutsStyle(image.getPixelWidth(), image.getPixelHeight(), null, image.getInvisibleConditionName());
-			htmlGuts.append("/>");
 		}
 		else {
 			addCondition(image.getInvisibleConditionName());
 		}
 	}
 
-	@Override
-	public void visitContentImage(ContentImage image,
-									boolean parentVisible, 
-									boolean parentEnabled) {
-		if (visitingDataWidget) {
-			if (htmlGuts.length() > 0) {
-				htmlGuts.append("&nbsp;");
-			}
-			String binding = image.getBinding();
-			htmlGuts.append("<img src=\"content?_n={").append(binding);
-			htmlGuts.append("}&_doc={bizModule}.{bizDocument}&_b=");
-			htmlGuts.append(binding).append('"');
-			appendHtmlGutsStyle(image.getPixelWidth(), image.getPixelHeight(), null, image.getInvisibleConditionName());
-			htmlGuts.append("/>");
-		}
-		else {
-			if (parentVisible && visible(image)) {
-				if ((! forApply) || 
-						(forApply && parentEnabled && (! Boolean.FALSE.equals(image.getEditable())))) {
-					addBinding(image.getBinding(), true, false, Sanitisation.text);
-				}
-			}
-			addCondition(image.getInvisibleConditionName());
-			addCondition(image.getDisabledConditionName());
-			addBinding(Bean.MODULE_KEY, false, false, Sanitisation.text);
-			addBinding(Bean.DOCUMENT_KEY, false, false, Sanitisation.text);
-			addBinding(Bean.DATA_GROUP_ID, false, false, Sanitisation.text);
-			addBinding(Bean.USER_ID, false, false, Sanitisation.text);
-		}
-	}
 
 	@Override
 	public void visitContentSignature(ContentSignature signature,
 										boolean parentVisible, 
 										boolean parentEnabled) {
-		// TODO not implemented for SC yet - use ContentImage
+		// TODO not implemented for SC yet - use the content-image SmartClient item
 		if (parentVisible && visible(signature)) {
 			if ((! forApply) || (forApply && parentEnabled)) {
 				addBinding(signature.getBinding(), true, false, Sanitisation.text);
@@ -1167,19 +1271,22 @@ public class ViewJSONManipulator extends ViewVisitor {
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void visitBlurb(Blurb blurb,
 							boolean parentVisible,
 							boolean parentEnabled) {
 		if (visitingDataWidget) {
-			if (htmlGuts.length() > 0) {
-				htmlGuts.append("&nbsp;");
+			if (processingDataWidget) {
+				if (! htmlGuts.isEmpty()) {
+					htmlGuts.append("&nbsp;");
+				}
+				htmlGuts.append("<div");
+				appendHtmlGutsStyle(blurb.getPixelWidth(),
+										blurb.getPixelHeight(),
+										blurb.getTextAlignment(),
+										blurb.getInvisibleConditionName());
+				htmlGuts.append('>').append(blurb.getLocalisedMarkup()).append("</div>");
 			}
-			htmlGuts.append("<div");
-			appendHtmlGutsStyle(blurb.getPixelWidth(),
-									blurb.getPixelHeight(),
-									blurb.getTextAlignment(),
-									blurb.getInvisibleConditionName());
-			htmlGuts.append('>').append(blurb.getLocalisedMarkup()).append("</div>");
 		}
 		else {
 			String markup = blurb.getLocalisedMarkup();
@@ -1204,33 +1311,36 @@ public class ViewJSONManipulator extends ViewVisitor {
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void visitLabel(Label label,
 							boolean parentVisible,
 							boolean parentEnabled) {
 		if (visitingDataWidget) {
-			if (htmlGuts.length() > 0) {
-				htmlGuts.append("&nbsp;");
-			}
-			htmlGuts.append("<span");
-			appendHtmlGutsStyle(label.getPixelWidth(),
-									label.getPixelHeight(),
-									label.getTextAlignment(),
-									label.getInvisibleConditionName());
-			htmlGuts.append('>');
-			String binding = label.getBinding();
-			if (binding != null) {
-				htmlGuts.append('{').append(binding).append('}');
-			}
-			else {
-				String value = label.getLocalisedValue();
-				if (value != null) {
-					htmlGuts.append(value);
+			if (processingDataWidget) {
+				if (! htmlGuts.isEmpty()) {
+					htmlGuts.append("&nbsp;");
+				}
+				htmlGuts.append("<span");
+				appendHtmlGutsStyle(label.getPixelWidth(),
+										label.getPixelHeight(),
+										label.getTextAlignment(),
+										label.getInvisibleConditionName());
+				htmlGuts.append('>');
+				String binding = label.getBinding();
+				if (binding != null) {
+					htmlGuts.append('{').append(binding).append('}');
 				}
 				else {
-					htmlGuts.append(label.getFor());
+					String value = label.getLocalisedValue();
+					if (value != null) {
+						htmlGuts.append(value);
+					}
+					else {
+						htmlGuts.append(label.getFor());
+					}
 				}
+				htmlGuts.append("</span>");
 			}
-			htmlGuts.append("</span>");
 		}
 		else {
 			String value = label.getLocalisedValue();
@@ -1267,8 +1377,8 @@ public class ViewJSONManipulator extends ViewVisitor {
 	public void visitLink(Link link,
 							boolean parentVisible,
 							boolean parentEnabled) {
-		if (visitingDataWidget) {
-			if (htmlGuts.length() > 0) {
+		if (processingDataWidget) {
+			if (! htmlGuts.isEmpty()) {
 				htmlGuts.append("&nbsp;");
 			}
 		}
@@ -1276,7 +1386,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 		htmlGuts.append("<a href=\"");
 		hrefProcessor.process(link.getReference());
 		htmlGuts.append('"');
-		if (visitingDataWidget) {
+		if (processingDataWidget) {
 			appendHtmlGutsStyle(link.getPixelWidth(), null,  null, link.getInvisibleConditionName());
 		}
 		
@@ -1293,7 +1403,9 @@ public class ViewJSONManipulator extends ViewVisitor {
 			
 		String value = link.getLocalisedValue();
 		if (value != null) {
-			htmlGuts.append(">").append(value).append("</a>");
+			htmlGuts.append('>');
+			htmlGuts.append(Boolean.FALSE.equals(link.getEscapeValue()) ? value : OWASP.escapeHtml(value));
+			htmlGuts.append("</a>");
 		}
 		else {
 			htmlGuts.append("/>");
@@ -1320,7 +1432,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 				htmlGuts.append("height:").append(pixelHeight).append("px;");
 			}
 			if (textAlignment != null) {
-				htmlGuts.append("text-align:").append(textAlignment.toAlignmentString()).append(';');
+				htmlGuts.append("text-align:").append(textAlignment.toTextAlignmentString()).append(';');
 			}
 			if (invisibleConditionName != null) {
 				if ("true".equals(invisibleConditionName)) {
@@ -1334,28 +1446,40 @@ public class ViewJSONManipulator extends ViewVisitor {
 			htmlGuts.append('"');
 		}
 	}
-	
-	@Override
-	public void visitContentLink(ContentLink link, 
-									boolean parentVisible,
-									boolean parentEnabled) {
-		if (visitingDataWidget) {
-			return;
-		}
 
-		if (parentVisible && visible(link)) {
-			if ((! forApply) || 
-					(forApply && parentEnabled && (! Boolean.FALSE.equals(link.getEditable())))) {
-				addBinding(link.getBinding(), true, false, Sanitisation.text);
+	/**
+	 * Registers SmartClient bindings and conditions referenced by a managed-content
+	 * upload widget.
+	 *
+	 * <p>For {@code display="auto"}, this also registers the content binding for
+	 * media-kind companion enrichment when the current render/apply state allows
+	 * the widget binding to participate in the payload.
+	 *
+	 * @param content the content upload being visited; must not be {@code null}
+	 * @param parentVisible whether ancestor metadata is visible
+	 * @param parentEnabled whether ancestor metadata is enabled
+	 */
+	@Override
+	public void visitContent(@Nonnull ContentUpload content,
+								boolean parentVisible,
+								boolean parentEnabled) {
+		if (parentVisible && visible(content) && 
+				((! forApply) || 
+					(forApply && parentEnabled && (! Boolean.FALSE.equals(content.getEditable()))))) {
+				addBinding(content.getBinding(), true, false, Sanitisation.text);
+				if (ContentDisplay.auto.equals(content.getResolvedDisplay())) {
+					currentBindings.putAutoContentBinding(content.getBinding());
+				}
 			}
-		}
-		addCondition(link.getInvisibleConditionName());
-		addCondition(link.getDisabledConditionName());
+		
+		addCondition(content.getInvisibleConditionName());
+		addCondition(content.getDisabledConditionName());
 		addBinding(Bean.MODULE_KEY, false, false, Sanitisation.text);
 		addBinding(Bean.DOCUMENT_KEY, false, false, Sanitisation.text);
 		addBinding(Bean.DATA_GROUP_ID, false, false, Sanitisation.text);
 		addBinding(Bean.USER_ID, false, false, Sanitisation.text);
 	}
+
 
 	@Override
 	public void visitParameter(Parameter parameter,
@@ -1447,6 +1571,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 	}
 
 	private boolean visitingDataWidget = false;
+	private boolean processingDataWidget = false;
 	private boolean visitedDataWidgetHasEditableColumns = false;
 
 	@Override
@@ -1482,6 +1607,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 		visitDataWidget(repeater, parentVisible, parentEnabled, true, true, null, null, null, null, null);
 	}
 	
+	@SuppressWarnings({"java:S107", "java:S3776"}) // Long parameter list preserves the existing framework/API contract; complexity OK.
 	private void visitDataWidget(AbstractDataWidget widget,
 									boolean parentVisible,
 									boolean parentEnabled,
@@ -1492,6 +1618,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 									String disableEditConditionName,
 									String disableRemoveConditionName,
 									String selectedIdBinding) {	
+		visitingDataWidget = true;
 		htmlGuts.setLength(0);
 
 		addCondition(widget.getInvisibleConditionName());
@@ -1501,7 +1628,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 		if (parentVisible && visible(widget)) {
 			if ((! forApply) || 
 					(forApply && parentEnabled && enabled)) {
-				visitingDataWidget = true;
+				processingDataWidget = true;
 				visitedDataWidgetHasEditableColumns = dataWidgetHasEditableColumns;
 				
 				addCondition(disableAddConditionName);
@@ -1523,8 +1650,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 		        addBinding(Bean.MODULE_KEY, false, false, Sanitisation.text);
 		        addBinding(Bean.DOCUMENT_KEY, false, false, Sanitisation.text);
 		        
-		        if (targetRelation instanceof Collection) {
-			        Collection collection = (Collection) targetRelation;
+		        if (targetRelation instanceof Collection collection) {
 			        // Only child collections have the bizOrdinal property exposed
 			        if (Boolean.TRUE.equals(collection.getOrdered()) && CollectionType.child.equals(collection.getType())) {
 						addBinding(Bean.ORDINAL_NAME, true, false, Sanitisation.text);
@@ -1535,15 +1661,13 @@ public class ViewJSONManipulator extends ViewVisitor {
 				List<? extends TabularColumn> gridColumns = widget.getColumns();
 				if (gridColumns.size() == 1) {
 					TabularColumn gridColumn = gridColumns.get(0);
-					if (gridColumn instanceof DataGridBoundColumn) {
-						DataGridBoundColumn boundGridColumn = (DataGridBoundColumn) gridColumn;
+					if (gridColumn instanceof DataGridBoundColumn boundGridColumn) {
 						if (boundGridColumn.getBinding() == null) {
 							addBinding(Bean.DOCUMENT_ID, true, false, Sanitisation.text);
 							WidgetReference ref = boundGridColumn.getInputWidget();
 							if (ref != null) {
 								InputWidget inputWidget = ref.getWidget();
-								if (inputWidget instanceof LookupDescription) {
-									LookupDescription lookup = (LookupDescription) inputWidget;
+								if (inputWidget instanceof LookupDescription lookup) {
 									addBinding(lookup.getDescriptionBinding(), false, false, Sanitisation.relaxed);
 								}
 							}
@@ -1610,9 +1734,10 @@ public class ViewJSONManipulator extends ViewVisitor {
 	}
 	
 	private void visitedDataWidget() {
-		if (visitingDataWidget) {
+		if (processingDataWidget) {
 		    currentBindings = currentBindings.getParent();
 		}
+		processingDataWidget = false;
 		visitingDataWidget = false;
 		htmlGuts.setLength(0);
 	}
@@ -1694,6 +1819,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void visitCheckMembership(CheckMembership membership,
 										boolean parentVisible,
 										boolean parentEnabled) {
@@ -1757,16 +1883,19 @@ public class ViewJSONManipulator extends ViewVisitor {
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void visitCombo(Combo combo,
 							boolean parentVisible,
 							boolean parentEnabled) {
 		if (visitingDataWidget) {
-			if (parentVisible) {
-				if ((! forApply) || 
-					(forApply && parentEnabled)) {
-					    StringBuilder fullBinding = new StringBuilder(64);
-					    fullBinding.append(currentBindings.getBindingPrefix()).append('.').append(combo.getBinding());
-					    putVariantAndDynamicDomainValuesInValueMaps(fullBinding.toString());
+			if (processingDataWidget) {
+				if (parentVisible) {
+					if ((! forApply) || 
+						(forApply && parentEnabled)) {
+						    StringBuilder fullBinding = new StringBuilder(64);
+						    fullBinding.append(currentBindings.getBindingPrefix()).append('.').append(combo.getBinding());
+						    putVariantAndDynamicDomainValuesInValueMaps(fullBinding.toString());
+					}
 				}
 			}
 			return;
@@ -1835,6 +1964,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void visitListMembership(ListMembership membership,
 										boolean parentVisible,
 										boolean parentEnabled) {
@@ -1858,9 +1988,8 @@ public class ViewJSONManipulator extends ViewVisitor {
 				addBinding(Bean.DOCUMENT_ID, true, false, Sanitisation.text);
 				addBinding(Bean.BIZ_KEY, false, false, Sanitisation.relaxed);
 
-				putVariantAndDynamicDomainValuesInValueMaps(binding);
-				
 				if (binding != null) {
+					putVariantAndDynamicDomainValuesInValueMaps(binding);
 					currentBindings = currentBindings.getParent();
 				}
 			}
@@ -1887,11 +2016,13 @@ public class ViewJSONManipulator extends ViewVisitor {
 			Document referenceDocument = module.getDocument(customer, reference.getDocumentName());
 
 			try {
+				String modelName = comparison.getModelName();
+				RequestKey key = RequestKey.model(document, modelName);
 				ProvidedRepository repository = ProvidedRepositoryFactory.get();
-				ComparisonModel<Bean, Bean> model = repository.getComparisonModel(customer, 
-																					document,
-																					comparison.getModelName(),
-																					true);
+				ComparisonModel<Bean, Bean> model = repository.getComparisonModel(customer, document, modelName, true);
+				if (model == null) {
+					throw new MetaDataException("Could not resolve comparison model [" + modelName + "]");
+				}
 				model.setBean(bean);
 				ComparisonComposite root = model.getComparisonComposite((Bean) BindUtil.get(bean, referenceName));
 				if (! forApply) {
@@ -1906,6 +2037,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 			        addComparisonBindingsForApply(root, referenceDocument);
 			        currentBindings = currentBindings.getParent();
 				}
+				Monitoring.measure(key);
 			}
 			catch (Exception e) {
 				throw new MetaDataException("Could not populate the comparison editor [" + referenceName + ']', e);
@@ -1939,16 +2071,19 @@ public class ViewJSONManipulator extends ViewVisitor {
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void visitLookupDescription(LookupDescription lookup,
 										boolean parentVisible,
 										boolean parentEnabled) {
 		if (visitingDataWidget) {
-			// Can be no lookup binding if the lookup is in a data grid and represents the entire data grid row
-			String lookupBinding = lookup.getBinding();
-			if ((! forApply) && (lookupBinding != null)) {
-				StringBuilder bindingBuilder = new StringBuilder(64);
-				bindingBuilder.append(lookupBinding).append('.').append(lookup.getDescriptionBinding());
-				addBinding(bindingBuilder.toString(), true, false, Sanitisation.relaxed);
+			if (processingDataWidget) {
+				// Can be no lookup binding if the lookup is in a data grid and represents the entire data grid row
+				String lookupBinding = lookup.getBinding();
+				if ((! forApply) && (lookupBinding != null)) {
+					StringBuilder bindingBuilder = new StringBuilder(64);
+					bindingBuilder.append(lookupBinding).append('.').append(lookup.getDescriptionBinding());
+					addBinding(bindingBuilder.toString(), true, false, Sanitisation.relaxed);
+				}
 			}
 			return;
 		}
@@ -2001,7 +2136,7 @@ public class ViewJSONManipulator extends ViewVisitor {
 			return;
 		}
 
-		if (parentVisible & visible(password)) {
+		if (parentVisible && visible(password)) {
 			if ((! forApply) || 
 					(forApply && parentEnabled && enabled(password))) {
 				addBinding(password.getBinding(), true, false, Sanitisation.none);

@@ -31,7 +31,7 @@ import org.skyve.domain.types.converters.integer.SimplePercentage;
 import org.skyve.impl.bind.BindUtil;
 import org.skyve.impl.metadata.customer.CustomerImpl;
 import org.skyve.impl.metadata.model.document.DocumentImpl;
-import org.skyve.impl.metadata.model.document.field.ConvertableField;
+import org.skyve.impl.metadata.model.document.field.ConvertibleField;
 import org.skyve.impl.metadata.model.document.field.Date;
 import org.skyve.impl.metadata.model.document.field.DateTime;
 import org.skyve.impl.metadata.model.document.field.Decimal10;
@@ -66,7 +66,11 @@ import org.skyve.util.Binder;
 import org.skyve.util.Binder.TargetMetaData;
 import org.skyve.util.OWASP;
 
-public class SmartClientAttributeDefinition {
+/**
+ * Implements internal web-module behavior for this Skyve runtime concern.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate SmartClient attribute definition fragments.
+abstract class SmartClientAttributeDefinition {
     protected SmartClientLookupDefinition lookup;
 	protected String name;
 	protected String title;
@@ -80,12 +84,28 @@ public class SmartClientAttributeDefinition {
 	protected String validation;
 	protected Map<String, String> valueMap;
 	protected boolean required = false;
+	protected String requiredMessage;
 	protected boolean triStateCheckBox = false;
     protected boolean escape = true;
     protected Integer pixelWidth;
     protected HorizontalAlignment align;
 	protected TargetMetaData target;
 	
+	/**
+	 * Builds SmartClient attribute metadata from binding and document model definitions.
+	 *
+	 * @param user the active user for localization and validator messaging
+	 * @param customer the active customer metadata
+	 * @param module the module containing the target document
+	 * @param document the target document metadata
+	 * @param binding the binding path for the attribute definition
+	 * @param name explicit attribute name override, or {@code null} to derive from binding
+	 * @param runtime whether runtime domain values should be resolved
+	 * @param isQueryColumn whether the attribute is used in a query/list context
+	 * @param isField whether the attribute renders as a form field
+	 * @param uxui the active UX/UI profile name
+	 */
+	@SuppressWarnings({"java:S107", "java:S3776"}) // Long parameter list preserves the existing framework/API contract; complexity OK.
 	protected SmartClientAttributeDefinition(User user,
 												Customer customer, 
 												Module module,
@@ -94,6 +114,7 @@ public class SmartClientAttributeDefinition {
 												String name,
 												boolean runtime,
 												boolean isQueryColumn,
+												boolean isField,
 												String uxui) {
 		this.name = (name != null) ? name : BindUtil.sanitiseBinding(binding);
 		title = this.name;
@@ -109,12 +130,7 @@ public class SmartClientAttributeDefinition {
 			bindingAttribute = target.getAttribute();
 
 			if (binding.endsWith(Bean.BIZ_KEY)) {
-				if (bindingDocument != null) {
-					title = bindingDocument.getLocalisedSingularAlias();
-				}
-				else {
-					title = DocumentImpl.getBizKeyAttribute().getLocalisedDisplayName();
-				}
+				title = bindingDocument.getLocalisedSingularAlias();
 				align = HorizontalAlignment.left;
 			}
 			else if (binding.endsWith(Bean.ORDINAL_NAME)) {
@@ -128,10 +144,13 @@ public class SmartClientAttributeDefinition {
 
 			title = bindingAttribute.getLocalisedDisplayName();
 			required = bindingAttribute.isRequired();
+			requiredMessage = bindingAttribute.getRequiredMessage();
 
 			// set the default alignment and pixelWidth
 			Customisations customisations = CORE.getCustomisations();
-			align = customisations.determineDefaultTextAlignment(uxui, attributeType);
+			align = isField ?
+						customisations.determineDefaultWidgetTextAlignment(uxui, attributeType) :
+						customisations.determineDefaultColumnTextAlignment(uxui, attributeType);
 			pixelWidth = customisations.determineDefaultColumnWidth(uxui, attributeType);
 
 			DomainType domainType = bindingAttribute.getDomainType();
@@ -163,8 +182,7 @@ public class SmartClientAttributeDefinition {
 				IntegerValidator integerValidator = null;
 				LongValidator longValidator = null;
 
-				if (bindingAttribute instanceof Text) {
-					Text text = (Text) bindingAttribute;
+				if (bindingAttribute instanceof Text text) {
 					setMaskAndStyle(text);
 					TextValidator validator = text.getValidator();
 					if (validator != null) {
@@ -176,63 +194,63 @@ public class SmartClientAttributeDefinition {
 							// NB don't use processString for regular expression as \n could be a valid part of the expression and needs to remain
 							sb.append("{expression:'").append(regex.replace("\\", "\\\\").replace("'", "\\'"));
 							sb.append("',type:'regexp',errorMessage:'");
-							sb.append(OWASP.escapeJsString(validator.constructMessage(user, title, converter)));
+							sb.append(OWASP.escapeJsStringWithHtmlFormatting(validator.constructMessage(user, title, converter)));
 							sb.append("'}");
 							validation = sb.toString();
 						}
 					}
 				}
-				else if (bindingAttribute instanceof Date) {
-					dateValidator = ((Date) bindingAttribute).getValidator();
+				else if (bindingAttribute instanceof Date date) {
+					dateValidator = date.getValidator();
 				}
-				else if (bindingAttribute instanceof DateTime) {
-					dateValidator = ((DateTime) bindingAttribute).getValidator();
+				else if (bindingAttribute instanceof DateTime dateTime) {
+					dateValidator = dateTime.getValidator();
 				}
-				else if (bindingAttribute instanceof Time) {
-					dateValidator = ((Time) bindingAttribute).getValidator();
+				else if (bindingAttribute instanceof Time time) {
+					dateValidator = time.getValidator();
 				}
-				else if (bindingAttribute instanceof Timestamp) {
-					dateValidator = ((Timestamp) bindingAttribute).getValidator();
+				else if (bindingAttribute instanceof Timestamp timestamp) {
+					dateValidator = timestamp.getValidator();
 				}
-				else if (bindingAttribute instanceof Decimal2) {
-					decimalValidator = ((Decimal2) bindingAttribute).getValidator();
+				else if (bindingAttribute instanceof Decimal2 decimal2) {
+					decimalValidator = decimal2.getValidator();
 				}
-				else if (bindingAttribute instanceof Decimal5) {
-					decimalValidator = ((Decimal5) bindingAttribute).getValidator();
+				else if (bindingAttribute instanceof Decimal5 decimal5) {
+					decimalValidator = decimal5.getValidator();
 				}
-				else if (bindingAttribute instanceof Decimal10) {
-					decimalValidator = ((Decimal10) bindingAttribute).getValidator();
+				else if (bindingAttribute instanceof Decimal10 decimal10) {
+					decimalValidator = decimal10.getValidator();
 				}
-				else if (bindingAttribute instanceof org.skyve.impl.metadata.model.document.field.Integer) {
-					integerValidator = ((org.skyve.impl.metadata.model.document.field.Integer) bindingAttribute).getValidator();
+				else if (bindingAttribute instanceof org.skyve.impl.metadata.model.document.field.Integer integer) {
+					integerValidator = integer.getValidator();
 				}
-				else if (bindingAttribute instanceof LongInteger) {
-					longValidator = ((LongInteger) bindingAttribute).getValidator();
+				else if (bindingAttribute instanceof LongInteger longInteger) {
+					longValidator = longInteger.getValidator();
 				}
 				
 				try {
 					if (dateValidator != null) {
 						@SuppressWarnings("unchecked")
-						Converter<java.util.Date> converter = (Converter<java.util.Date>) ((ConvertableField) bindingAttribute).getConverterForCustomer(customer); 
+						Converter<java.util.Date> converter = (Converter<java.util.Date>) ((ConvertibleField) bindingAttribute).getConverterForCustomer(customer); 
 						StringBuilder sb = new StringBuilder(128);
 						sb.append('{');
 						java.util.Date min = dateValidator.getMin();
 						if (min != null) {
-							sb.append("min:isc.DateUtil.parseSchemaDate('").append(Binder.convert(java.util.Date.class, min)).append("'),");
+							sb.append("min:isc.DateUtil.parseSchemaDate('").append(Binder.nullSafeConvert(java.util.Date.class, min)).append("'),");
 						}
 						java.util.Date max = dateValidator.getMax();
 						if (max != null) {
-							sb.append("max:isc.DateUtil.parseSchemaDate('").append(Binder.convert(java.util.Date.class, max)).append("'),");
+							sb.append("max:isc.DateUtil.parseSchemaDate('").append(Binder.nullSafeConvert(java.util.Date.class, max)).append("'),");
 						}
 						sb.append("type:'dateRange',errorMessage:'");
-						sb.append(OWASP.escapeJsString(dateValidator.constructMessage(user, title, converter)));
+						sb.append(OWASP.escapeJsStringWithHtmlFormatting(dateValidator.constructMessage(user, title, converter)));
 						sb.append("'}");
 
 						validation = sb.toString();
 					}
 					else if (decimalValidator != null) {
 						@SuppressWarnings("unchecked")
-						Converter<Decimal> converter = (Converter<Decimal>) ((ConvertableField) bindingAttribute).getConverterForCustomer(customer); 
+						Converter<Decimal> converter = (Converter<Decimal>) ((ConvertibleField) bindingAttribute).getConverterForCustomer(customer); 
 						StringBuilder sb = new StringBuilder(128);
 						sb.append('{');
 						Decimal min = decimalValidator.getMin();
@@ -244,20 +262,20 @@ public class SmartClientAttributeDefinition {
 							sb.append("max:").append(max).append(',');
 						}
 						sb.append("type:'floatRange',errorMessage:'");
-						sb.append(OWASP.escapeJsString(decimalValidator.constructMessage(user, title, converter)));
+						sb.append(OWASP.escapeJsStringWithHtmlFormatting(decimalValidator.constructMessage(user, title, converter)));
 						sb.append("'}");
 
 						Integer precision = decimalValidator.getPrecision();
 						if (precision != null) {
 							sb.append(",{precision:").append(precision).append(",roundToPrecision:true,type:'floatPrecision',errorMessage:'");
-							sb.append(OWASP.escapeJsString(decimalValidator.constructMessage(user, title, converter)));
+							sb.append(OWASP.escapeJsStringWithHtmlFormatting(decimalValidator.constructMessage(user, title, converter)));
 							sb.append("'}");
 						}
 						validation = sb.toString();
 					}
 					else if (integerValidator != null) {
 						@SuppressWarnings("unchecked")
-						Converter<Integer> converter = (Converter<Integer>) ((ConvertableField) bindingAttribute).getConverterForCustomer(customer); 
+						Converter<Integer> converter = (Converter<Integer>) ((ConvertibleField) bindingAttribute).getConverterForCustomer(customer); 
 						StringBuilder sb = new StringBuilder(128);
 						sb.append('{');
 						Integer min = integerValidator.getMin();
@@ -269,14 +287,14 @@ public class SmartClientAttributeDefinition {
 							sb.append("max:").append(max).append(',');
 						}
 						sb.append("type:'integerRange',errorMessage:'");
-						sb.append(OWASP.escapeJsString(integerValidator.constructMessage(user, title, converter)));
+						sb.append(OWASP.escapeJsStringWithHtmlFormatting(integerValidator.constructMessage(user, title, converter)));
 						sb.append("'}");
 
 						validation = sb.toString();
 					}
 					else if (longValidator != null) {
 						@SuppressWarnings("unchecked")
-						Converter<Long> converter = (Converter<Long>) ((ConvertableField) bindingAttribute).getConverterForCustomer(customer); 
+						Converter<Long> converter = (Converter<Long>) ((ConvertibleField) bindingAttribute).getConverterForCustomer(customer); 
 						StringBuilder sb = new StringBuilder(128);
 						sb.append('{');
 						Long min = longValidator.getMin();
@@ -288,7 +306,7 @@ public class SmartClientAttributeDefinition {
 							sb.append("max:").append(max).append(',');
 						}
 						sb.append("type:'integerRange',errorMessage:'");
-						sb.append(OWASP.escapeJsString(longValidator.constructMessage(user, title, converter)));
+						sb.append(OWASP.escapeJsStringWithHtmlFormatting(longValidator.constructMessage(user, title, converter)));
 						sb.append("'}");
 
 						validation = sb.toString();
@@ -300,12 +318,10 @@ public class SmartClientAttributeDefinition {
 			}
 			
 			Converter<?> converter = null;
-			if (bindingAttribute instanceof LengthField) {
-				LengthField field = (LengthField) bindingAttribute;
+			if (bindingAttribute instanceof LengthField field) {
 				length = Integer.valueOf(field.getLength());
 			}
-			else if (bindingAttribute instanceof ConvertableField) {
-				ConvertableField field = (ConvertableField) bindingAttribute;
+			else if (bindingAttribute instanceof ConvertibleField field) {
 				converter = field.getConverterForCustomer(customer);
 			}
 			else if (bindingAttribute instanceof Collection) {
@@ -327,8 +343,8 @@ public class SmartClientAttributeDefinition {
 			case bool:
 				type = "boolean";
 				InputWidget diw = bindingAttribute.getDefaultInputWidget();
-				if (diw instanceof CheckBox) {
-					triStateCheckBox = (! Boolean.FALSE.equals(((CheckBox) diw).getTriState()));
+				if (diw instanceof CheckBox checkBox) {
+					triStateCheckBox = (! Boolean.FALSE.equals(checkBox.getTriState()));
 				}
 				break;
 			case colour:
@@ -387,8 +403,7 @@ public class SmartClientAttributeDefinition {
 				type = "enum";
 				editorType = "select";
 				break;
-			case integer:
-			case longInteger:
+			case integer, longInteger:
 				type = "integer";
 				if (converter instanceof SimplePercentage) {
 					type = "bizIntegerPercentage";
@@ -400,16 +415,13 @@ public class SmartClientAttributeDefinition {
 					type = "bizIntegerSeparator";
 				}
 				break;
-			case date:
-			case dateTime:
-			case timestamp:
+			case date, dateTime, timestamp:
 				type = (converter == null) ? "DD_MMM_YYYY" : converter.getClass().getSimpleName();
 				break;
 			case time:
 				type = (converter == null) ? "HH24_MI" : converter.getClass().getSimpleName();
 				break;
-			case content:
-			case image:
+			case content, image:
 				// nothing yet
 				break;
 			case geometry:
@@ -426,78 +438,174 @@ public class SmartClientAttributeDefinition {
 		}
 	}
 
+	/**
+	 * Returns target binding metadata for this attribute definition.
+	 *
+	 * @return target binding metadata, or {@code null}
+	 */
 	public TargetMetaData getTarget() {
 	    return target;
 	}
 	
+	/**
+	 * Returns the SmartClient editor type name.
+	 *
+	 * @return editor type name, or {@code null}
+	 */
 	public String getEditorType() {
 		return editorType;
 	}
 
+	/**
+	 * Sets the SmartClient editor type name.
+	 *
+	 * @param editorType editor type name
+	 */
 	public void setEditorType(String editorType) {
 		this.editorType = editorType;
 	}
 
+	/**
+	 * Returns lookup metadata used for association/domain selection widgets.
+	 *
+	 * @return lookup metadata, or {@code null}
+	 */
     public SmartClientLookupDefinition getLookup() {
         return lookup;
     }
 
+	/**
+	 * Returns maximum display/input length when constrained.
+	 *
+	 * @return maximum display/input length, or {@code null}
+	 */
 	public Integer getLength() {
 		return length;
 	}
 
+	/**
+	 * Sets maximum display/input length when constrained.
+	 *
+	 * @param length maximum display/input length
+	 */
 	public void setLength(Integer length) {
 		this.length = length;
 	}
 
+	/**
+	 * Returns the attribute name used in generated SmartClient definitions.
+	 *
+	 * @return attribute name
+	 */
 	public String getName() {
 		return name;
 	}
 
+	/**
+	 * Sets the attribute name used in generated SmartClient definitions.
+	 *
+	 * @param name attribute name
+	 */
 	public void setName(String name) {
 		this.name = name;
 	}
 
-	public boolean isRequired() {
-		return required;
+	/**
+	 * Returns the required-message text for validation failures.
+	 *
+	 * @return required-message text, or {@code null}
+	 */
+	public String getRequiredMessage() {
+		return requiredMessage;
 	}
 
-	public void setRequired(boolean required) {
-		this.required = required;
+	/**
+	 * Sets the required-message text and updates required state accordingly.
+	 *
+	 * @param requiredMessage required-message text
+	 */
+	public void setRequiredMessage(String requiredMessage) {
+		this.requiredMessage = requiredMessage;
+		required = (requiredMessage != null);
 	}
 
+	/**
+	 * Returns the display title for this attribute.
+	 *
+	 * @return display title
+	 */
 	public String getTitle() {
 		return title;
 	}
 
+	/**
+	 * Sets the display title for this attribute.
+	 *
+	 * @param title display title
+	 */
 	public void setTitle(String title) {
 		this.title = title;
 	}
 
+	/**
+	 * Returns SmartClient logical type identifier.
+	 *
+	 * @return SmartClient logical type identifier
+	 */
 	public String getType() {
 		return type;
 	}
 
+	/**
+	 * Sets SmartClient logical type identifier.
+	 *
+	 * @param type SmartClient logical type identifier
+	 */
 	public void setType(String type) {
 		this.type = type;
 	}
 
+	/**
+	 * Indicates whether this definition has a corresponding display field.
+	 *
+	 * @return {@code true} when a display field is available
+	 */
 	public boolean isHasDisplayField() {
 		return hasDisplayField;
 	}
 	
+	/**
+	 * Sets whether this definition has a corresponding display field.
+	 *
+	 * @param hasDisplayField whether a display field is available
+	 */
 	public void setHasDisplayField(boolean hasDisplayField) {
 		this.hasDisplayField = hasDisplayField;
 	}
 	
+	/**
+	 * Indicates whether values should be escaped before client rendering.
+	 *
+	 * @return {@code true} when values should be escaped
+	 */
 	public boolean isEscape() {
 		return escape;
 	}
 
+	/**
+	 * Sets whether values should be escaped before client rendering.
+	 *
+	 * @param escape whether values should be escaped
+	 */
 	public void setEscape(boolean escape) {
 		this.escape = escape;
 	}
 
+	/**
+	 * Returns domain value-map entries when this attribute uses enumerated values.
+	 *
+	 * @return domain value-map entries, or {@code null}
+	 */
 	public Map<String, String> getValueMap() {
 		return valueMap;
 	}
@@ -506,7 +614,8 @@ public class SmartClientAttributeDefinition {
 	 * Convert the valueMap to a string for use in the various toJavascript() methods in the sub-classes. Produces a JSON representation of the
 	 * <code>valueMap</code> field (it the map contains any values), or an array containing one space (if the map is empty).
 	 * 
-	 * @return	The value map string
+	 *
+	 * @return value-map JavaScript literal string
 	 */
 	protected String getValueMapAsString() {
 		if (valueMap.isEmpty()) {
@@ -529,18 +638,38 @@ public class SmartClientAttributeDefinition {
 		this.textBoxStyle = textBoxStyle;
 	}
 	
+	/**
+	 * Returns preferred pixel width for grid/field rendering.
+	 *
+	 * @return preferred pixel width, or {@code null}
+	 */
 	public Integer getPixelWidth() {
 		return pixelWidth;
 	}
 
+	/**
+	 * Sets preferred pixel width for grid/field rendering.
+	 *
+	 * @param pixelWidth preferred pixel width
+	 */
 	public void setPixelWidth(Integer pixelWidth) {
 		this.pixelWidth = pixelWidth;
 	}
 
+	/**
+	 * Returns text/content alignment preference.
+	 *
+	 * @return text/content alignment preference, or {@code null}
+	 */
 	public HorizontalAlignment getAlign() {
 		return align;
 	}
 
+	/**
+	 * Sets text/content alignment preference.
+	 *
+	 * @param align text/content alignment preference
+	 */
 	public void setAlign(HorizontalAlignment align) {
 		this.align = align;
 	}
@@ -567,9 +696,10 @@ public class SmartClientAttributeDefinition {
 	 * This method escapes anything that should be literal and then 
 	 * converts the expression taking into consideration the case setting.
 	 * 
-	 * @param text
-	 * @return
+	 *
+	 * @param text text attribute metadata whose format determines mask and text style
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void setMaskAndStyle(Text text) {
 		String result = null;
 		
@@ -627,6 +757,15 @@ public class SmartClientAttributeDefinition {
 	//		but including this has unexpected results also
 	// 2) get the filter row to be a text field bound to the description binding of the field
 	//		this hangs the UI when trying to display the list
+	/**
+	 * Appends SmartClient editor-property JavaScript for this attribute definition.
+	 *
+	 * @param result JavaScript builder receiving editor properties
+	 * @param forDataGrid whether properties are being generated for a data-grid context
+	 * @param pixelHeight preferred pixel height for image thumbnails, or {@code null}
+	 * @param emptyThumbnailRelativeFile fallback thumbnail resource path, or {@code null}
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	void appendEditorProperties(StringBuilder result,
 									boolean forDataGrid,
 									Integer pixelHeight,
@@ -649,26 +788,26 @@ public class SmartClientAttributeDefinition {
 								((pixelWidth == null) ? "64" : pixelWidth.toString()) : 
 								pixelHeight.toString();
 				result.append(",formatCellValue:function(v,rec,row,col){if(v){var u='content?_n='+v+'");
-            	result.append("&_doc='+rec.bizModule+'.'+rec.bizDocument+'&_b=").append(BindUtil.unsanitiseBinding(name));
-        		result.append("';return '<a href=\"'+u+'\" target=\"_blank\"><img src=\"'+u+'");
-        		result.append("&_w=").append(wpx).append("&_h=").append(hpx);
+				result.append("&_doc='+rec.bizModule+'.'+rec.bizDocument+'&_b=").append(BindUtil.unsanitiseBinding(name));
+				result.append("';return '<a href=\"'+u+'\" target=\"_blank\"><img src=\"'+u+'");
+				result.append("&_w=").append(wpx).append("&_h=").append(hpx);
         		result.append("\" style=\"width:").append(wpx).append("px;height:").append(hpx);
         		result.append("px:object-fit:contain\"/></a>'}if(rec && rec.bizId){return '");
         		if (emptyThumbnailRelativeFile == null) {
         			result.append("'}");
         		}
         		else {
-        			result.append("<img src=\"resources?_n=").append(emptyThumbnailRelativeFile);
-	            	result.append("&_doc='+rec.bizModule+'.'+rec.bizDocument+");
-            		result.append("'&_w=").append(wpx).append("&_h=").append(hpx);
-        			result.append("\"'}");
+					result.append("<img src=\"resources?_n=").append(emptyThumbnailRelativeFile);
+					result.append("&_doc='+rec.bizModule+'.'+rec.bizDocument+");
+					result.append("'&_w=").append(wpx).append("&_h=").append(hpx);
+					result.append("\"/>'}");
         		}
         		result.append("return ''}");
 			}
 			else if ("link".equals(type)) {
-    			result.append(",formatCellValue:function(v,rec,row,col){return (v ? '<a href=\"content?_n='+v+'");
-            	result.append("&_doc='+rec.bizModule+'.'+rec.bizDocument+'&_b=").append(BindUtil.unsanitiseBinding(name));
-            	result.append("\" target=\"_blank\">Content</a>' : '')}");
+				result.append(",formatCellValue:function(v,rec,row,col){if(!v){return ''}var u='content?_n='+v+'");
+				result.append("&_doc='+rec.bizModule+'.'+rec.bizDocument+'&_b=").append(BindUtil.unsanitiseBinding(name));
+				result.append("';return '<a href=\"'+u+'\" target=\"_blank\">Content</a>'}");
 			}
 			else {
 				if ((mask != null) || (textBoxStyle != null)) {
@@ -773,6 +912,15 @@ public class SmartClientAttributeDefinition {
 		}
     }
 
+	/**
+	 * Builds a constant-domain code-to-description value map for client-side enumeration rendering.
+	 *
+	 * @param customer customer metadata context
+	 * @param document document metadata containing the attribute
+	 * @param attribute attribute whose constant domain values are required
+	 * @param runtime whether runtime domain values should be resolved
+	 * @return ordered map of escaped domain codes to escaped localised descriptions
+	 */
 	private static Map<String, String> getConstantDomainValueMap(Customer customer,
 															Document document,
 															Attribute attribute,
@@ -785,8 +933,8 @@ public class SmartClientAttributeDefinition {
 
         Map<String, String> dvMap = new LinkedHashMap<>();
         for (DomainValue domainValue : values) {
-            String key = OWASP.escapeJsString(domainValue.getCode());
-            String value = OWASP.escapeJsString(domainValue.getLocalisedDescription());
+            String key = OWASP.escapeJsStringWithHtmlFormatting(domainValue.getCode());
+            String value = OWASP.escapeJsStringWithHtmlFormatting(domainValue.getLocalisedDescription());
             dvMap.put(key, value);
         }
 

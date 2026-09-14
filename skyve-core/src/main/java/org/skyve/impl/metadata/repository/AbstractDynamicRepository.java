@@ -2,6 +2,7 @@ package org.skyve.impl.metadata.repository;
 
 import java.io.File;
 import java.sql.Connection;
+import java.util.Collections;
 import java.util.List;
 import java.util.TreeMap;
 
@@ -10,6 +11,7 @@ import org.skyve.impl.metadata.repository.behaviour.ActionMetaData;
 import org.skyve.impl.metadata.repository.behaviour.BizletMetaData;
 import org.skyve.impl.metadata.repository.router.Router;
 import org.skyve.impl.metadata.user.UserImpl;
+import org.skyve.job.UserJobSchedule;
 import org.skyve.metadata.controller.BizExportAction;
 import org.skyve.metadata.controller.BizImportAction;
 import org.skyve.metadata.controller.DownloadAction;
@@ -36,7 +38,7 @@ public abstract class AbstractDynamicRepository extends MutableCachedRepository 
 	/**
 	 * Use a plain TreeMap as the cache.
 	 */
-	public AbstractDynamicRepository() {
+	protected AbstractDynamicRepository() {
 		super(new TreeMap<>());
 	}
 
@@ -132,7 +134,7 @@ public abstract class AbstractDynamicRepository extends MutableCachedRepository 
 
 	@Override
 	public List<Router> getModuleRouters() {
-		return null;
+		return Collections.emptyList();
 	}
 
 	@Override
@@ -156,8 +158,8 @@ public abstract class AbstractDynamicRepository extends MutableCachedRepository 
 	}
 
 	@Override
-	public void populatePermissions(User user) {
-		// nothing to do
+	public boolean populatePermissions(User user) {
+		return false;
 	}
 
 	@Override
@@ -166,18 +168,18 @@ public abstract class AbstractDynamicRepository extends MutableCachedRepository 
 	}
 	
 	@Override
-	public void populateUser(User user, Connection connection) {
-		// nothing to do
+	public boolean populateUser(User user, Connection connection) {
+		return false;
 	}
 
 	@Override
-	public List<Bean> retrieveAllJobSchedulesForAllCustomers() {
-		return null;
+	public List<UserJobSchedule> retrieveAllScheduledJobsForAllCustomers() {
+		return Collections.emptyList();
 	}
 
 	@Override
-	public List<Bean> retrieveAllReportSchedulesForAllCustomers() {
-		return null;
+	public List<UserJobSchedule> retrieveAllScheduledReportsForAllCustomers() {
+		return Collections.emptyList();
 	}
 
 	@Override

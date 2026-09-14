@@ -1,17 +1,11 @@
 package modules.admin.SelfRegistration.actions;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
-
 import org.primefaces.PrimeFaces;
 import org.skyve.CORE;
 import org.skyve.EXT;
-import org.skyve.domain.app.AppConstants;
 import org.skyve.domain.messages.Message;
 import org.skyve.domain.messages.MessageSeverity;
 import org.skyve.domain.messages.ValidationException;
-import org.skyve.impl.cdi.GeoIPService;
 import org.skyve.impl.security.HIBPPasswordValidator;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.WebUtil;
@@ -19,11 +13,13 @@ import org.skyve.metadata.controller.ServerSideAction;
 import org.skyve.metadata.controller.ServerSideActionResult;
 import org.skyve.persistence.Persistence;
 import org.skyve.util.BeanValidator;
+import org.skyve.util.GeoIPService;
+import org.skyve.util.IPGeolocation;
 import org.skyve.util.SecurityUtil;
 import org.skyve.util.Util;
 import org.skyve.web.WebContext;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 import jakarta.inject.Inject;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,87 +34,64 @@ import modules.admin.domain.User;
  * registration email to confirm their user account.
  */
 public class Register implements ServerSideAction<SelfRegistrationExtension> {
-
-	private static final Logger LOGGER = LoggerFactory.getLogger(Register.class);
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(Register.class);
 
 	@Inject
+	@SuppressWarnings("java:S6813") // allow member injection
 	private transient GeoIPService geoIPService;
-	
+
+	/**
+	 * Executes the full registration pipeline including captcha validation,
+	 * optional GeoIP blocking, password checks, persistence, and activation email
+	 * dispatch.
+	 *
+	 * @param bean the registration bean submitted by the public form
+	 * @param webContext the current web context used for growl feedback
+	 * @return the action result wrapping the supplied bean
+	 * @throws Exception if validation or persistence fails
+	 */
 	@Override
-	public ServerSideActionResult<SelfRegistrationExtension> execute(SelfRegistrationExtension bean, WebContext webContext) throws Exception {
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
+	public ServerSideActionResult<SelfRegistrationExtension> execute(SelfRegistrationExtension bean, WebContext webContext)
+			throws Exception {
 		Persistence persistence = CORE.getPersistence();
 
 		if (bean.getUser() != null && bean.getUser().getContact() != null) {
 			// Get and validate the recaptcha response from the request parameters if captcha is set
-			if(bean.isShowGoogleRecaptcha() || bean.isShowCloudflareTurnstile()) {
+			if (bean.isShowGoogleRecaptcha() || bean.isShowCloudflareTurnstile()) {
 				HttpServletRequest request = EXT.getHttpServletRequest();
 				String captchaResponse = null;
-				if(bean.isShowGoogleRecaptcha()) {
-					captchaResponse = request.getParameter("g-recaptcha-response");
-				} else if(bean.isShowCloudflareTurnstile()) {
-					captchaResponse = request.getParameter("cf-turnstile-response");
+				if (bean.isShowGoogleRecaptcha()) {
+					captchaResponse = Util.processStringValue(request.getParameter("g-recaptcha-response"));
+				} else if (bean.isShowCloudflareTurnstile()) {
+					captchaResponse = Util.processStringValue(request.getParameter("cf-turnstile-response"));
 				}
-				if ((captchaResponse == null) || (! WebUtil.validateRecaptcha(captchaResponse))) {
+				if ((captchaResponse == null) || (!WebUtil.validateRecaptcha(captchaResponse))) {
 					throw new ValidationException("Captcha is not valid");
 				}
 			}
 			// If configured, check the country and if it is on the blacklist/whitelist
-			if (UtilImpl.IP_INFO_TOKEN != null) {
+			if (geoIPService.isBlocking()) {
 				HttpServletRequest request = EXT.getHttpServletRequest();
 				String clientIPAddress = SecurityUtil.getSourceIpAddress(request);
-				LOGGER.info("Checking country for IP " + clientIPAddress);
-				Optional<String> countryCode = geoIPService.getCountryCodeForIP(clientIPAddress);
-				if (countryCode.isPresent()) {
-					String country = countryCode.get();
-					LOGGER.info("Registration request from country " + country);
-					if (UtilImpl.COUNTRY_CODES != null) {
-						List<String> countryList = Arrays.asList(UtilImpl.COUNTRY_CODES.split("\\|"));
-						// Is this a blacklist or a whitelist?
-						switch (UtilImpl.COUNTRY_LIST_TYPE) {
-							// Blacklist
-							case AppConstants.COUNTRY_LIST_TYPE_BLACKLIST_ENUMERATION_CODE:
-								// If country is on the list
-								if (countryList.stream()
-										.anyMatch(s -> s.equalsIgnoreCase(country))) {
-									String message = "Self-registration failed because country " + country
-											+ " is on the blacklist. Suspected bot submission for "
-											+ bean.getUser().getContact().getName() + " - " + bean.getUser().getContact().getEmail1();
-									LOGGER.warn(message);
+				LOGGER.info("Checking country for IP {}", clientIPAddress);
+				IPGeolocation geolocation = geoIPService.geolocate(clientIPAddress);
+				if (geolocation.isBlocked()) {
+					Contact contact = bean.getUser().getContact();
+					String message = "Self-registration failed because country " + geolocation.countryCode() +
+							(geoIPService.isWhitelist() ? " is not on the whitelist" : " is on the blacklist") +
+							". Suspected bot submission for " + contact.getName() + " - " + contact.getEmail1();
+					LOGGER.warn(message);
 
-									// Record security event
-									SecurityUtil.log("GEO IP Block", message);
+					// Record security event
+					SecurityUtil.log("GEO IP Block", message, UtilImpl.GEO_IP_BLOCK_NOTIFICATIONS);
 
-									// Silently pass
-									bean.setPassSilently(Boolean.TRUE);
-									return new ServerSideActionResult<>(bean);
-								}
-								break;
-							// Whitelist
-							case AppConstants.COUNTRY_LIST_TYPE_WHITELIST_ENUMERATION_CODE:
-								// If country is not on the list
-								if (!countryList.stream()
-										.anyMatch(s -> s.equalsIgnoreCase(country))) {
-									String message = "Self-registration failed because country " + country
-											+ " is not on the whitelist. Suspected bot submission for "
-											+ bean.getUser().getContact().getName() + " - " + bean.getUser().getContact().getEmail1();
-									LOGGER.warn(message);
-
-									// Record security event
-									SecurityUtil.log("GEO IP Block", message);
-
-									// Silently pass
-									bean.setPassSilently(Boolean.TRUE);
-									return new ServerSideActionResult<>(bean);
-								}
-								break;
-							// Invalid
-							default:
-								Util.LOGGER.warning("GeoIP country list type is invalid - bypassing check");
-						}
-					}
+					// Silently pass
+					bean.setPassSilently(Boolean.TRUE);
+					return new ServerSideActionResult<>(bean);
 				}
 			}
-			
+
 			// validate the email and confirm email match
 			bean.validateConfirmEmail();
 
@@ -139,7 +112,7 @@ public class Register implements ServerSideAction<SelfRegistrationExtension> {
 								|| !EXT.checkPassword(unencodedPassword, bean.getPreviouslyAttemptedPassword())) {
 							// Warn user
 							bean.setPreviouslyAttemptedPassword(EXT.hashPassword(unencodedPassword));
-							webContext.growl(MessageSeverity.warn, Util.i18n("warning.breachedPasswordConfirm"));
+							webContext.growl(MessageSeverity.warn, Util.nullSafeI18n("warning.breachedPasswordConfirm"));
 							return new ServerSideActionResult<>(bean);
 						}
 					}
@@ -182,27 +155,40 @@ public class Register implements ServerSideAction<SelfRegistrationExtension> {
 
 				// Send registration email to the new user
 				sendRegistrationEmail(bean);
-				
+
 				webContext.growl(MessageSeverity.info, String.format(
 						"An activation email has been sent to %s. Please use the link in the email to activate your account prior to signing in.",
 						bean.getUser().getContact().getEmail1()));
-				
+
 			} catch (Exception e) {
 				// reset the recaptcha on an error
 				PrimeFaces pf = PrimeFaces.current();
 				if (pf.isAjaxRequest()) {
-					pf.executeScript("if(document.getElementById('g-recaptcha-response')){try{grecaptcha.reset();}catch(error){PrimeFaces.error(error);}}");
+					pf.executeScript(
+							"if(document.getElementById('g-recaptcha-response')){try{grecaptcha.reset();}catch(error){PrimeFaces.error(error);}}");
 				}
 				throw e;
 			}
 		}
 		return new ServerSideActionResult<>(bean);
 	}
-	
-	private static void encodePassword(User user) throws Exception {
+
+	/**
+	 * Hashes and replaces the user's plain-text password.
+	 *
+	 * @param user the user whose password is being encoded
+	 * @throws Exception if hashing fails
+	 */
+	private static void encodePassword(User user) {
 		user.setPassword(EXT.hashPassword(user.getPassword()));
 	}
 
+	/**
+	 * Sends the initial registration email in its own transaction boundary.
+	 *
+	 * @param bean the registration bean containing the user to email
+	 * @throws Exception if the surrounding persistence interaction fails
+	 */
 	private static void sendRegistrationEmail(SelfRegistrationExtension bean) throws Exception {
 		try {
 			// Send the registration email

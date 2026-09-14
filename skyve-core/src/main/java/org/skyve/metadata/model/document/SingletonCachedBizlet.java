@@ -6,19 +6,28 @@ import java.util.concurrent.ConcurrentMap;
 import org.skyve.CORE;
 import org.skyve.domain.PersistentBean;
 import org.skyve.domain.messages.DomainException;
-import org.skyve.impl.util.UtilImpl;
 import org.skyve.metadata.user.DocumentPermissionScope;
 import org.skyve.metadata.user.User;
 
 import jakarta.annotation.Nonnull;
 
 /**
- * A Thread-safe cached singleton Bizlet implementation that memoises the bizId from the super.newInstance() call
- * if the permission is global or customer scoped.
+ * Caches singleton document instance identifiers for global/customer-scoped
+ * access and reuses them across {@link #newInstance(PersistentBean)} calls.
  *
- * @param <T>
+ * <p>Cache entries are keyed by module/document and, for customer scope, by
+ * customer name. If a cached identifier no longer resolves to a persisted
+ * instance, the cache is refreshed from {@link SingletonBizlet} fallback
+ * creation logic.
+ *
+ * <p>Threading: thread-safe for cache access via {@link ConcurrentMap};
+ * returned document instances are not immutable and follow normal persistence
+ * context/thread confinement rules.
+ *
+ * @param <T> the singleton document bean type
  */
 public abstract class SingletonCachedBizlet<T extends PersistentBean> extends SingletonBizlet<T> {
+
 	/**
 	 * Thread-safe map of module/document keys to singleton instance bizId.
 	 */
@@ -29,10 +38,10 @@ public abstract class SingletonCachedBizlet<T extends PersistentBean> extends Si
 	 */
 	@Override
 	public T newInstance(T bean) throws Exception {
-		return monomorphicNewInstance(bean);
+		return resolveCachedNewInstance(bean);
 	}
 	
-	private @Nonnull T monomorphicNewInstance(@Nonnull T bean) throws Exception {
+	private @Nonnull T resolveCachedNewInstance(@Nonnull T bean) throws Exception {
 		String bizModule = bean.getBizModule();
 		String bizDocument = bean.getBizDocument();
 		User u = CORE.getUser();
@@ -67,14 +76,12 @@ public abstract class SingletonCachedBizlet<T extends PersistentBean> extends Si
 				// replace the cached bizId if a new one exists in the data store
 				if (result.isPersisted()) {
 					INSTANCES.put(key, result.getBizId());
-					UtilImpl.LOGGER.warning("Cached instance " + key + '#' + bizId + 
-												" was replaced by " + newBizId + " in the data store.");
+					LOGGER.warn("Cached instance {}#{} was replaced by {} in the data store.", key, bizId, newBizId);
 				}
 				// remove from the cache if there is none in the data store
 				else {
 					INSTANCES.remove(key);
-					UtilImpl.LOGGER.warning("Cached instance " + key + '#' + bizId + 
-												" was removed  and a non-persistent instance " + newBizId + " was returned.");
+					LOGGER.warn("Cached instance {}#{} was removed and a non-persistent instance {} was returned.", key, bizId, newBizId);
 				}
 			}
 		}
@@ -90,14 +97,18 @@ public abstract class SingletonCachedBizlet<T extends PersistentBean> extends Si
 	 */
 	@Override
 	public @Nonnull T newInstance(@Nonnull T bean, @Nonnull DocumentPermissionScope scope) throws Exception {
-		return CORE.getPersistence().withDocumentPermissionScopes(scope, p -> {
+		T result = CORE.getPersistence().withDocumentPermissionScopes(scope, p -> {
 			try {
-				return monomorphicNewInstance(bean);
+				return resolveCachedNewInstance(bean);
 			}
 			catch (Exception e) {
 				throw new DomainException(e);
 			}
 		});
+		if (result == null) {
+			throw new IllegalStateException("Singleton cached newInstance returned null for " + bean.getBizModule() + '.' + bean.getBizDocument());
+		}
+		return result;
 	}
 
 	/**

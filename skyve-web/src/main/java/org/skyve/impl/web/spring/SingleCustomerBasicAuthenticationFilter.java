@@ -1,6 +1,7 @@
 package org.skyve.impl.web.spring;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 import org.skyve.impl.util.UtilImpl;
@@ -50,10 +51,21 @@ import jakarta.servlet.http.HttpServletResponse;
  *  </b:bean>
  */
 public class SingleCustomerBasicAuthenticationFilter extends BasicAuthenticationFilter {
+	/**
+	 * Creates the filter using the supplied authentication manager.
+	 *
+	 * @param authenticationManager authentication manager used for BASIC credential validation
+	 */
 	public SingleCustomerBasicAuthenticationFilter(AuthenticationManager authenticationManager) {
 		super(authenticationManager);
 	}
 
+	/**
+	 * Creates the filter using explicit authentication manager and entry point strategy.
+	 *
+	 * @param authenticationManager authentication manager used for BASIC credential validation
+	 * @param authenticationEntryPoint entry point used when authentication fails
+	 */
 	public SingleCustomerBasicAuthenticationFilter(AuthenticationManager authenticationManager,
 										AuthenticationEntryPoint authenticationEntryPoint) {
 		super(authenticationManager, authenticationEntryPoint);
@@ -106,7 +118,7 @@ public class SingleCustomerBasicAuthenticationFilter extends BasicAuthentication
 			SecurityContextHolder.clearContext();
 
 			if (debug) {
-				this.logger.debug("Authentication request for failed: " + failed);
+				this.logger.debug("Authentication request for failed: {}", failed);
 			}
 
 			this.rememberMeServices.loginFail(request, response);
@@ -128,7 +140,7 @@ public class SingleCustomerBasicAuthenticationFilter extends BasicAuthentication
 
 	private String[] extractAndDecodeHeader(String header, HttpServletRequest request)
 	throws IOException {
-		byte[] base64Token = header.substring(6).getBytes("UTF-8");
+		byte[] base64Token = header.substring(6).getBytes(StandardCharsets.UTF_8);
 		byte[] decoded;
 		try {
 			decoded = Base64.getDecoder().decode(base64Token);
@@ -150,20 +162,22 @@ public class SingleCustomerBasicAuthenticationFilter extends BasicAuthentication
 
 	private static boolean authenticationRequired(String username) {
 		Authentication existingAuth = SecurityContextHolder.getContext().getAuthentication();
-		if (existingAuth == null || ! existingAuth.isAuthenticated()) {
+		if ((existingAuth == null) || (! existingAuth.isAuthenticated())) {
 			return true;
 		}
-		if (existingAuth instanceof UsernamePasswordAuthenticationToken && ! existingAuth.getName().equals(username)) {
+		if (existingAuth instanceof UsernamePasswordAuthenticationToken && (! existingAuth.getName().equals(username))) {
 			return true;
 		}
-		if (existingAuth instanceof AnonymousAuthenticationToken) {
-			return true;
-		}
-
-		return false;
+		return (existingAuth instanceof AnonymousAuthenticationToken);
 	}
 
 	private AuthenticationDetailsSource<HttpServletRequest, ?> authenticationDetailsSource = new WebAuthenticationDetailsSource();
+
+	/**
+	 * Overrides the details source used for generated authentication requests.
+	 *
+	 * @param authenticationDetailsSource details source for request-derived authentication metadata
+	 */
 	@Override
 	public void setAuthenticationDetailsSource(AuthenticationDetailsSource<HttpServletRequest, ?> authenticationDetailsSource) {
 		this.authenticationDetailsSource = authenticationDetailsSource;
@@ -171,6 +185,12 @@ public class SingleCustomerBasicAuthenticationFilter extends BasicAuthentication
 	}
 
 	private RememberMeServices rememberMeServices =  new NullRememberMeServices();
+
+	/**
+	 * Overrides the remember-me service used during BASIC authentication success/failure handling.
+	 *
+	 * @param rememberMeServices remember-me service implementation
+	 */
 	@Override
 	public void setRememberMeServices(RememberMeServices rememberMeServices) {
 		this.rememberMeServices = rememberMeServices;

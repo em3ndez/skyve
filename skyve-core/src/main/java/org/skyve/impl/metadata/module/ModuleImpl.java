@@ -11,6 +11,7 @@ import org.apache.commons.lang3.mutable.MutableInt;
 import org.skyve.domain.Bean;
 import org.skyve.impl.bind.BindUtil;
 import org.skyve.impl.metadata.AbstractMetaDataMap;
+import org.skyve.impl.metadata.customer.CustomerImpl;
 import org.skyve.impl.metadata.model.document.field.Content;
 import org.skyve.impl.metadata.model.document.field.Field;
 import org.skyve.impl.metadata.module.query.MetaDataQueryContentColumnImpl;
@@ -36,18 +37,32 @@ import org.skyve.metadata.module.query.MetaDataQueryColumn;
 import org.skyve.metadata.module.query.MetaDataQueryDefinition;
 import org.skyve.metadata.module.query.QueryDefinition;
 import org.skyve.metadata.module.query.SQLDefinition;
-import org.skyve.metadata.repository.ProvidedRepository;
 import org.skyve.metadata.user.Role;
 import org.skyve.metadata.view.View.ViewType;
 
 import com.google.common.base.MoreObjects;
 
+/**
+ * Runtime implementation of the {@link Module} contract, populated from a
+ * module XML descriptor during repository bootstrap.
+ *
+ * <p>Holds the module's document registrations, role definitions, query definitions
+ * (MetaData, SQL, BizQL), menu structure, and job declarations.  The object graph
+ * is fully resolved before being placed in the repository cache.
+ *
+ * <p>Threading: not thread-safe.  A {@code ModuleImpl} instance is written
+ * exclusively during repository loading and is read-only afterwards.
+ *
+ * @see Module
+ * @see CustomerImpl
+ */
 public class ModuleImpl extends AbstractMetaDataMap implements Module {
 	private static final long serialVersionUID = -5291187014833234045L;
 
 	private String name;
 
 	private long lastModifiedMillis = Long.MAX_VALUE;
+	private long lastCheckedMillis = System.currentTimeMillis();
 	
 	private String title;
 	
@@ -78,19 +93,9 @@ public class ModuleImpl extends AbstractMetaDataMap implements Module {
 
 	private Menu menu;
 
-	private String documentation; 
-
-	private transient ProvidedRepository repository;
+	private String documentation;
 	
-	public ModuleImpl(ProvidedRepository repository) {
-		this.repository = repository;
-	}
-
-	// Required for Serialization
-	// NB Module should never be serialized.
-	public ModuleImpl() {
-		this.repository = ProvidedRepositoryFactory.get();
-	}
+	private Map<String, String> properties = new TreeMap<>();
 
 	@Override
 	public String getName() {
@@ -108,6 +113,16 @@ public class ModuleImpl extends AbstractMetaDataMap implements Module {
 
 	public void setLastModifiedMillis(long lastModifiedMillis) {
 		this.lastModifiedMillis = lastModifiedMillis;
+	}
+
+	@Override
+	public long getLastCheckedMillis() {
+		return lastCheckedMillis;
+	}
+
+	@Override
+	public void setLastCheckedMillis(long lastCheckedMillis) {
+		this.lastCheckedMillis = lastCheckedMillis;
 	}
 
 	@Override
@@ -152,42 +167,46 @@ public class ModuleImpl extends AbstractMetaDataMap implements Module {
 		MetaDataQueryDefinition result = null;
 
 		DocumentRef documentRef = documentRefs.get(documentName);
-		if (documentRef != null) {
-			String queryName = documentRef.getDefaultQueryName();
-			if (queryName != null) {
-				result = getMetaDataQuery(queryName);
-				if (result == null) {
-					throw new MetaDataException("The default query of " + queryName + 
-													" does not exist for document " + documentName);
-				}
-			}
-			else {
-				Document document = getDocument(customer, documentName);
-				if (! document.isPersistable()) {
-					throw new MetaDataException("Cannot create a query for transient Document " + document.getOwningModuleName() + "." + document.getName());
-				}
-				MetaDataQueryDefinitionImpl query = new MetaDataQueryDefinitionImpl();
+		if (documentRef == null) {
+			throw new MetaDataException("The default query for document " + documentName + 
+											" cannot be determined as there is no document ref in module " + name);
+		}
 
-				String queryTitle = "All " + document.getLocalisedPluralAlias();
-				query.setDescription(queryTitle);
-				query.setName(documentName);
-				query.setDocumentName(documentName);
-				query.setOwningModule(this);
-				
-				result = query;
-
-				processColumns(customer,
-								document,
-								result.getColumns(),
-								includeAssociationBizKeys,
-								new MutableBoolean(true),
-								new MutableInt(0));
+		String queryName = documentRef.getDefaultQueryName();
+		if (queryName != null) {
+			result = getMetaDataQuery(queryName);
+			if (result == null) {
+				throw new MetaDataException("The default query of " + queryName + 
+												" does not exist for document " + documentName);
 			}
+		}
+		else {
+			Document document = getDocument(customer, documentName);
+			if (! document.isPersistable()) {
+				throw new MetaDataException("Cannot create a query for transient Document " + document.getOwningModuleName() + "." + document.getName());
+			}
+			MetaDataQueryDefinitionImpl query = new MetaDataQueryDefinitionImpl();
+
+			String queryTitle = "All " + document.getLocalisedPluralAlias();
+			query.setDescription(queryTitle);
+			query.setName(documentName);
+			query.setDocumentName(documentName);
+			query.setOwningModule(this);
+			
+			result = query;
+
+			processColumns(customer,
+							document,
+							result.getColumns(),
+							includeAssociationBizKeys,
+							new MutableBoolean(true),
+							new MutableInt(0));
 		}
 
 		return result;
 	}
 
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void processColumns(Customer customer,
 									Document document,
 									List<MetaDataQueryColumn> columns,
@@ -232,8 +251,7 @@ public class ModuleImpl extends AbstractMetaDataMap implements Module {
 					columns.add(column);
 					columnIndex.increment();
 				}
-				else if (includeAssociationBizKeys && (attribute instanceof Association)) {
-					final Association association = (Association) attribute;
+				else if (includeAssociationBizKeys && (attribute instanceof Association association)) {
 					// Don't include embedded associations since there is no bizKey
 					if (AssociationType.embedded != association.getType()) {
 						final MetaDataQueryProjectedColumnImpl column = new MetaDataQueryProjectedColumnImpl();
@@ -253,8 +271,8 @@ public class ModuleImpl extends AbstractMetaDataMap implements Module {
 /*
 Commented this out as it inadvertently creates dependencies on first-level associations on the referenced document.
 ie Link from an external module to admin.User and domain generation will moan about that module requiring admin.Contact document too.
-				else if (attribute instanceof Association) {
-					String targetDocumentName = ((Association) attribute).getDocumentName();
+				else if (attribute instanceof Association association) {
+					String targetDocumentName = association.getDocumentName();
 					Document targetDocument = getDocument(customer, targetDocumentName);
 					Persistent targetPersistent = targetDocument.getPersistent();
 					if (targetPersistent.getName() != null) { // make sure this isn't a transient document (probably mapped) that can't be queried
@@ -283,9 +301,9 @@ ie Link from an external module to admin.User and domain generation will moan ab
 	 */
 	@Override
 	public Document getDocument(Customer customer, String documentName) {
-		Document result = repository.getDocument(customer, this, documentName);
+		Document result = ProvidedRepositoryFactory.get().getDocument(customer, this, documentName);
 		if (result == null) {
-			throw new IllegalStateException("Document " + documentName + " does not exist in module " + getName());
+			throw new MetaDataException("Document " + documentName + " does not exist in module " + getName());
 		}
 
 		return result;
@@ -293,7 +311,11 @@ ie Link from an external module to admin.User and domain generation will moan ab
 	
 	@Override
 	public JobMetaData getJob(String jobName) {
-		return (JobMetaData) getMetaData(jobName);
+		JobMetaData result = (JobMetaData) getMetaData(jobName);
+		if (result == null) { // no job defined
+			throw new MetaDataException("Job " + getName() + "." + jobName + " is not defined in the skyve metadata.");
+		}
+		return result;
 	}
 
 	public void putJob(JobMetaData job) {
@@ -384,6 +406,11 @@ ie Link from an external module to admin.User and domain generation will moan ab
 
 	public void setDocumentation(String documentation) {
 		this.documentation = documentation;
+	}
+	
+	@Override
+	public Map<String, String> getProperties() {
+		return properties;
 	}
 
     @Override

@@ -11,6 +11,8 @@ import org.skyve.impl.domain.AbstractPersistentBean;
 
 /**
  * Data Group
+ * <br/>
+ * Defines departmental or business group boundaries for row-level security, where users can only interact with data created within their assigned group, while administrators work with a federated collection of the organisation's data.
  * 
  * @stereotype "persistent"
  */
@@ -79,12 +81,6 @@ public class DataGroup extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof DataGroup) && 
-					this.getBizId().equals(((DataGroup) o).getBizId()));
 	}
 
 	/**

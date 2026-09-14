@@ -45,9 +45,15 @@ import org.skyve.metadata.model.document.Collection.CollectionType;
 import org.skyve.metadata.user.DocumentPermission;
 import org.skyve.metadata.view.View.ViewType;
 import org.skyve.util.Binder;
-import org.skyve.util.Util;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
+/**
+ * Parses and interprets Skyve Markdown script into module and document metadata models.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate Skyve script token fragments.
 public class SkyveScriptInterpreter {
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(SkyveScriptInterpreter.class);
 
 	private List<DocumentMetaData> documents;
 	private List<ModuleMetaData> modules;
@@ -140,24 +146,49 @@ public class SkyveScriptInterpreter {
 		this.defaultModule = defaultModule;
 	}
 
+	/**
+	 * Returns the documents parsed from the script.
+	 *
+	 * @return Parsed document metadata.
+	 */
 	public List<DocumentMetaData> getDocuments() {
 		return documents;
 	}
 
+	/**
+	 * Returns accumulated parsing and interpretation issues.
+	 *
+	 * @return Script errors and warnings.
+	 */
 	public List<SkyveScriptException> getErrors() {
 		return errors;
 	}
 
+	/**
+	 * Returns modules parsed or inferred from the script.
+	 *
+	 * @return Parsed module metadata.
+	 */
 	public List<ModuleMetaData> getModules() {
 		return modules;
 	}
 
+	/**
+	 * Indicates whether newly created modules are marked prototype.
+	 *
+	 * @return {@code true} when prototype mode is enabled.
+	 */
 	public boolean isPrototypeModules() {
 		return prototypeModules;
 	}
 
+	/**
+	 * Parses the current script text into a CommonMark document tree.
+	 *
+	 * @return The parsed root node.
+	 */
 	public Node parse() {
-		if (script != null && script.length() > 0) {
+		if (script != null && (! script.isEmpty())) {
 			this.document = parser.parse(script);
 			return this.document;
 		}
@@ -177,8 +208,9 @@ public class SkyveScriptInterpreter {
 	 * 
 	 * @return the cleansed markdown ready to be processed
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public String preProcess() {
-		if (script != null && script.length() > 0) {
+		if (script != null && (! script.isEmpty())) {
 			String[] lines = script.split("\n");
 			StringBuilder newScript = new StringBuilder();
 
@@ -244,7 +276,7 @@ public class SkyveScriptInterpreter {
 					line = line.replace("[", "`").replace("]", "`");
 				}
 
-				if (newScript.length() > 0) {
+				if (! newScript.isEmpty()) {
 					newScript.append("\n");
 				}
 				newScript.append(line);
@@ -256,6 +288,9 @@ public class SkyveScriptInterpreter {
 		throw new IllegalArgumentException("Script was not supplied during construction.");
 	}
 
+	/**
+	 * Processes the parsed document tree into Skyve metadata objects and validation issues.
+	 */
 	public void process() {
 		// parse the script if it has not been done already
 		if (document == null) {
@@ -281,11 +316,21 @@ public class SkyveScriptInterpreter {
 		}
 	}
 
+	/**
+	 * Sets whether generated modules should be marked as prototype modules.
+	 *
+	 * @param prototypeModules {@code true} to mark modules as prototype.
+	 */
 	public void setPrototypeModules(boolean prototypeModules) {
 		this.prototypeModules = prototypeModules;
 	}
 
-	@SuppressWarnings("boxing")
+	/**
+	 * Walks a CommonMark node tree and maps recognised structures to module/document metadata.
+	 *
+	 * @param node The current node to process.
+	 */
+	@SuppressWarnings({"boxing", "java:S3776"}) // Complexity OK
 	private void process(Node node) {
 		if (isHeading(node)) {
 			Heading heading = (Heading) node;
@@ -302,6 +347,11 @@ public class SkyveScriptInterpreter {
 
 					if (isDisplayName(text.getLiteral())) {
 						moduleTitle = extractDisplayName(text.getLiteral());
+						if (moduleTitle == null) {
+							addCritical("Invalid module definition supplied");
+							process(heading.getNext());
+							return;
+						}
 						moduleName = BindUtil.toJavaInstanceIdentifier(moduleTitle).toLowerCase();
 					} else {
 						moduleName = text.getLiteral().toLowerCase();
@@ -314,7 +364,9 @@ public class SkyveScriptInterpreter {
 					addCritical("Invalid module definition supplied");
 				}
 
-				getModules().add(currentModule);
+				if (currentModule.getName() != null) {
+					getModules().add(currentModule);
+				}
 				process(heading.getNext());
 			} else if (isHeading2(heading)) {
 				currentLine++;
@@ -328,6 +380,11 @@ public class SkyveScriptInterpreter {
 
 					if (isDisplayName(text.getLiteral().trim())) {
 						singularAlias = extractDisplayName(text.getLiteral());
+						if (singularAlias == null) {
+							addError(String.format("Unsupported document name declaratation: %s", text.getLiteral()));
+							process(heading.getNext());
+							return;
+						}
 						documentName = BindUtil.toJavaTypeIdentifier(singularAlias);
 					} else {
 						documentName = text.getLiteral().trim();
@@ -362,22 +419,26 @@ public class SkyveScriptInterpreter {
 					}
 				}
 
-				getDocuments().add(currentDocument);
+				if (currentDocument.getName() != null) {
+					getDocuments().add(currentDocument);
+				}
 
 				// add this document to the module
 				if (currentModule == null) {
 					initialiseDefaultModule();
 				}
 
-				ModuleDocumentMetaData md = new ModuleDocumentMetaData();
-				md.setRef(currentDocument.getName());
-				currentModule.getDocuments().add(md);
+				if (currentDocument.getName() != null) {
+					ModuleDocumentMetaData md = new ModuleDocumentMetaData();
+					md.setRef(currentDocument.getName());
+					currentModule.getDocuments().add(md);
+				}
 
 				appendRole(currentModule, currentDocument);
 				appendMenu(currentModule, currentDocument);
 
 				// set the module home document if not set
-				if (currentModule.getHomeDocument() == null) {
+				if ((currentModule.getHomeDocument() == null) && (currentDocument.getName() != null)) {
 					currentModule.setHomeDocument(currentDocument.getName());
 					currentModule.setHomeRef(currentDocument.getPersistent() != null ? ViewType.list : ViewType.edit);
 				}
@@ -409,13 +470,18 @@ public class SkyveScriptInterpreter {
 	 * Adds a new critical error to the list of errors for this script.
 	 */
 	private void addCritical(String message) {
-		Util.LOGGER.warning(message);
+		LOGGER.warn(message);
 		getErrors().add(new SkyveScriptException(ExceptionType.critical, message, currentLine));
 
 	}
 
+	/**
+	 * Adds a new error issue to the script error list.
+	 *
+	 * @param message Error message.
+	 */
 	private void addError(String message) {
-		Util.LOGGER.warning(message);
+		LOGGER.warn(message);
 		getErrors().add(new SkyveScriptException(ExceptionType.error, message, currentLine));
 	}
 
@@ -441,8 +507,13 @@ public class SkyveScriptInterpreter {
 		currentModule.getDocuments().add(md);
 	}
 
+	/**
+	 * Adds a new warning issue to the script error list.
+	 *
+	 * @param message Warning message.
+	 */
 	private void addWarning(String message) {
-		Util.LOGGER.info(message);
+		LOGGER.info(message);
 		getErrors().add(new SkyveScriptException(ExceptionType.warning, message, currentLine));
 	}
 
@@ -452,6 +523,11 @@ public class SkyveScriptInterpreter {
 	private static void appendMenu(ModuleMetaData module, DocumentMetaData document) {
 		MenuMetaData menu = module.getMenu();
 
+	/**
+	 * Parses a list-item node into a field/association/collection definition.
+	 *
+	 * @param node The node containing attribute declaration content.
+	 */
 		if (menu == null) {
 			menu = new MenuMetaData();
 			module.setMenu(menu);
@@ -569,6 +645,7 @@ public class SkyveScriptInterpreter {
 		}
 	}
 
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void createAttribute(String attributeName, String[] parts, boolean required, Node line) {
 		// identify the type from the parts
 		String type = null;
@@ -581,6 +658,10 @@ public class SkyveScriptInterpreter {
 
 			if (isDisplayName(attributeName)) {
 				displayName = extractDisplayName(attributeName);
+				if (displayName == null) {
+					addError(String.format("Unsupported attribute display name declaration: %s", attributeName));
+					return;
+				}
 				name = BindUtil.toJavaInstanceIdentifier(displayName);
 			} else {
 				name = attributeName;
@@ -704,7 +785,6 @@ public class SkyveScriptInterpreter {
 	/**
 	 * Creates a new Collection ready to be added to the current document.
 	 */
-	@SuppressWarnings("boxing")
 	private static CollectionImpl createCollection(boolean required, String type, String name, String displayName, Node line) {
 		CollectionType collectionType = extractCollectionType(line);
 
@@ -856,8 +936,8 @@ public class SkyveScriptInterpreter {
 		Node node = line;
 		while (node.getNext() != null) {
 			node = node.getNext();
-			if (node instanceof Code) {
-				return AssociationType.valueOf(((Code) node).getLiteral());
+			if (node instanceof Code code) {
+				return AssociationType.valueOf(code.getLiteral());
 			}
 		}
 
@@ -872,8 +952,8 @@ public class SkyveScriptInterpreter {
 		Node node = line;
 		while (node.getNext() != null) {
 			node = node.getNext();
-			if (node instanceof Code) {
-				return CollectionType.valueOf(((Code) node).getLiteral());
+			if (node instanceof Code code) {
+				return CollectionType.valueOf(code.getLiteral());
 			}
 		}
 
@@ -904,8 +984,7 @@ public class SkyveScriptInterpreter {
 	 * @return The text
 	 */
 	private static String getTextFromNode(Node node) {
-		if (node != null && node instanceof Text) {
-			Text text = (Text) node;
+		if (node instanceof Text text) {
 			return text.getLiteral();
 		}
 
@@ -1048,8 +1127,7 @@ public class SkyveScriptInterpreter {
 	 */
 	@SuppressWarnings("unused")
 	private static boolean isHeading1(Node node) {
-		if (node instanceof Heading) {
-			Heading heading = (Heading) node;
+		if (node instanceof Heading heading) {
 			return isHeading1(heading);
 		}
 		return false;
@@ -1069,8 +1147,7 @@ public class SkyveScriptInterpreter {
 	 */
 	@SuppressWarnings("unused")
 	private static boolean isHeading2(Node node) {
-		if (node instanceof Heading) {
-			Heading heading = (Heading) node;
+		if (node instanceof Heading heading) {
 			return isHeading2(heading);
 		}
 		return false;
@@ -1116,6 +1193,11 @@ public class SkyveScriptInterpreter {
 		}
 	}
 
+	/**
+	 * Processes a list item and dispatches to attribute parsing when relevant.
+	 *
+	 * @param item The list item node.
+	 */
 	private void processListItem(Node item) {
 		if (item.getFirstChild() != null
 				&& (item.getFirstChild() instanceof Text || item.getFirstChild() instanceof Paragraph)) {
@@ -1128,6 +1210,9 @@ public class SkyveScriptInterpreter {
 		}
 	}
 
+	/**
+	 * Resolves stored child-document parent references once all documents are parsed.
+	 */
 	private void processParentDocuments() {
 		for (Map.Entry<String, String> e : parentDocuments.entrySet()) {
 			for (DocumentMetaData d : getDocuments()) {

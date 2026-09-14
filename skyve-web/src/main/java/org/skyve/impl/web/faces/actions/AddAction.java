@@ -1,7 +1,6 @@
 package org.skyve.impl.web.faces.actions;
 
 import java.util.List;
-import java.util.logging.Level;
 
 import org.skyve.CORE;
 import org.skyve.domain.Bean;
@@ -15,35 +14,47 @@ import org.skyve.metadata.controller.ImplicitActionName;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.document.Bizlet;
 import org.skyve.metadata.model.document.Collection;
+import org.skyve.metadata.model.document.Collection.CollectionType;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.model.document.Relation;
 import org.skyve.metadata.module.Module;
 import org.skyve.metadata.user.User;
 import org.skyve.util.Binder;
 import org.skyve.util.Binder.TargetMetaData;
-import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
 import org.skyve.web.WebContext;
+import org.slf4j.Logger;
 
 /**
  * Adds an element to an array.
  * The onAddedHandlers event actions is not implemented since the grid cannot be inlined.
  */
 public class AddAction extends FacesAction<Void> {
+    private static Logger FACES_LOGGER = Category.FACES.logger();
+    private static Logger BIZLET_LOGGER = Category.BIZLET.logger();
+    
 	private FacesView facesView;
 	private String dataWidgetBinding;
 	private boolean inline;
+
+	/**
+	 * Creates an add action for the given collection binding.
+	 */
 	public AddAction(FacesView facesView, String dataWidgetBinding, boolean inline) {
 		this.facesView = facesView;
 		this.dataWidgetBinding = dataWidgetBinding;
 		this.inline = inline;
 	}
 
+	/**
+	 * Creates and inserts a new collection element, then optionally zooms into the new element view.
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public Void callback() throws Exception {
 		String viewBinding = facesView.getViewBinding();
-		if (UtilImpl.FACES_TRACE) Util.LOGGER.info("AddAction - dataWidgetBinding=" + dataWidgetBinding + 
-													" : facesView.viewBinding=" + viewBinding + 
-													" : facesView.inline=" + inline);
+		if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("AddAction - dataWidgetBinding={} : facesView.viewBinding={} : facesView.inline={}", 
+													dataWidgetBinding, viewBinding, inline);
 		if ((! inline) && (! FacesAction.validateRequiredFields())) {
 			return null;
 		}
@@ -85,14 +96,15 @@ public class AddAction extends FacesAction<Void> {
     	Bean newBean = relationDocument.newInstance(user);
 
     	// set bizOrdinal if this is an ordered child collection
-		if ((targetRelation instanceof Collection) &&
-				Boolean.TRUE.equals(((Collection) targetRelation).getOrdered())) {
+    	if ((targetRelation instanceof Collection collection) && 
+        		Boolean.TRUE.equals(collection.getOrdered()) && 
+			CollectionType.child.equals(collection.getType())) {
 			@SuppressWarnings("unchecked")
 			List<Bean> beans = (List<Bean>) Binder.get(bean, newViewBinding.toString());
 			if (beans != null) {
 				Binder.set(newBean, Bean.ORDINAL_NAME, Integer.valueOf(beans.size() + 1));
 			}
-		}
+        }
 
 		// Call the bizlet and interceptors
 		WebContext webContext = facesView.getWebContext();
@@ -101,9 +113,9 @@ public class AddAction extends FacesAction<Void> {
 		if (! vetoed) {
 			Bizlet<Bean> bizlet = ((DocumentImpl) relationDocument).getBizlet(customer);
 			if (bizlet != null) {
-				if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preExecute", "Entering " + bizlet.getClass().getName() + ".preExecute: " + ImplicitActionName.Add + ", " + newBean + ", " + facesView.getBean() + ", " + webContext);
+				if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.preExecute: {}, {}, {}, {}", bizlet.getClass().getName(), ImplicitActionName.Add, newBean, facesView.getBean(), webContext);
 				newBean = bizlet.preExecute(ImplicitActionName.Add, newBean, parentBean, webContext);
-				if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preExecute", "Exiting " + bizlet.getClass().getName() + ".preExecute: " + newBean);
+				if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.preExecute: {}", bizlet.getClass().getName(), newBean);
 			}
 			internalCustomer.interceptAfterPreExecute(ImplicitActionName.Add, newBean, parentBean, webContext);
 
@@ -120,8 +132,8 @@ public class AddAction extends FacesAction<Void> {
 				facesView.setViewBinding(newViewBinding.toString());
 		    	facesView.getZoomInBindings().push(zoomInBinding.toString());
 				if (UtilImpl.FACES_TRACE) { 
-					Util.LOGGER.info("Push ZoomInBinding " + zoomInBinding.toString());
-					Util.LOGGER.info("Set ViewBinding " + newViewBinding.toString());
+					FACES_LOGGER.info("Push ZoomInBinding {}", zoomInBinding.toString());
+					FACES_LOGGER.info("Set ViewBinding {}", newViewBinding.toString());
 				}
 
 		    	ActionUtil.redirectViewScopedConversation(facesView, true);

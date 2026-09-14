@@ -11,6 +11,8 @@ import org.skyve.impl.domain.AbstractTransientBean;
 
 /**
  * Document Creator
+ * <br/>
+ * Development tool that generates Skyve module and document XML metadata from markdown-based scripts, to accelerate application development.
  * 
  * @stereotype "transient"
  */
@@ -116,12 +118,6 @@ public class DocumentCreator extends AbstractTransientBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof DocumentCreator) && 
-					this.getBizId().equals(((DocumentCreator) o).getBizId()));
 	}
 
 	/**

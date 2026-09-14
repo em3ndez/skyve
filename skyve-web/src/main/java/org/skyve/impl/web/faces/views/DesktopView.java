@@ -1,5 +1,6 @@
 package org.skyve.impl.web.faces.views;
 
+import java.net.MalformedURLException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -28,56 +29,121 @@ import org.skyve.metadata.module.menu.MenuRenderer;
 import org.skyve.metadata.module.query.MetaDataQueryDefinition;
 import org.skyve.metadata.module.query.QueryDefinition;
 import org.skyve.metadata.router.UxUi;
+import org.skyve.metadata.user.User;
 import org.skyve.metadata.view.View.ViewType;
 import org.skyve.util.Icons;
 import org.skyve.util.OWASP;
 import org.skyve.web.WebAction;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.faces.context.FacesContext;
 import jakarta.inject.Named;
 import jakarta.servlet.http.HttpServletRequest;
 
+/**
+ * Models a view interaction and binds it to the active Skyve web context.
+ */
 @RequestScoped
 @Named("desktop")
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate desktop-view markup fragments.
 public class DesktopView extends HarnessView {
 	private static final long serialVersionUID = 913239189728613263L;
 
+	private static final String DESKTOP_SCRIPT_PATH = "desktop/";
+	private static final String FRAMEWORK_MESSAGES_DIR = UtilImpl.SMART_CLIENT_DIR + "/locales/";
+	private static final String FRAMEWORK_MESSAGES_FILE = "frameworkMessages";
+	private static final String JS_EXTENSION = ".js";
+	private static final String LOCALE_SEPARATOR = "_";
+	private static final String PROPERTIES_EXTENSION = ".properties";
+	private static final String SKYVE_MESSAGES_FILE = "skyveMessages";
+	private static final String DEFAULT_SKYVE_MESSAGES_SCRIPT = DESKTOP_SCRIPT_PATH + SKYVE_MESSAGES_FILE + JS_EXTENSION;
+	@SuppressWarnings("jabva:S1075") // Constant file path is deliberate for web
+	private static final String DESKTOP_RESOURCE_PATH = "/" + DESKTOP_SCRIPT_PATH;
+	private static final String SCRIPT_CLOSE = "\"></script>";
+	private static final String SCRIPT_OPEN = "<script type=\"text/javascript\" src=\"";
+	
 	private String localeScript;
+	
+	/**
+	 * Returns locale bootstrap script markup for SmartClient internationalization.
+	 *
+	 * @return locale bootstrap script markup, or {@code null}
+	 */
 	public String getLocaleScript() {
 		return localeScript;
 	}
 	
 	private String menuScript;
+
+	/**
+	 * Returns generated desktop menu bootstrap script.
+	 *
+	 * @return generated desktop menu bootstrap script, or {@code null}
+	 */
 	public String getMenuScript() {
 		return menuScript;
 	}
 	
 	private String dataSourceScript;
+
+	/**
+	 * Returns generated SmartClient datasource bootstrap script.
+	 *
+	 * @return generated SmartClient datasource bootstrap script, or {@code null}
+	 */
 	public String getDataSourceScript() {
 		return dataSourceScript;
 	}
 	
 	private String uiScript;
+
+	/**
+	 * Returns generated initial UI action script.
+	 *
+	 * @return generated initial UI action script, or {@code null}
+	 */
 	public String getUiScript() {
 		return uiScript;
 	}
 	
 	private String bannerScript;
+
+	/**
+	 * Returns generated environment banner script.
+	 *
+	 * @return generated environment banner script, or {@code null}
+	 */
 	public String getBannerScript() {
 		return bannerScript;
 	}
 
+	/**
+	 * Returns SmartClient base directory configured for this runtime.
+	 *
+	 * @return SmartClient base directory
+	 */
 	@SuppressWarnings("static-method")
 	public String getSmartClientDir() {
 		return UtilImpl.SMART_CLIENT_DIR;
 	}
 
 	private String skin;
+
+	/**
+	 * Returns the SmartClient skin selected for the active UX/UI profile.
+	 *
+	 * @return SmartClient skin name, or {@code null}
+	 */
 	public String getSkin() {
 		return skin;
 	}
 	
+	/**
+	 * Prepares desktop scripts (menu, datasource, UI, and banner) for initial non-postback rendering.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void preRender() {
         final FacesContext fc = FacesContext.getCurrentInstance();
         if (! fc.isPostback()) {
@@ -88,17 +154,26 @@ public class DesktopView extends HarnessView {
 			    	Customer customer = user.getCustomer();
 			    	
 			    	initialise();
-					createLocaleScriptIfRequired();
+					createLocaleScripts();
 
 			    	String bizModule = getBizModuleParameter();
 			    	String bizDocument = getBizDocumentParameter();
 			    	String bizId = getBizIdParameter();
 			    	
 					HttpServletRequest request = (HttpServletRequest) fc.getExternalContext().getRequest();
-					UxUi uxui = UserAgent.getUxUi(request);
+					UxUi uxui = UserAgent.getSelection(request).getUxUi();
 					skin = uxui.getScSkin();
 					
 					StringBuilder sb = new StringBuilder(8192);
+					sb.append("isc.BizUtil.headerTemplate='").append(getHeaderTemplate()).append("';");
+					sb.append("isc.BizUtil.userName='").append(getUserName()).append("';");
+					sb.append("isc.BizUtil.userContactName='").append(getUserContactName()).append("';");
+					sb.append("isc.BizUtil.userContactInitials='").append(getUserContactInitials()).append("';");
+					final String url = getUserContactImageUrl();
+					if (url != null) {
+						sb.append("isc.BizUtil.userContactImageUrl='").append(url).append("';");
+					}
+					sb.append("isc.BizUtil.canSwitchMode=").append(isCanSwitchMode()).append(";\n");
 
 					constructMenu(bizModule, uxui.getName(), sb);
 					menuScript = sb.toString();
@@ -161,219 +236,286 @@ public class DesktopView extends HarnessView {
         }
 	}
 
+	/**
+	 * Builds the desktop header HTML template injected into SmartClient runtime state.
+	 *
+	 * @return header template HTML
+	 */
 	public String getHeaderTemplate() {
-		StringBuilder result = new StringBuilder(128);
-		
-		result.append("<div id=\"formHeader\">");
-		result.append("<div>");
-		result.append("<table style=\"");
-		result.append("width:100%;background:url(images/skyve_bar.png) repeat-x 0 0;");
-    	result.append("\"><tr height=\"46px\"><td width=\"1%\">{icon}</td>");
-    	result.append("<td><div class=\"titleBar\">{title}</div></td>");
-    	result.append("<td width=\"10%\" align=\"right\">");
-		result.append("<img src=\"images/skyve-thick-grey.png\" style=\"max-height: 28px; height: auto;\" alt=\"Skyve\"/></td>");
-    	result.append("<td width=\"1%\" align=\"right\"><div class=\"skyveDocumentLink\">{link}</div></td>");
-    	
-    	if (isCanSwitchMode()) {
-    		result.append("<td width=\"1%\" align=\"right\"><a href=\"javascript:void(setUxUi());\" class=\"dhtmlPageButton\" title=\"Switch Mode\"><i class=\"");
-    		result.append(Icons.FONT_SWITCH).append(" fa-2x \"></i></a></td>");
-    	}
+		StringBuilder result = new StringBuilder(256);
+		result.append("<table class=\"skyveHeaderTable\">");
+		result.append("<tr>");
+		result.append("<td width=\"1%\">{icon}</td>");
+		result.append("<td><div class=\"titleBar\">{title}</div></td>");
+		result.append("<td width=\"10%\" align=\"right\"><img src=\"images/skyve-thick-grey.png\" style=\"max-height: 28px; height: auto;\" alt=\"Skyve\"/></td>");
+		result.append("<td width=\"1%\" align=\"right\"><div class=\"skyveDocumentLink\">{link}</div></td>");
 		if (isCanTextSearch()) {
 			result.append("<td width=\"1%\" align=\"right\"><a href=\"javascript:isc.BizUtil.popupSearch();\" class=\"dhtmlPageButton\" title=\"Search\"><i class=\"");
-			result.append(Icons.FONT_SEARCH).append(" fa-2x\"></i></a></td>");
+			result.append(Icons.FONT_SEARCH);
+			result.append(" fa-2x\"></i></a></td>");
 		}
-		
 		result.append("<td width=\"1%\" align=\"right\"><a href=\"javascript:isc.BizUtil.showHelp({help});\" class=\"dhtmlPageButton\" title=\"Help\"><i class=\"");
-		result.append(Icons.FONT_HELP).append(" fa-2x\"></i></a></td>");
+		result.append(Icons.FONT_HELP);
+		result.append(" fa-2x\"></i></a></td>");
 		result.append("<td width=\"1%\" align=\"right\"><a href=\"javascript:isc.BizUtil.showPortal();\" class=\"dhtmlPageButton\" title=\"Dashboard\"><i class=\"");
-		result.append(Icons.FONT_DASHBOARD).append(" fa-2x\"></i></a></td>");
-		result.append("<td width=\"1%\" align=\"right\"><a href=\"loggedOut\" class=\"dhtmlPageButton\" title=\"Sign-out\"><i class=\"");
-		result.append(Icons.FONT_LOGOUT).append(" fa-2x\"></i></a></td>");
-    	result.append("</tr></table>");
-    	result.append("</div>");
-    	
-    	return result.toString();
+		result.append(Icons.FONT_DASHBOARD);
+		result.append(" fa-2x\"></i></a></td>");
+		result.append("<td width=\"1%\" align=\"right\"></td></tr></table>");
+
+		return result.toString();
 	}
 
-	private void createLocaleScriptIfRequired() {
-		Locale locale = CORE.getUser().getLocale();
-		String language = locale.getLanguage();
-		String country = locale.getCountry();
+	/**
+	 * Creates locale-specific script include markup for SmartClient and Skyve messages.
+	 */
+	private void createLocaleScripts() {
+		createLocaleScripts(CORE.getUser().getLocale());
+	}
+	
+	/**
+	 * Creates locale-specific script include markup for the supplied locale.
+	 *
+	 * <p>Side effects: updates {@link #getLocaleScript()} with script tags for the
+	 * SmartClient framework messages and the Skyve desktop messages. The SmartClient
+	 * framework bundle falls back to the default bundle when no more specific mapping
+	 * exists; the Skyve desktop bundle falls back to the default bundle when the
+	 * localized web resource is absent.
+	 *
+	 * @param locale locale to use when selecting message bundles; must not be {@code null}
+	 */
+	void createLocaleScripts(@Nonnull Locale locale) {
+		@Nonnull StringBuilder result = new StringBuilder(192);
+		appendScriptTag(result, resolveFrameworkMessagesScript(locale));
+		result.append('\n');
+		appendScriptTag(result, resolveSkyveMessagesScript(locale));
+		localeScript = result.toString();
+	}
+	
+	/**
+	 * Appends one script tag for a pre-resolved source URL.
+	 *
+	 * @param result buffer receiving the script tag; must not be {@code null}
+	 * @param src script source URL; must not be {@code null}
+	 */
+	private static void appendScriptTag(@Nonnull StringBuilder result, @Nonnull String src) {
+		result.append(SCRIPT_OPEN).append(src).append(SCRIPT_CLOSE);
+	}
+	
+	/**
+	 * Resolves the SmartClient framework message bundle script for a locale.
+	 *
+	 * <p>Returns the default SmartClient framework bundle when the locale has no
+	 * mapped localized bundle.
+	 *
+	 * @param locale locale to resolve; must not be {@code null}
+	 * @return script source URL for the framework message bundle; never {@code null}
+	 */
+	@SuppressWarnings("java:S3776") // Locale mapping mirrors the available SmartClient framework bundles.
+	private static @Nonnull String resolveFrameworkMessagesScript(@Nonnull Locale locale) {
+		@Nonnull String language = locale.getLanguage();
+		@Nonnull String country = locale.getCountry();
+		@Nonnull String variant = locale.getVariant();
+		@Nullable String bundleName = null;
 
-		Locale bg_BG = new Locale("bg", "BG");
-		Locale hu_HU = new Locale("hu", "HU");
-		Locale nb_NO = new Locale("nb", "NO");
-		Locale pl_PL = new Locale("pl", "PL");
-		Locale pt_BR = new Locale("pt", "BR");
-		Locale ro_RO = new Locale("ro", "RO");
-		Locale ru_RU = new Locale("ru", "RU");
-		Locale sr_Latn = new Locale("sr", "SR", "Latn");
-		Locale sv_SE = new Locale("sv", "SE");
-		Locale tr_TR = new Locale("tr", "TR");
-		Locale uk_UA = new Locale("uk", "UA");
-		Locale zh_CN = new Locale("zh", "CN");
-		Locale zh_TW = new Locale("zh", "TW");
+		if ("ar".equals(language)) {
+			bundleName = "ar";
+		}
+		else if ("ba".equals(language)) {
+			bundleName = "ba";
+		}
+		else if ("bg".equals(language) && "BG".equals(country)) {
+			bundleName = "bg_BG";
+		}
+		else if ("cr".equals(language)) {
+			bundleName = "cr";
+		}
+		else if ("cs".equals(language)) {
+			bundleName = "cs";
+		}
+		else if ("da".equals(language)) {
+			bundleName = "da";
+		}
+		else if ("de".equals(language)) {
+			bundleName = "de";
+		}
+		else if ("el".equals(language)) {
+			bundleName = "el";
+		}
+		else if ("es".equals(language)) {
+			bundleName = "es";
+		}
+		else if ("fi".equals(language)) {
+			bundleName = "fi";
+		}
+		else if ("fr".equals(language) && "FR".equals(country)) {
+			bundleName = "fr_FR";
+		}
+		else if ("hr".equals(language)) {
+			bundleName = "hr";
+		}
+		else if ("hu".equals(language) && "HU".equals(country)) {
+			bundleName = "hu_HU";
+		}
+		else if ("id".equals(language)) {
+			bundleName = "id";
+		}
+		else if ("it".equals(language)) {
+			bundleName = "it";
+		}
+		else if ("ja".equals(language)) {
+			bundleName = "ja";
+		}
+		else if ("ko".equals(language)) {
+			bundleName = "ko";
+		}
+		else if ("nb".equals(language) && "NO".equals(country)) {
+			bundleName = "nb_NO";
+		}
+		else if ("nl".equals(language)) {
+			bundleName = "nl";
+		}
+		else if ("pl".equals(language)) {
+			bundleName = "PL".equals(country) ? "pl_PL" : "pl";
+		}
+		else if ("pt".equals(language)) {
+			bundleName = "BR".equals(country) ? "pt_BR" : "pt";
+		}
+		else if ("ro".equals(language) && "RO".equals(country)) {
+			bundleName = "ro_RO";
+		}
+		else if ("ru".equals(language)) {
+			bundleName = "RU".equals(country) ? "ru_RU" : "ru";
+		}
+		else if ("sk".equals(language)) {
+			bundleName = "sk";
+		}
+		else if ("sr".equals(language)) {
+			bundleName = "Latn".equals(variant) ? "sr_Latn" : "sr";
+		}
+		else if ("sv".equals(language) && "SE".equals(country)) {
+			bundleName = "sv_SE";
+		}
+		else if ("tr".equals(language) && "TR".equals(country)) {
+			bundleName = "tr_TR";
+		}
+		else if ("uk".equals(language) && "UA".equals(country)) {
+			bundleName = "uk_UA";
+		}
+		else if ("zh".equals(language)) {
+			if ("CN".equals(country)) {
+				bundleName = "zh_CN";
+			}
+			else if ("TW".equals(country)) {
+				bundleName = "zh_TW";
+			}
+		}
 		
-		if (new Locale("ar").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_ar.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
+		if (bundleName == null) {
+			StringBuilder result = new StringBuilder(FRAMEWORK_MESSAGES_DIR.length() + 
+														FRAMEWORK_MESSAGES_FILE.length() +
+														PROPERTIES_EXTENSION.length());
+			return result.append(FRAMEWORK_MESSAGES_DIR)
+							.append(FRAMEWORK_MESSAGES_FILE)
+							.append(PROPERTIES_EXTENSION)
+							.toString();
 		}
-		else if (new Locale("ba").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_ba.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (bg_BG.getLanguage().equals(language)) {
-			if (bg_BG.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_bg_BG.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
+			
+		StringBuilder result = new StringBuilder(FRAMEWORK_MESSAGES_DIR.length() +
+													FRAMEWORK_MESSAGES_FILE.length() +
+													LOCALE_SEPARATOR.length() +
+													bundleName.length() +
+													PROPERTIES_EXTENSION.length());
+		return result.append(FRAMEWORK_MESSAGES_DIR)
+						.append(FRAMEWORK_MESSAGES_FILE)
+						.append(LOCALE_SEPARATOR)
+						.append(bundleName)
+						.append(PROPERTIES_EXTENSION)
+						.toString();
+	}
+
+	/**
+	 * Resolves the Skyve desktop message bundle script for a locale.
+	 *
+	 * <p>Returns the default Skyve desktop message bundle when the localized bundle
+	 * for the locale language is not present as a web resource.
+	 *
+	 * @param locale locale to resolve; must not be {@code null}
+	 * @return script source URL for the Skyve desktop message bundle; never {@code null}
+	 */
+	private @Nonnull String resolveSkyveMessagesScript(@Nonnull Locale locale) {
+		@Nonnull String language = locale.getLanguage();
+		if (! language.isEmpty()) {
+			@Nonnull String fileName = SKYVE_MESSAGES_FILE + LOCALE_SEPARATOR + language + JS_EXTENSION;
+			@Nonnull String resourcePath = DESKTOP_RESOURCE_PATH + fileName;
+			if (webResourceExists(resourcePath)) {
+				return DESKTOP_SCRIPT_PATH + fileName;
 			}
 		}
-		else if (new Locale("cr").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_cr.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
+		return DEFAULT_SKYVE_MESSAGES_SCRIPT;
+	}
+		
+	/**
+	 * Tests whether a web resource path can be resolved by the active Faces context.
+	 *
+	 * @param resourcePath context-relative resource path; must not be {@code null}
+	 * @return {@code true} when the resource exists, otherwise {@code false}
+	 */
+	@SuppressWarnings("static-method") // Instance test seam for servlet-container resource resolution.
+	boolean webResourceExists(@Nonnull String resourcePath) {
+		try {
+			return FacesContext.getCurrentInstance().getExternalContext().getResource(resourcePath) != null;
 		}
-		else if (new Locale("cs").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_cs.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (new Locale("da").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_da.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (new Locale("de").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_de.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (new Locale("el").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_el.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (new Locale("es").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_es.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (new Locale("fi").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_fi.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (Locale.FRANCE.getLanguage().equals(language)) {
-			if (Locale.FRANCE.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_fr_FR.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (new Locale("hr").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_hr.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (hu_HU.getLanguage().equals(language)) {
-			if (hu_HU.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_hu_HU.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (new Locale("id").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_id.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (new Locale("it").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_it.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (new Locale("ja").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_ja.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (new Locale("ko").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_ko.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (nb_NO.getLanguage().equals(language)) {
-			if (nb_NO.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_.nb_NOproperties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (new Locale("nl").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_nl.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (pl_PL.getLanguage().equals(language)) {
-			if (pl_PL.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_pl_PL.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-			else {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_pl.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (pt_BR.getLanguage().equals(language)) {
-			if (pt_BR.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_pt_BR.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-			else {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_pt.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (ro_RO.getLanguage().equals(language)) {
-			if (ro_RO.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_ro_RO.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (ru_RU.getLanguage().equals(language)) {
-			if (ru_RU.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_ru_RU.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-			else {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_ru.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (new Locale("sk").getLanguage().equals(language)) {
-			localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_sk.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-		}
-		else if (sr_Latn.getLanguage().equals(language)) {
-			if (sr_Latn.getVariant().equals(locale.getVariant())) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_sr_Latn.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-			else {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_sr.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (sv_SE.getLanguage().equals(language)) {
-			if (sv_SE.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_sv_SE.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (tr_TR.getLanguage().equals(language)) {
-			if (tr_TR.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_tr_TR.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (uk_UA.getLanguage().equals(language)) {
-			if (uk_UA.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_uk_UA.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-		}
-		else if (zh_CN.getLanguage().equals(language)) {
-			if (zh_CN.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_zh_CN.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
-			else if (zh_TW.getCountry().equals(country)) {
-				localeScript = String.format("<script type=\"text/javascript\" src=\"%s/locales/frameworkMessages_zh_TW.properties\"></script>", UtilImpl.SMART_CLIENT_DIR);
-			}
+		catch (@SuppressWarnings("unused") MalformedURLException e) {
+			return false;
 		}
 	}
 	
+	/**
+	 * Builds menu bootstrap script for all visible module menu entries.
+	 *
+	 * @param chosenModuleName module name currently being rendered
+	 * @param uxui UX/UI name used to resolve the menu structure
+	 * @param result buffer that receives the generated script
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void constructMenu(String chosenModuleName,
 								String uxui,
 								StringBuilder result) {
-		result.append("isc.BizUtil.init('").append(getHeaderTemplate());
-		result.append("','../").append(getLogoRelativeFileNameUrl());
+		result.append("isc.BizUtil.init('../").append(getLogoRelativeFileNameUrl());
 		result.append("',[");
 
 		// render each module menu
 		new MenuRenderer(uxui, chosenModuleName) {
+			/**
+			 * Starts rendering a module menu descriptor.
+			 */
 			@Override
 			public void renderModuleMenu(Menu menu, Module menuModule, boolean open) {
 				result.append("{name:'");
 				result.append(menuModule.getName());
 				result.append("',");
 				result.append("title:'");
-				result.append(OWASP.escapeJsString(menuModule.getLocalisedTitle()));
+				result.append(OWASP.escapeJsStringWithHtmlFormatting(menuModule.getLocalisedTitle()));
 				result.append("',");
 			}
 			
+			/**
+			 * Starts rendering the root menu node for a module.
+			 */
 			@Override
 			public void renderMenuRoot(Menu menu, Module menuModule) {
 				result.append("root:{name:'");
-				result.append(OWASP.escapeJsString(menuModule.getName()));
+				result.append(OWASP.escapeJsStringWithHtmlFormatting(menuModule.getName()));
 				result.append("',sub:[");
 			}
 			
+			/**
+			 * Starts rendering a menu-group node.
+			 */
 			@Override
 			public void renderMenuGroup(MenuGroup group, Module menuModule) {
 				result.append("{desc:'");
-				result.append(OWASP.escapeJsString(group.getLocalisedName()));
+				result.append(OWASP.escapeJsStringWithHtmlFormatting(group.getLocalisedName()));
 				result.append("', sub:[");
 			}
 			
@@ -397,8 +539,8 @@ public class DesktopView extends HarnessView {
 										String icon16,
 										String iconStyleClass) {
 				result.append("{name:'").append(itemDocument.getName());
-				String menuModuleName = (menuModule == null) ? null : menuModule.getName();
-				String itemModuleName = (itemModule == null) ? null : itemModule.getName();
+				String menuModuleName = menuModule.getName();
+				String itemModuleName = itemModule.getName();
 				if ((menuModuleName != null) && (! menuModuleName.equals(itemModuleName))) {
 					result.append("',module:'").append(itemModuleName);
 				}
@@ -499,45 +641,71 @@ public class DesktopView extends HarnessView {
 				if ((icon16 != null) || (iconStyleClass != null)) {
 					result.append("<span> &nbsp;</span>");
 				}
-				result.append(OWASP.escapeJsString(name)).append('\'');
+				result.append(OWASP.escapeJsStringWithHtmlFormatting(name)).append('\'');
 				if (config != null) {
 					result.append(",config:").append(config);
 				}
-				result.append(",ref:'").append(ref);
+				result.append(",ref:'").append(OWASP.escapeJsStringWithHtmlFormatting(ref));
 				if ((iconStyleClass == null) && (icon16 != null)) {
 					result.append("',icon:'../resources?");
 					if ((itemModule != null) && (itemDocument != null)) { // NB link items have no document
-						result.append("_doc=").append(itemModule.getName()).append('.').append(itemDocument.getName()).append('&');
+						result.append("_doc=").append(OWASP.escapeJsStringWithHtmlFormatting(itemModule.getName())).append('.')
+								.append(OWASP.escapeJsStringWithHtmlFormatting(itemDocument.getName())).append('&');
 					}
-					result.append("_n=").append(icon16);
+					result.append("_n=").append(OWASP.escapeJsStringWithHtmlFormatting(icon16));
 				}
 				result.append("'},");
 			}
 			
+			/**
+			 * Finalizes a rendered menu-group node.
+			 */
 			@Override
 			public void renderedMenuGroup(MenuGroup group, Module menuModule) {
 				result.setLength(result.length() - 1);
 				result.append("]},");
 			}
 			
+			/**
+			 * Finalizes the rendered root menu node.
+			 */
 			@Override
 			public void renderedMenuRoot(Menu menu, Module menuModule) {
 				result.setLength(result.length() -1); // remove the last comma
 				result.append("]}");
 			}
 
+			/**
+			 * Finalizes a rendered module menu descriptor.
+			 */
 			@Override
 			public void renderedModuleMenu(Menu menu, Module menuModule, boolean open) {
 				result.append(",open:").append(open).append("},");
 			}
-		}.render(getUser());
+		}.render(requireUser());
 
 		// finish up menu defs
 		result.setLength(result.length() - 1); // remove last comma from menu
 		// defs
 		result.append(']');
 	}
+	
+	private @Nonnull User requireUser() {
+		@Nullable User result = getUser();
+		if (result == null) {
+			throw new IllegalStateException("Cannot render the desktop menu without a session user.");
+		}
+		return result;
+	}
 
+	/**
+	 * Appends SmartClient datasource definitions for accessible module menu items.
+	 *
+	 * @param customer customer whose modules are being rendered
+	 * @param user current user whose permissions determine accessible menus
+	 * @param uxui UX/UI name used to resolve the menu structure
+	 * @param result buffer that receives the generated script
+	 */
 	private static void listDataSources(Customer customer, UserImpl user, String uxui, StringBuilder result) {
 		StringBuilder dataSources = new StringBuilder(1024);
 
@@ -557,13 +725,26 @@ public class DesktopView extends HarnessView {
 			Menu menu = user.getModuleMenu(moduleName);
 			listDataSourcesForMenuItems(user, customer, moduleName, module, menu.getItems(), uxui, dataSources, visitedQueryNames);
 		}
-		if (dataSources.length() > 0) { // we have appended some data sources
+		if (! dataSources.isEmpty()) { // we have appended some data sources
 			dataSources.setLength(dataSources.length() - 2); // remove the last data source comma
 			result.append(dataSources);
 		}
 		result.append("]);");
 	}
 
+	/**
+	 * Recursively appends datasource definitions for nested menu items.
+	 *
+	 * @param user current user whose permissions determine accessible items
+	 * @param customer customer whose modules are being rendered
+	 * @param moduleName module name containing the menu items
+	 * @param module module containing the menu items
+	 * @param items menu items to traverse
+	 * @param uxui UX/UI name used to resolve the menu structure
+	 * @param dataSources buffer that receives generated datasource definitions
+	 * @param visitedQueryNames set used to avoid duplicate query definitions
+	 */
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	private static void listDataSourcesForMenuItems(UserImpl user,
 														Customer customer, 
 														String moduleName, 
@@ -573,16 +754,14 @@ public class DesktopView extends HarnessView {
 														StringBuilder dataSources,
 														Set<String> visitedQueryNames) {
 		for (MenuItem item : items) {
-			if (item instanceof MenuGroup) {
-				listDataSourcesForMenuItems(user, customer, moduleName, module, ((MenuGroup) item).getItems(), uxui, dataSources, visitedQueryNames);
+			if (item instanceof MenuGroup group) {
+				listDataSourcesForMenuItems(user, customer, moduleName, module, group.getItems(), uxui, dataSources, visitedQueryNames);
 			} 
-			else if ((item instanceof ListItem) || (item instanceof TreeItem)) {
-				ListItem grid = (ListItem) item;
-				
+			else if (item instanceof ListItem listOrTree) {
 				MetaDataQueryDefinition query = null;
-				String queryName = grid.getQueryName();
-				String modelName = grid.getModelName();
-				String documentName = grid.getDocumentName();
+				String queryName = listOrTree.getQueryName();
+				String modelName = listOrTree.getModelName();
+				String documentName = listOrTree.getDocumentName();
 				
 				if (queryName != null) { // its a query
 					query = module.getMetaDataQuery(queryName);

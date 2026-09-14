@@ -51,7 +51,7 @@ public class FormatDirective implements TemplateDirectiveModel {
 	private static final String PARAM_NAME_EXPRESSION = "expression";
 	private static final String PARAM_ESCAPE = "escape";
 
-	@SuppressWarnings("rawtypes")
+	@SuppressWarnings({"rawtypes", "java:S3776"}) // Complexity OK
 	@Override
 	public void execute(Environment env, Map params, TemplateModel[] loopVars, TemplateDirectiveBody body)
 			throws TemplateException, IOException {
@@ -106,10 +106,10 @@ public class FormatDirective implements TemplateDirectiveModel {
 							String.format("Only supply '%s' or '%s', not both.", PARAM_NAME_BINDING, PARAM_NAME_EXPRESSION));
 				}
 			} else if (paramName.equals(PARAM_ESCAPE)) {
-				if (paramValue instanceof TemplateBooleanModel) {
-					escapeParam = ((TemplateBooleanModel) paramValue).getAsBoolean();	
-				} else if(paramValue instanceof TemplateScalarModel) {
-					escapeParam = Boolean.parseBoolean(((TemplateScalarModel) paramValue).getAsString());
+				if (paramValue instanceof TemplateBooleanModel bool) {
+					escapeParam = bool.getAsBoolean();	
+				} else if(paramValue instanceof TemplateScalarModel scalar) {
+					escapeParam = Boolean.parseBoolean(scalar.getAsString());
 				} else {
 					throw new TemplateModelException(String.format("The '%s' parameter must be a boolean.", PARAM_ESCAPE));
 				}

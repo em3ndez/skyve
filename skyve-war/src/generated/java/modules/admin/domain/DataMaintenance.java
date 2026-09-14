@@ -26,6 +26,8 @@ import org.skyve.util.Util;
 
 /**
  * Data Maintenance
+ * <br/>
+ * Comprehensive database administration interface for backup/restore operations, schema management, audit log maintenance, content garbage collection, data synchronization, and BizPort import/export functionality.
  * 
  * @depend - - - RestorePreProcess
  * @depend - - - ContentRestoreOption
@@ -163,7 +165,7 @@ public abstract class DataMaintenance extends AbstractPersistentBean implements 
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum RestorePreProcess implements Enumeration {
+	public enum RestorePreProcess implements Enumeration {
 		noProcessing("noProcessing", "No Processing"),
 		dropTablesUsingMetadataRecreateTablesFromBackupCreatesql("dropUsingMetadataAndCreateUsingBackup", "Drop tables using metadata & recreate tables from backup create.sql"),
 		dropTablesUsingBackupDropsqlRecreateTablesFromBackupCreatesql("dropUsingBackupAndCreateUsingBackup", "Drop tables using backup drop.sql & recreate tables from backup create.sql"),
@@ -241,7 +243,7 @@ public abstract class DataMaintenance extends AbstractPersistentBean implements 
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum ContentRestoreOption implements Enumeration {
+	public enum ContentRestoreOption implements Enumeration {
 		clearOrphanedContentIDs("clearOrphanedContentIds", "Clear Orphaned Content IDs"),
 		saveOrphanedContentIDs("saveOrphanedContentIds", "Save Orphaned Content IDs"),
 		error("error", "Error");
@@ -314,7 +316,7 @@ public abstract class DataMaintenance extends AbstractPersistentBean implements 
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum RestoreIndexingOption implements Enumeration {
+	public enum RestoreIndexingOption implements Enumeration {
 		data("data", "Data"),
 		content("content", "Content"),
 		both("both", "Both"),
@@ -386,7 +388,7 @@ public abstract class DataMaintenance extends AbstractPersistentBean implements 
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum RefreshOption implements Enumeration {
+	public enum RefreshOption implements Enumeration {
 		upsert("Upsert", "Upsert"),
 		save("Save", "Save");
 
@@ -459,7 +461,7 @@ public abstract class DataMaintenance extends AbstractPersistentBean implements 
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum EvictOption implements Enumeration {
+	public enum EvictOption implements Enumeration {
 		bean("Bean", "Bean"),
 		none("None", "None"),
 		all("All", "All");
@@ -757,12 +759,6 @@ public abstract class DataMaintenance extends AbstractPersistentBean implements 
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof DataMaintenance) && 
-					this.getBizId().equals(((DataMaintenance) o).getBizId()));
 	}
 
 	/**

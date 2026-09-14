@@ -2,7 +2,7 @@ package org.skyve.metadata.view.fluent;
 
 import org.skyve.impl.metadata.view.widget.bound.tabular.AbstractDataWidget;
 
-abstract class FluentDataWidget<T extends FluentDataWidget<T>> extends FluentBoundWidget<T> implements FluentRelativeSize<T> {
+public abstract class FluentDataWidget<T extends FluentDataWidget<T>> extends FluentBoundWidget<T> implements FluentRelativeSize<T> {
 	protected FluentDataWidget() {
 		// nothing to see
 	}
@@ -12,6 +12,7 @@ abstract class FluentDataWidget<T extends FluentDataWidget<T>> extends FluentBou
 		super.from(data);
 		widgetId(data.getWidgetId());
 		title(data.getTitle());
+		escapeTitle(data.getEscapeTitle());
 		relativeSize(data, this);
 		invisibleConditionName(data.getInvisibleConditionName());
 		return (T) this;
@@ -26,6 +27,28 @@ abstract class FluentDataWidget<T extends FluentDataWidget<T>> extends FluentBou
 	@SuppressWarnings("unchecked")
 	public T title(String title) {
 		get().setTitle(title);
+		return (T) this;
+	}
+
+	/**
+	 * Sets whether the data widget title should be escaped before rendering.
+	 *
+	 * @param escapeTitle {@code false} to allow trusted markup; {@code true} to escape at the renderer boundary
+	 * @return this builder
+	 */
+	public T escapeTitle(boolean escapeTitle) {
+		return escapeTitle(escapeTitle ? Boolean.TRUE : Boolean.FALSE);
+	}
+
+	/**
+	 * Sets whether the data widget title should be escaped before rendering.
+	 *
+	 * @param escapeTitle {@code Boolean.FALSE} to allow trusted markup; {@code null} or {@code Boolean.TRUE} to escape at the renderer boundary
+	 * @return this builder
+	 */
+	@SuppressWarnings("unchecked")
+	public T escapeTitle(Boolean escapeTitle) {
+		get().setEscapeTitle(escapeTitle);
 		return (T) this;
 	}
 	

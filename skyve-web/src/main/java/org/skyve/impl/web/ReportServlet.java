@@ -3,6 +3,7 @@ package org.skyve.impl.web;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +13,7 @@ import org.skyve.EXT;
 import org.skyve.content.MimeType;
 import org.skyve.domain.Bean;
 import org.skyve.domain.PersistentBean;
+import org.skyve.domain.messages.NoResultsException;
 import org.skyve.domain.messages.SecurityException;
 import org.skyve.domain.messages.SessionEndedException;
 import org.skyve.domain.types.converters.Converter;
@@ -20,7 +22,7 @@ import org.skyve.impl.generate.jasperreports.DesignSpecification;
 import org.skyve.impl.generate.jasperreports.JasperReportRenderer;
 import org.skyve.impl.generate.jasperreports.ReportDesignGenerator;
 import org.skyve.impl.generate.jasperreports.ReportDesignGeneratorFactory;
-import org.skyve.impl.metadata.model.document.field.ConvertableField;
+import org.skyve.impl.metadata.model.document.field.ConvertibleField;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.report.jasperreports.JasperReportUtil;
 import org.skyve.impl.report.jasperreports.ReportDesignParameters;
@@ -50,7 +52,10 @@ import org.skyve.report.ReportFormat;
 import org.skyve.util.JSON;
 import org.skyve.util.OWASP;
 import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.slf4j.Logger;
 
+import jakarta.annotation.Nonnull;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.http.HttpServlet;
@@ -61,22 +66,41 @@ import net.sf.jasperreports.engine.JRDataSource;
 import net.sf.jasperreports.engine.JasperFillManager;
 import net.sf.jasperreports.engine.JasperPrint;
 import net.sf.jasperreports.engine.JasperReport;
-import net.sf.jasperreports.engine.design.JRValidationException;
-import net.sf.jasperreports.j2ee.servlets.BaseHttpServlet;
+import net.sf.jasperreports.jakarta.servlets.BaseHttpServlet;
 
+/**
+ * Handles HTTP requests for this Skyve web endpoint.
+ *
+ * <p>Servlet API override parameters are intentionally left unannotated because
+ * {@link HttpServlet} does not declare nullness constraints for them.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate report response header/script fragments.
 public class ReportServlet extends HttpServlet {
+    private static final Logger HTTP_LOGGER = Category.HTTP.logger();
+
 	private static final long serialVersionUID = 1L;
 
 	public static final String REPORT_PATH = "/report";
 	public static final String EXPORT_PATH = "/export";
 
+	/**
+	 * Handles report POST requests by delegating to the common GET processing path.
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	public void doPost(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		doGet(request, response);
 	}
 
+	/**
+	 * Dispatches report and export requests inside a persistence context bound to the authenticated user.
+	 *
+	 * <p>Side effects: starts and commits or rolls back the current persistence conversation, resolves the
+	 * current user from the servlet request, and redirects unexpected failures to the shared error page.
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	public void doGet(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		AbstractPersistence persistence = AbstractPersistence.get();
@@ -103,18 +127,45 @@ public class ReportServlet extends HttpServlet {
 			}
 			catch (Exception e) {
 				persistence.rollback();
-				throw new ServletException("Could not setup the user in ReportServlet", e);
+				String reference = WebErrorUtil.logUnexpectedAndGetReference(HTTP_LOGGER, "Report servlet request failed", e);
+				redirectToErrorPage(response, reference);
 			}
 		}
 		finally {
-			if (persistence != null) {
-				persistence.commit(true);
-			}
+			persistence.commit(true);
 		}
 	}
 
+	/**
+	 * Redirects an unexpected servlet failure to the standard Skyve error page using the supplied reference.
+	 *
+	 * <p>Side effects: sends an HTTP redirect when possible, otherwise falls back to writing a minimal HTML
+	 * error response directly to the servlet output stream.
+	 */
+	private static void redirectToErrorPage(@Nonnull HttpServletResponse response, @Nonnull String reference) {
+		try {
+			String errorURI = WebErrorUtil.appendErrorReference(Util.getSkyveContextUrl() + "/pages/error.jsp", reference);
+			response.sendRedirect(response.encodeRedirectURL(errorURI));
+		}
+		catch (IOException ioe) {
+			HTTP_LOGGER.warn("Could not redirect report request failure to error page for reference {}", reference, ioe);
+			writeReportError(response, reference);
+		}
+	}
+
+	/**
+	 * Generates or executes a report request and streams the formatted result to the client.
+	 *
+	 * <p>This method handles both generated edit-view reports and named report definitions, resolves the
+	 * driving bean or list model from request context, enforces access checks, and delegates final response
+	 * formatting to {@link #pumpOutReportFormat(byte[], JasperPrint, ReportFormat, String, HttpSession, HttpServletResponse)}.
+	 *
+	 * <p>Side effects: reads request parameters, may restore conversation state, may load persistent beans,
+	 * executes JasperReports rendering, and writes either report bytes or a generic HTML error response.
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private static void doReport(HttpServletRequest request, HttpServletResponse response) {
-		try (OutputStream out = response.getOutputStream()) {
+		try {
 			String moduleName = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.MODULE_NAME)));
 			if (moduleName == null) {
 				throw new ServletException("No module name in the URL");
@@ -132,11 +183,12 @@ public class ReportServlet extends HttpServlet {
 			// Report name can be null if this is a print action - the report is generated.
 			String reportName = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.REPORT_NAME)));
 
-			User user = AbstractPersistence.get().getUser();
+			AbstractPersistence persistence = AbstractPersistence.get();
+			User user = persistence.getUser();
 			Customer customer = user.getCustomer();
 			Module module = customer.getModule(moduleName);
 			Document document = module.getDocument(customer, documentName);
-			UxUi uxui = UserAgent.getUxUi(request);
+			UxUi uxui = UserAgent.getSelection(request).getUxUi();
 
 			// Find the context bean
 			// Note - if there is no form in the view then there is no web context
@@ -184,7 +236,10 @@ public class ReportServlet extends HttpServlet {
 					// Manually load the bean if an id is specified but there is no appropriate bean to load from the conversation.
 					final String id = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.ID_NAME)));
 					if ((id != null) && ((bean == null) || ((contextKey != null) && (! contextKey.endsWith(id))))) {
-						bean = AbstractPersistence.get().retrieve(document, id);
+						bean = persistence.retrieve(document, id);
+						if (bean == null) {
+							throw new NoResultsException();
+						}
 						if (! user.canReadBean(id, bean.getBizModule(), bean.getBizDocument(), bean.getBizCustomer(), bean.getBizDataGroupId(), bean.getBizUserId())) {
 							throw new SecurityException("read this data", user.getName());
 						}
@@ -197,12 +252,55 @@ public class ReportServlet extends HttpServlet {
 			pumpOutReportFormat(baos.toByteArray(), jasperPrint, format, reportName, request.getSession(), response);
 		}
 		catch (Exception e) {
-			System.err.println("Problem generating the report - " + e.toString());
-			e.printStackTrace();
+			String reference = WebErrorUtil.logUnexpectedAndGetReference(HTTP_LOGGER, "Report generation failed", e);
+			writeReportError(response, reference);
 		}
 	}
 
-	private static Map<String, Object> getParameters(HttpServletRequest request) {
+	/**
+	 * Writes a generic HTML error response for a failed report request using the servlet output stream.
+	 */
+	private static void writeReportError(@Nonnull HttpServletResponse response, @Nonnull String reference) {
+		try (ServletOutputStream out = response.getOutputStream()) {
+			writeReportError(response, out, reference);
+		}
+		catch (IOException ioe) {
+			HTTP_LOGGER.warn("Could not open report error response stream for reference {}", reference, ioe);
+		}
+	}
+
+	/**
+	 * Writes a generic HTML error response for a failed report request to the supplied output stream.
+	 *
+	 * <p>Side effects: resets the servlet response when it is still mutable, sets a 500 status, and emits a
+	 * minimal UTF-8 HTML payload containing the supplied support reference.
+	 */
+	private static void writeReportError(@Nonnull HttpServletResponse response, @Nonnull OutputStream out, @Nonnull String reference) {
+		try {
+			if (response.isCommitted()) {
+				HTTP_LOGGER.warn("Could not write report error response for reference {} because the response is already committed.", reference);
+				return;
+			}
+			response.reset();
+			response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			response.setContentType(MimeType.html.toString());
+			response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+			String message = WebErrorUtil.genericMessage(reference);
+			out.write(("<html><head/><body><h3>" + OWASP.escapeHtml(message) + "</h3></body></html>").getBytes(StandardCharsets.UTF_8.name()));
+			out.flush();
+		}
+		catch (IOException ioe) {
+			HTTP_LOGGER.warn("Could not write report error response for reference {}", reference, ioe);
+		}
+	}
+
+	/**
+	 * Extracts report parameters from the request after excluding servlet control parameters.
+	 *
+	 * <p>Returned values are sanitised as text because this helper is used for report execution parameters
+	 * sourced directly from the HTTP request.
+	 */
+	private static @Nonnull Map<String, Object> getParameters(@Nonnull HttpServletRequest request) {
 //		 TODO coercion somehow...
 		Map<String, Object> params = new TreeMap<>();
 
@@ -215,21 +313,27 @@ public class ReportServlet extends HttpServlet {
 					AbstractWebContext.DOCUMENT_NAME.equals(paramName) ||
 					AbstractWebContext.REPORT_NAME.equals(paramName))) {
 				params.put(paramName, OWASP.sanitise(Sanitisation.text, Util.processStringValue(paramValue)));
-				if (UtilImpl.HTTP_TRACE) UtilImpl.LOGGER.info("ReportServlet: Report Parameter " + paramName + " = " + paramValue);
+				if (UtilImpl.HTTP_TRACE) HTTP_LOGGER.info("ReportServlet: Report Parameter {} = {}", paramName, paramValue);
 			}
 		}
 
 		return params;
 	}
 
-	private static void pumpOutReportFormat(byte[] bytes,
-												JasperPrint jasperPrint,
-												ReportFormat format,
-												String fileNameNoSuffix,
-												HttpSession session,
-												HttpServletResponse response)
+	/**
+	 * Configures the HTTP response for the selected report format and streams the rendered bytes to the client.
+	 *
+	 * <p>Side effects: sets content headers, content disposition, cache headers, content length, and for HTML
+	 * reports stores the {@link JasperPrint} in the session for JasperReports viewer integration.
+	 */
+	private static void pumpOutReportFormat(@Nonnull byte[] bytes,
+												@Nonnull JasperPrint jasperPrint,
+												@Nonnull ReportFormat format,
+												@Nonnull String fileNameNoSuffix,
+												@Nonnull HttpSession session,
+												@Nonnull HttpServletResponse response)
 	throws IOException {
-		response.setCharacterEncoding(Util.UTF8);
+		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 
 		StringBuilder sb = new StringBuilder(64);
 		switch (format) {
@@ -238,59 +342,59 @@ public class ReportServlet extends HttpServlet {
 			break;
 		case csv:
 			response.setContentType(MimeType.csv.toString());
-			sb.append("attachment; filename=\"").append(fileNameNoSuffix).append(".csv\"");
+			sb.append("attachment; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".csv")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 			break;
 		case html:
 			response.setContentType(MimeType.html.toString());
-			sb.append("inline; filename=\"").append(fileNameNoSuffix).append(".html\"");
+			sb.append("inline; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".html")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 // TODO maybe I should UUEncode this thing to the client
 			session.setAttribute(BaseHttpServlet.DEFAULT_JASPER_PRINT_SESSION_ATTRIBUTE, jasperPrint);
 			break;
 		case pdf:
 			response.setContentType(MimeType.pdf.toString());
-			sb.append("attachment; filename=\"").append(fileNameNoSuffix).append(".pdf\"");
+			sb.append("attachment; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".pdf")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 			break;
 		case xls:
 			response.setContentType(MimeType.excel.toString());
-			sb.append("attachment; filename=\"").append(fileNameNoSuffix).append(".xls\"");
+			sb.append("attachment; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".xls")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 			break;
 		case rtf:
 			response.setContentType(MimeType.rtf.toString());
-			sb.append("attachment; filename=\"").append(fileNameNoSuffix).append(".rtf\"");
+			sb.append("attachment; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".rtf")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 			break;
 		case odt:
 			response.setContentType(MimeType.openDocumentText.toString());
-			sb.append("attachment; filename=\"").append(fileNameNoSuffix).append(".odt\"");
+			sb.append("attachment; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".odt")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 			break;
 		case ods:
 			response.setContentType(MimeType.openDocumentSpreadsheet.toString());
-			sb.append("attachment; filename=\"").append(fileNameNoSuffix).append(".ods\"");
+			sb.append("attachment; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".ods")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 			break;
 		case docx:
 			response.setContentType(MimeType.docx.toString());
-			sb.append("attachment; filename=\"").append(fileNameNoSuffix).append(".docx\"");
+			sb.append("attachment; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".docx")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 			break;
 		case xlsx:
 			response.setContentType(MimeType.xlsx.toString());
-			sb.append("attachment; filename=\"").append(fileNameNoSuffix).append(".xlsx\"");
+			sb.append("attachment; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".xlsx")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 			break;
 		case pptx:
 			response.setContentType(MimeType.pptx.toString());
-			sb.append("attachment; filename=\"").append(fileNameNoSuffix).append(".pptx\"");
+			sb.append("attachment; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".pptx")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 			break;
 		case xml:
 			response.setContentType(MimeType.xml.toString());
-			sb.append("attachment; filename=\"").append(fileNameNoSuffix).append(".xml\"");
+			sb.append("attachment; filename=\"").append(OWASP.sanitiseFileName(fileNameNoSuffix + ".xml")).append('"');
 			response.setHeader("Content-Disposition", sb.toString());
 			break;
 		default:
@@ -303,17 +407,22 @@ public class ReportServlet extends HttpServlet {
 		response.setHeader("Cache-Control", "cache");
 		response.setHeader("Pragma", "cache");
 		response.addDateHeader("Expires", System.currentTimeMillis() + (60000)); // 1 minute
-		// The following allows partial requests which are useful for large media or
-		// downloading files with pause and resume functions.
-		response.setHeader("Accept-Ranges", "bytes");
 
 		try (ServletOutputStream outputStream = response.getOutputStream()) {
-			outputStream.write(bytes);
+			Util.chunkBytesToOutputStream(bytes, outputStream);
 			outputStream.flush();
 		}
 	}
 
-	private static void doExport(HttpServletRequest request, HttpServletResponse response)
+	/**
+	 * Exports list-model data based on SmartClient criteria posted from the web client.
+	 *
+	 * <p>This method reconstructs the target query or model from the request payload, applies access checks,
+	 * rebuilds filter criteria, derives export columns, fills a Jasper report from the resulting iterable, and
+	 * streams the generated document back to the client.
+	 */
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
+	private static void doExport(@Nonnull HttpServletRequest request, @Nonnull HttpServletResponse response)
 	throws IOException {
 		try (ServletOutputStream out = response.getOutputStream()) {
 			AbstractPersistence persistence = AbstractPersistence.get();
@@ -322,11 +431,14 @@ public class ReportServlet extends HttpServlet {
 				Customer customer = user.getCustomer();
 
 				String valuesParam = request.getParameter("values");
-				if (UtilImpl.HTTP_TRACE) UtilImpl.LOGGER.info(valuesParam);
+				if (UtilImpl.HTTP_TRACE) {
+					final String log = OWASP.sanitiseLog(valuesParam);
+					HTTP_LOGGER.info(log);
+				}
 				if (valuesParam == null) {
 					response.setContentType(MimeType.html.toString());
-					response.setCharacterEncoding(Util.UTF8);
-					out.write("<html><head><title>Missing Report Parameters</head><body><h1>There are no report parameters in this request</h1></body></html>".getBytes(Util.UTF8));
+					response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+					out.write("<html><head><title>Missing Report Parameters</head><body><h1>There are no report parameters in this request</h1></body></html>".getBytes(StandardCharsets.UTF_8));
 					return;
 				}
 
@@ -339,7 +451,7 @@ public class ReportServlet extends HttpServlet {
 				String documentOrQueryOrModelName = module_QueryOrModel.substring(_Index + 1);
 				Document drivingDocument = null;
 				ListModel<Bean> model = null;
-				UxUi uxui = UserAgent.getUxUi(request);
+				UxUi uxui = UserAgent.getSelection(request).getUxUi();
 				int __Index = documentOrQueryOrModelName.indexOf("__");
 				if (__Index >= 0) {
 					String documentName = documentOrQueryOrModelName.substring(0, __Index);
@@ -366,9 +478,6 @@ public class ReportServlet extends HttpServlet {
 					}
 					else {
 						EXT.checkAccess(user, UserAccess.queryAggregate(moduleName, documentOrQueryOrModelName), uxui.getName());
-					}
-					if (query == null) {
-						throw new ServletException("DataSource does not reference a valid query " + documentOrQueryOrModelName);
 					}
 					drivingDocument = module.getDocument(customer, query.getDocumentName());
 					model = EXT.newListModel(query);
@@ -446,8 +555,8 @@ public class ReportServlet extends HttpServlet {
 							if (mdqc == null) {
 								throw new SecurityException("Non-existent data", user.getName());
 							}
-							if ((mdqc instanceof MetaDataQueryProjectedColumn) &&
-									(! ((MetaDataQueryProjectedColumn) mdqc).isProjected())) {
+							if ((mdqc instanceof MetaDataQueryProjectedColumn projectedColumn) &&
+									(! projectedColumn.isProjected())) {
 								throw new SecurityException("Non-projected data", user.getName());
 							}
 						}
@@ -466,8 +575,8 @@ public class ReportServlet extends HttpServlet {
 							final Attribute attribute = drivingDocument.getPolymorphicAttribute(customer, reportColumn.getName());
 							if (attribute != null) {
 								reportColumn.setAttributeType(attribute.getAttributeType());
-								if (attribute instanceof ConvertableField) {
-									Converter<?> converter = ((ConvertableField) attribute).getConverterForCustomer(customer);
+								if (attribute instanceof ConvertibleField convertibleField) {
+									Converter<?> converter = convertibleField.getConverterForCustomer(customer);
 									if (converter != null) {
 										reportColumn.setFormatPattern(converter.getFormatPattern());
 									}
@@ -503,19 +612,8 @@ public class ReportServlet extends HttpServlet {
 									response);
 			}
 			catch (Exception e) {
-				System.err.println("Problem generating the report - " + e.toString());
-				e.printStackTrace();
-				out.print("<html><head/><body><h3>");
-				if (e instanceof JRValidationException) {
-					out.print(e.getLocalizedMessage());
-				}
-				else {
-					out.print("An error occured whilst processing your report.");
-				}
-				out.print("</body></html>");
-			}
-			finally {
-				persistence.commit(true);
+				String reference = WebErrorUtil.logUnexpectedAndGetReference(HTTP_LOGGER, "Report export failed", e);
+				writeReportError(response, out, reference);
 			}
 		}
 	}

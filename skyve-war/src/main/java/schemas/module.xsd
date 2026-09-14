@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<xs:schema version="1.0" targetNamespace="http://www.skyve.org/xml/module" xmlns:tns="http://www.skyve.org/xml/module" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:ns2="http://www.skyve.org/xml/view" xmlns:ns1="http://www.skyve.org/xml/common">
+<xs:schema version="1.0" targetNamespace="http://www.skyve.org/xml/module" xmlns:tns="http://www.skyve.org/xml/module" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:ns1="http://www.skyve.org/xml/common">
 
   <xs:import namespace="http://www.skyve.org/xml/common" schemaLocation="common.xsd"/>
 
-  <xs:import namespace="http://www.skyve.org/xml/view" schemaLocation="view.xsd"/>
-
   <xs:element name="bizQL" type="tns:bizQL"/>
+
+  <xs:element name="bizQLImport" type="tns:bizQLImport"/>
 
   <xs:element name="calendar" type="tns:calendar"/>
 
@@ -41,11 +41,15 @@
 
   <xs:element name="queryAggregateAccess" type="tns:moduleRoleQueryAggregateUserAccessMetaData"/>
 
+  <xs:element name="queryImport" type="tns:queryImport"/>
+
   <xs:element name="reportAccess" type="tns:moduleRoleReportUserAccessMetaData"/>
 
   <xs:element name="singularAccess" type="tns:moduleRoleSingularUserAccessMetaData"/>
 
   <xs:element name="sql" type="tns:sql"/>
+
+  <xs:element name="sqlImport" type="tns:sqlImport"/>
 
   <xs:element name="tree" type="tns:tree"/>
 
@@ -54,7 +58,7 @@
       <xs:extension base="ns1:namedMetaData">
         <xs:sequence>
           <xs:element name="documentation" type="xs:string" form="qualified" minOccurs="0"/>
-          <xs:element name="homeRef" type="ns2:viewType" form="qualified" minOccurs="0"/>
+          <xs:element name="homeRef" type="ns1:viewType" form="qualified" minOccurs="0"/>
           <xs:element name="homeDocument" type="xs:string" form="qualified"/>
           <xs:element name="jobs" form="qualified" minOccurs="0">
             <xs:complexType>
@@ -83,12 +87,16 @@
               <xs:sequence>
                 <xs:choice minOccurs="0" maxOccurs="unbounded">
                   <xs:element ref="tns:query"/>
-                  <xs:element ref="tns:bizQL"/>
                   <xs:element ref="tns:sql"/>
+                  <xs:element ref="tns:bizQL"/>
+                  <xs:element ref="tns:queryImport"/>
+                  <xs:element ref="tns:sqlImport"/>
+                  <xs:element ref="tns:bizQLImport"/>
                 </xs:choice>
               </xs:sequence>
             </xs:complexType>
           </xs:element>
+          <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
         </xs:sequence>
         <xs:attribute name="title" type="xs:string" use="required"/>
         <xs:attribute name="prototype" type="xs:boolean"/>
@@ -100,7 +108,9 @@
   <xs:complexType name="job">
     <xs:complexContent>
       <xs:extension base="ns1:namedMetaData">
-        <xs:sequence/>
+        <xs:sequence>
+          <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
+        </xs:sequence>
         <xs:attribute name="displayName" type="xs:string" use="required"/>
         <xs:attribute name="className" type="xs:string" use="required"/>
         <xs:attribute name="description" type="xs:string"/>
@@ -109,7 +119,9 @@
   </xs:complexType>
 
   <xs:complexType name="document">
-    <xs:sequence/>
+    <xs:sequence>
+      <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
+    </xs:sequence>
     <xs:attribute name="ref" type="xs:string" use="required"/>
     <xs:attribute name="defaultQueryName" type="xs:string"/>
     <xs:attribute name="moduleRef" type="xs:string"/>
@@ -144,6 +156,7 @@
               </xs:sequence>
             </xs:complexType>
           </xs:element>
+          <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
         </xs:sequence>
       </xs:extension>
     </xs:complexContent>
@@ -154,23 +167,30 @@
       <xs:element name="action" type="tns:actionPrivilegeMetaData" form="qualified" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="contentRestriction" type="tns:contentRestriction" form="qualified" minOccurs="0" maxOccurs="unbounded"/>
       <xs:element name="contentPermission" type="tns:contentPermission" form="qualified" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
     </xs:sequence>
     <xs:attribute name="name" type="xs:string" use="required"/>
     <xs:attribute name="permission" type="tns:documentPermission" use="required"/>
   </xs:complexType>
 
   <xs:complexType name="actionPrivilegeMetaData">
-    <xs:sequence/>
+    <xs:sequence>
+      <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
+    </xs:sequence>
     <xs:attribute name="name" type="xs:string" use="required"/>
   </xs:complexType>
 
   <xs:complexType name="contentRestriction">
-    <xs:sequence/>
+    <xs:sequence>
+      <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
+    </xs:sequence>
     <xs:attribute name="attribute" type="xs:string" use="required"/>
   </xs:complexType>
 
   <xs:complexType name="contentPermission">
-    <xs:sequence/>
+    <xs:sequence>
+      <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
+    </xs:sequence>
     <xs:attribute name="attribute" type="xs:string" use="required"/>
   </xs:complexType>
 
@@ -263,6 +283,7 @@
 
   <xs:complexType name="menuMetaData">
     <xs:sequence>
+      <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
       <xs:choice minOccurs="0" maxOccurs="unbounded">
         <xs:element ref="tns:item"/>
         <xs:element ref="tns:edit"/>
@@ -290,6 +311,7 @@
     <xs:complexContent>
       <xs:extension base="ns1:namedMetaData">
         <xs:sequence>
+          <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
           <xs:element name="uxui" type="tns:applicableTo" form="qualified" minOccurs="0" maxOccurs="unbounded"/>
         </xs:sequence>
       </xs:extension>
@@ -395,10 +417,12 @@
 
   <xs:complexType name="query">
     <xs:complexContent>
-      <xs:extension base="tns:abstractQuery">
+      <xs:extension base="tns:queryDefinitionMetaData">
         <xs:sequence>
           <xs:element name="from" type="xs:string" form="qualified" minOccurs="0"/>
           <xs:element name="filter" type="xs:string" form="qualified" minOccurs="0"/>
+          <xs:element name="grouping" type="xs:string" form="qualified" minOccurs="0"/>
+          <xs:element name="ordering" type="xs:string" form="qualified" minOccurs="0"/>
           <xs:element name="columns" form="qualified" minOccurs="0">
             <xs:complexType>
               <xs:sequence>
@@ -417,14 +441,24 @@
     </xs:complexContent>
   </xs:complexType>
 
-  <xs:complexType name="abstractQuery" abstract="true">
+  <xs:complexType name="queryDefinitionMetaData" abstract="true">
+    <xs:complexContent>
+      <xs:extension base="tns:queryMetaData">
+        <xs:sequence>
+          <xs:element name="documentation" type="xs:string" form="qualified" minOccurs="0"/>
+          <xs:element name="description" type="xs:string" form="qualified" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="timeoutInSeconds" type="xs:int"/>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="queryMetaData" abstract="true">
     <xs:complexContent>
       <xs:extension base="ns1:namedMetaData">
         <xs:sequence>
-          <xs:element name="documentation" type="xs:string" form="qualified" minOccurs="0"/>
-          <xs:element name="description" type="xs:string" form="qualified"/>
+          <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
         </xs:sequence>
-        <xs:attribute name="timeoutInSeconds" type="xs:int"/>
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
@@ -440,7 +474,7 @@
         <xs:attribute name="filterable" type="xs:boolean"/>
         <xs:attribute name="editable" type="xs:boolean"/>
         <xs:attribute name="escape" type="xs:boolean"/>
-        <xs:attribute name="sanitise" type="ns2:sanitisation"/>
+        <xs:attribute name="sanitise" type="ns1:sanitisation"/>
         <xs:attribute name="formatter" type="ns1:formatterName"/>
         <xs:attribute name="customFormatter" type="xs:string"/>
       </xs:extension>
@@ -452,13 +486,14 @@
       <xs:element name="name" type="xs:string" form="qualified" minOccurs="0"/>
       <xs:element name="filterOperator" type="ns1:filterOperator" form="qualified" minOccurs="0"/>
       <xs:element name="filterExpression" type="xs:string" form="qualified" minOccurs="0"/>
+      <xs:element name="properties" type="ns1:propertyMapType" form="qualified" minOccurs="0"/>
     </xs:sequence>
     <xs:attribute name="binding" type="xs:string"/>
     <xs:attribute name="displayName" type="xs:string"/>
     <xs:attribute name="sortOrder" type="ns1:sortDirection"/>
     <xs:attribute name="hidden" type="xs:boolean"/>
     <xs:attribute name="pixelWidth" type="xs:int"/>
-    <xs:attribute name="alignment" type="ns2:horizontalAlignment"/>
+    <xs:attribute name="alignment" type="ns1:horizontalAlignment"/>
   </xs:complexType>
 
   <xs:complexType name="metaDataQueryContentColumnMetaData">
@@ -472,9 +507,9 @@
     </xs:complexContent>
   </xs:complexType>
 
-  <xs:complexType name="bizQL">
+  <xs:complexType name="sql">
     <xs:complexContent>
-      <xs:extension base="tns:abstractQuery">
+      <xs:extension base="tns:queryDefinitionMetaData">
         <xs:sequence>
           <xs:element name="query" type="xs:string" form="qualified"/>
         </xs:sequence>
@@ -482,12 +517,46 @@
     </xs:complexContent>
   </xs:complexType>
 
-  <xs:complexType name="sql">
+  <xs:complexType name="bizQL">
     <xs:complexContent>
-      <xs:extension base="tns:abstractQuery">
+      <xs:extension base="tns:queryDefinitionMetaData">
         <xs:sequence>
           <xs:element name="query" type="xs:string" form="qualified"/>
         </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="queryImport">
+    <xs:complexContent>
+      <xs:extension base="tns:queryReferenceMetaData">
+        <xs:sequence/>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="queryReferenceMetaData" abstract="true">
+    <xs:complexContent>
+      <xs:extension base="tns:queryMetaData">
+        <xs:sequence/>
+        <xs:attribute name="moduleRef" type="xs:string" use="required"/>
+        <xs:attribute name="ref" type="xs:string" use="required"/>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="sqlImport">
+    <xs:complexContent>
+      <xs:extension base="tns:queryReferenceMetaData">
+        <xs:sequence/>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="bizQLImport">
+    <xs:complexContent>
+      <xs:extension base="tns:queryReferenceMetaData">
+        <xs:sequence/>
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>

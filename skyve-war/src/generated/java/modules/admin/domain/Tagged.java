@@ -12,6 +12,8 @@ import org.skyve.impl.domain.AbstractPersistentBean;
 
 /**
  * Tagged
+ * <br/>
+ * Document that links individual records to tags by storing the module, document, and bizID of each tagged item.
  * 
  * @navhas n tag 1 Tag
  * @stereotype "persistent"
@@ -99,12 +101,6 @@ public class Tagged extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof Tagged) && 
-					this.getBizId().equals(((Tagged) o).getBizId()));
 	}
 
 	/**

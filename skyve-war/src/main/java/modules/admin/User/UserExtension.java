@@ -30,6 +30,10 @@ import modules.admin.domain.User;
 import modules.admin.domain.UserProxy;
 import modules.admin.domain.UserRole;
 
+/**
+ * Extends admin {@link User} with metadata-user mapping and activation workflows.
+ */
+@SuppressWarnings("java:S110") // This inheritance-depth warning is ridiculous for intentional framework hierarchies.
 public class UserExtension extends User {
 	private static final long serialVersionUID = 3422968996147520436L;
 
@@ -43,15 +47,21 @@ public class UserExtension extends User {
 			+ "<p>To complete your account setup, please click the activation link below.</p>"
 			+ "<p><a href=\"{%2$s}\">{%2$s}</a></p>"
 			+ "<p>If you have any questions about your new account, contact us at <a href=\"mailto:%3$s\">%3$s</a>.</p>",
-			Binder.createCompoundBinding(User.contactPropertyName, Contact.namePropertyName),
+			Binder.createCompoundBinding(UserProxy.contactPropertyName, Contact.namePropertyName),
 			activateUrlPropertyName,
 			Util.getSupportEmailAddress());
 
-
+	/**
+	 * Gets the list of roles assigned to this user.
+	 * This method synthesizes the roles from the metadata user and clears any existing roles.
+	 * 
+	 * @return List of UserRole objects representing the assigned roles
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public List<UserRole> getAssignedRoles() {
 		List<UserRole> assignedRoles = super.getAssignedRoles();
-		if (! determinedRoles) {
+		if (!determinedRoles) {
 			determinedRoles = true;
 			assignedRoles.clear();
 			if (isPersisted()) {
@@ -72,8 +82,7 @@ public class UserExtension extends User {
 							}
 						}
 					}
-				}
-				catch (@SuppressWarnings("unused") Exception e) {
+				} catch (@SuppressWarnings("unused") Exception e) {
 					// assigned roles is already empty
 				}
 			}
@@ -82,6 +91,10 @@ public class UserExtension extends User {
 		return assignedRoles;
 	}
 
+	/**
+	 * Clears the cached assigned roles for this user.
+	 * This forces a refresh of the roles on the next call to getAssignedRoles().
+	 */
 	void clearAssignedRoles() {
 		determinedRoles = false;
 	}
@@ -91,15 +104,17 @@ public class UserExtension extends User {
 	 *
 	 * @return the metadata user that is this user
 	 */
+	@Override
 	public org.skyve.metadata.user.User toMetaDataUser() {
 		UserImpl result = null;
-		
+
 		if (isPersisted()) {
 			// Populate the user using the persistence connection since it might have just been inserted and not committed yet
-			result = ProvidedRepositoryFactory.setCustomerAndUserFromPrincipal((UtilImpl.CUSTOMER == null) ? getBizCustomer() + "/" + getUserName() : getUserName());
+			result = ProvidedRepositoryFactory.setCustomerAndUserFromPrincipal(
+					(UtilImpl.CUSTOMER == null) ? getBizCustomer() + "/" + getUserName() : getUserName());
 			if (result != null) {
 				result.clearAllPermissionsAndMenus();
-				
+
 				// Use the current persistence connection, so do not close
 				@SuppressWarnings("resource")
 				Connection c = ((AbstractHibernatePersistence) CORE.getPersistence()).getConnection();
@@ -142,22 +157,31 @@ public class UserExtension extends User {
 	}
 
 	/**
+	 * Get the password last changed country name (for the current user's locale) for the country code.
+	 */
+	@Override
+	public String getPasswordLastChangedCountryName() {
+		String countryCode = getPasswordLastChangedCountryCode();
+		return (countryCode == null) ? null : Util.countryNameFromCode(countryCode);
+	}
+
+	/**
 	 * Sends the activation email to the user who registered.
 	 *
 	 * @throws Exception
 	 */
 	public void sendUserRegistrationEmail() throws Exception {
-		Util.LOGGER.info("Sending registration email to " + this.getContact().getEmail1());
+		LOGGER.info("Sending registration email to {}", this.getContact().getEmail1());
 		CommunicationUtil.sendFailSafeSystemCommunication(SELF_REGISTRATION_COMMUNICATION,
-															"{contact.email1}",
-															null,
-															SELF_REGISTRATION_SUBJECT,
-															SELF_REGISTRATION_BODY,
-															ResponseMode.EXPLICIT,
-															null,
-															this);
+				"{contact.email1}",
+				null,
+				SELF_REGISTRATION_SUBJECT,
+				SELF_REGISTRATION_BODY,
+				ResponseMode.EXPLICIT,
+				null,
+				this);
 	}
-	
+
 	/**
 	 * Whether the currently logged in {@link org.skyve.metadata.user.User} is this {@link User}.
 	 * 
@@ -214,15 +238,49 @@ public class UserExtension extends User {
 
 		private String bizUserId;
 
+		/**
+		 * Creates a visitor that stamps traversed beans with the supplied owner user id.
+		 *
+		 * @param bizUserId The owning biz user id to apply.
+		 */
 		public UpdateBizUserVisitor(String bizUserId) {
-			super(false, false, false);
+			super(false, false);
 			this.bizUserId = bizUserId;
 		}
 
+		/**
+		 * Applies ownership to each visited bean in the object graph.
+		 *
+		 * @param binding The current binding path.
+		 * @param document The visited document metadata.
+		 * @param owningDocument The owning document metadata.
+		 * @param owningRelation The relation traversed to reach this bean.
+		 * @param bean The visited bean.
+		 * @return Always {@code true} to continue traversal.
+		 */
 		@Override
 		protected boolean accept(String binding, Document document, Document owningDocument, Relation owningRelation, Bean bean) {
 			bean.setBizUserId(bizUserId);
 			return true;
 		}
+	}
+
+	/**
+	 * Builds a defensive business key that includes inactive-state marker when applicable.
+	 *
+	 * @return A human-readable key for list and log contexts.
+	 */
+	public String bizKey() {
+		StringBuilder sb = new StringBuilder(64);
+		try {
+			if (Boolean.TRUE.equals(getInactive())) {
+				sb.append("INACTIVE ");
+			}
+			sb.append(Binder.formatMessage("{userName} - {contact.bizKey}", this));
+
+		} catch (@SuppressWarnings("unused") Exception e) {
+			sb.append("Unknown");
+		}
+		return sb.toString();
 	}
 }

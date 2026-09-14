@@ -1,17 +1,38 @@
 package org.skyve.impl.metadata.module;
 
+import java.util.Map;
+import java.util.TreeMap;
+
 import org.skyve.impl.metadata.repository.NamedMetaData;
+import org.skyve.impl.metadata.repository.PropertyMapAdapter;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.util.XMLMetaData;
 import org.skyve.metadata.module.JobMetaData;
 
 import jakarta.xml.bind.annotation.XmlAttribute;
+import jakarta.xml.bind.annotation.XmlElement;
 import jakarta.xml.bind.annotation.XmlTransient;
 import jakarta.xml.bind.annotation.XmlType;
+import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 
+/**
+ * JAXB-annotated implementation of {@link JobMetaData}, representing a background
+ * job declared in a module descriptor.
+ *
+ * <p>A job declaration maps a symbolic name to a fully-qualified class that the Quartz
+ * scheduler can instantiate and execute.  The {@code displayName} and {@code description}
+ * fields carry the human-readable label and documentation; the {@code className} field
+ * identifies the concrete {@link org.skyve.job.Job} subclass to run.
+ *
+ * <p>Threading: not thread-safe.  Instances are populated during metadata loading
+ * and are read-only once placed in the repository cache.
+ *
+ * @see JobMetaData
+ * @see org.skyve.job.Job
+ */
 @XmlType(name = "job", 
 			namespace = XMLMetaData.MODULE_NAMESPACE,
-			propOrder = {"displayName", "className", "description"})
+			propOrder = {"displayName", "className", "description", "properties"})
 public class JobMetaDataImpl extends NamedMetaData implements JobMetaData {
 	private static final long serialVersionUID = 5214082047746890555L;
 
@@ -31,6 +52,10 @@ public class JobMetaDataImpl extends NamedMetaData implements JobMetaData {
 	private String className;
 
 	private String description;
+	
+	@XmlElement(namespace = XMLMetaData.MODULE_NAMESPACE)
+	@XmlJavaTypeAdapter(PropertyMapAdapter.class)
+	private Map<String, String> properties = new TreeMap<>();
 	
 	@Override
 	public String getDisplayName() {
@@ -62,6 +87,11 @@ public class JobMetaDataImpl extends NamedMetaData implements JobMetaData {
 		this.description = UtilImpl.processStringValue(description);
 	}
 
+	@Override
+	public Map<String, String> getProperties() {
+		return properties;
+	}
+	
 	@Override
 	public String getOwningModuleName() {
 		return owningModuleName;

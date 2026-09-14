@@ -1,24 +1,38 @@
 package org.skyve.impl.generate.jasperreports;
 
-import org.skyve.CORE;
-import org.skyve.metadata.model.Attribute;
-import org.skyve.metadata.module.query.MetaDataQueryDefinition;
-import org.skyve.metadata.module.query.MetaDataQueryColumn;
-
 import java.util.List;
 
-public class QueryReportDesignGenerator extends ReportDesignGenerator {
+import org.skyve.CORE;
+import org.skyve.metadata.model.Attribute;
+import org.skyve.metadata.module.query.MetaDataQueryColumn;
+import org.skyve.metadata.module.query.MetaDataQueryDefinition;
 
+/**
+ * Generates a JasperReports design from a Skyve named document query,
+ * mapping query columns to report fields.
+ */
+public class QueryReportDesignGenerator extends ReportDesignGenerator {
+    /**
+     * Indicates that query reports do not support collection subreport generation.
+     *
+     * @return Never returns normally.
+     * @throws UnsupportedOperationException Always.
+     */
     @Override
     protected QueryReportDesignGenerator getSubreportGenerator() {
         throw new UnsupportedOperationException("Subreports are not supported in query reports.");
     }
 
+    /**
+     * Adds report fields for query columns that map to attributes on the driving document.
+     *
+     * @param design The design being populated.
+     */
     @Override
     protected void addFields(DesignSpecification design) {
         super.addFields(design);
 
-        final MetaDataQueryDefinition queryDefinition = design.getModule().getMetaDataQuery(design.getQueryName());
+        final MetaDataQueryDefinition queryDefinition = design.getModule().getNullSafeMetaDataQuery(design.getQueryName());
 
         final List<? extends Attribute> documentAttributes = design.getDocument().getAttributes();
         for (MetaDataQueryColumn queryColumn : queryDefinition.getColumns()) {
@@ -33,6 +47,11 @@ public class QueryReportDesignGenerator extends ReportDesignGenerator {
         }
     }
 
+    /**
+     * Creates one detail band per non-collection query field with a label/value pair.
+     *
+     * @param design The design being populated.
+     */
     @Override
     protected void addBands(DesignSpecification design) {
         super.addBands(design);

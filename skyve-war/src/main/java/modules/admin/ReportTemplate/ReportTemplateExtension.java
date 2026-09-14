@@ -4,7 +4,9 @@ import java.util.List;
 
 import org.skyve.CORE;
 import org.skyve.domain.app.admin.ReportDataset.DatasetType;
+import org.skyve.domain.messages.Message;
 import org.skyve.domain.messages.ValidationException;
+import org.skyve.job.JobSchedule;
 import org.skyve.metadata.model.Attribute;
 import org.skyve.metadata.model.Attribute.AttributeType;
 import org.skyve.metadata.model.document.Document;
@@ -24,6 +26,9 @@ import modules.admin.domain.ReportDataset;
 import modules.admin.domain.ReportTemplate;
 import modules.admin.domain.UserProxy;
 
+/**
+ * Extends report template state with scheduling utilities and generated-template scaffolding.
+ */
 public class ReportTemplateExtension extends ReportTemplate {
 	private static final long serialVersionUID = -7147172221052954971L;
 
@@ -47,6 +52,7 @@ public class ReportTemplateExtension extends ReportTemplate {
 
 	/**
 	 * Returns a text description of the cron schedule for this report.
+	 * @return the result
 	 */
 	@Override
 	public String getScheduleDescription() {
@@ -70,7 +76,7 @@ public class ReportTemplateExtension extends ReportTemplate {
 		Module module = CORE.getCustomer().getModule(getGenerateModuleName());
 		Document document = module.getDocument(CORE.getCustomer(), getGenerateDocumentName());
 		List<? extends Attribute> attributes = document.getAttributes();
-		
+
 		StringBuilder tableHeaderRows = new StringBuilder();
 		StringBuilder tableDetailRows = new StringBuilder();
 
@@ -121,6 +127,9 @@ public class ReportTemplateExtension extends ReportTemplate {
 		setTemplate(template);
 	}
 
+	/**
+	 * Executes generateInitialDataset.
+	 */
 	public void generateInitialDataset() {
 		// make sure we have a document
 		if (getGenerateDocumentName() == null) {
@@ -195,5 +204,65 @@ public class ReportTemplateExtension extends ReportTemplate {
 			UserProxyExtension u = CORE.getPersistence().retrieve(UserProxy.MODULE_NAME, UserProxy.DOCUMENT_NAME, g.getId1());
 			getUsersToEmail().add(u);
 		}
+	}
+
+	/**
+	 * Validates that all ReportParameters for this template are used by at least one ReportDataset query.
+	 * 
+	 * @param e The ValidationException any errors will be added to
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	public void validateReportParameters(ValidationException e) {
+		// skip validation for jasper reports
+		if (getReportType() == ReportType.jasper) {
+			return;
+		}
+
+		for (ReportParameterExtension param : getParameters()) {
+			boolean inUse = false;
+
+			for (ReportDatasetExtension dataset : getDatasets()) {
+				// skip constants as they can't accept parameters
+				if (dataset.getDatasetType() == DatasetType.constant) {
+					continue;
+				}
+
+				// class datasets always inject all parameters
+				if (dataset.getDatasetType() == DatasetType.classValue) {
+					inUse = true;
+					break;
+				}
+
+				// check bizQL or SQL datasets for all parameters
+				if (dataset.getDatasetType() == DatasetType.bizQL || dataset.getDatasetType() == DatasetType.SQL) {
+					if (dataset.containsParameter(param)) {
+						inUse = true;
+						break;
+					}
+				}
+			}
+
+			if (inUse == false) {
+				e.getMessages()
+						.add(new Message(String.format(
+								"Parameter %s is not in use by any dataset. Please include it in a dataset or remove it.",
+								param.getName())));
+			}
+		}
+	}
+	
+	/**
+	 * Converts this ReportTemplate to a {@link org.skyve.job.JobSchedule} for scheduling purposes.
+	 * 
+	 * @return A new JobSchedule populated with this template's scheduling properties
+	 */
+	JobSchedule toJobSchedule() {
+		JobSchedule result = new JobSchedule();
+		result.setUuid(getBizId());
+		result.setJobName(getName());
+		result.setCronExpression(getCronExpression());
+		result.setStartTime(getStartTime());
+		result.setEndTime(getEndTime());
+		return result;
 	}
 }

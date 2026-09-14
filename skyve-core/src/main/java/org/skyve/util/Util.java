@@ -1,37 +1,70 @@
 package org.skyve.util;
 
+import java.awt.Color;
 import java.awt.ComponentOrientation;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.io.Serializable;
+import java.io.Writer;
 import java.text.MessageFormat;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.MissingResourceException;
 import java.util.ResourceBundle;
 import java.util.TreeMap;
-import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.lang3.StringUtils;
 import org.skyve.CORE;
 import org.skyve.domain.Bean;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.UtilImpl;
+import org.skyve.impl.util.UtilImpl.ArchiveConfig;
 import org.skyve.impl.web.AbstractWebContext;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
 import org.skyve.metadata.user.User;
+import org.skyve.persistence.DocumentQuery;
+import org.skyve.util.logging.SkyveLoggerFactory;
 import org.skyve.util.test.TestUtil;
+import org.slf4j.Logger;
+
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 
 /**
- *
+ * Skyve utility methods
  */
 public class Util {
-	/**
-	 * 
-	 */
-	public static final Logger LOGGER = UtilImpl.LOGGER;
 
-	public static final String UTF8 = "UTF-8";
+    /**
+     * Skyve's framework logger
+     * <p>
+     * Replace with someting like this:
+     * <p>
+     * <code>
+     * private final org.slf4j.Logger logger = org.skyve.util.logging.SkyveLoggerFactory.getLogger(MyClass.class);
+     * </code>
+     * 
+     * @deprecated This logger will be removed; please switch to using
+     *             a logger named appropriately for the class doing the logging.
+     *             For example <a href="https://www.slf4j.org/manual.html#typical_usage">
+     *             see the Typical usage pattern suggested by slf4j</a>.
+     * 
+     */
+	@SuppressWarnings({"removal", "java:S1133"})
+	@Deprecated(since = "9.3.0", forRemoval = true)
+    public static final java.util.logging.Logger LOGGER = UtilImpl.LOGGER;
+
+    private static final Logger utilLogger = SkyveLoggerFactory.getLogger(Util.class);
+
+	/**
+	 * Number of bytes in one megabyte (1 MB), defined as 1024L * 1024L (1,048,576 bytes).
+	 */
+	public static final long MEGABYTE = 1024L * 1024L;
 
 	/**
 	 * Disallow instantiation
@@ -41,22 +74,20 @@ public class Util {
 	}
 
 	/**
-	 * 
-	 * @param object
-	 * @return
+	 * Clone the object given by serializing and deserializing it.
+	 * @param object	The object to clone.
+	 * @return	The cloned object.
 	 */
-	public static final <T extends Serializable> T cloneBySerialization(T object) {
+	public static final @Nonnull <T extends Serializable> T cloneBySerialization(@Nonnull T object) {
 		return UtilImpl.cloneBySerialization(object);
 	}
 
 	/**
-	 * 
-	 * @param object
-	 * @return
-	 * @throws Exception
+	 * Clone the object given by serializing and deserializing it, setting any persistent Skyve beans transient (not persisted).
+	 * @param object	The object to clone.
+	 * @return	The cloned non-persisted object.
 	 */
-	public static final <T extends Serializable> T cloneToTransientBySerialization(T object)
-	throws Exception {
+	public static final @Nonnull <T extends Serializable> T cloneToTransientBySerialization(@Nonnull T object) {
 		return UtilImpl.cloneToTransientBySerialization(object);
 	}
 
@@ -65,21 +96,8 @@ public class Util {
 	 * 
 	 * @param bean The bean to load.
 	 */
-	public static void populateFully(Bean bean) {
+	public static void populateFully(@Nonnull Bean bean) {
 		UtilImpl.populateFully(bean);
-	}
-
-	/**
-	 * Recurse the bean to determine if anything has changed.
-	 * This is deprecated and has been moved to AbstractBean with the "changed" bean property.
-	 * This enables the method's result to be cached in Bean proxies.
-	 * 
-	 * @param bean The bean to test.
-	 * @return if the bean, its collections or its aggregated beans have mutated or not
-	 */
-	@Deprecated
-	public static boolean hasChanged(Bean bean) {
-		return UtilImpl.hasChanged(bean);
 	}
 
 	/**
@@ -89,7 +107,7 @@ public class Util {
 	 * @param possibleProxy The possible proxy
 	 * @return the resolved proxy or possibleProxy
 	 */
-	public static <T> T deproxy(T possibleProxy) throws ClassCastException {
+	public static @Nonnull <T> T deproxy(@Nonnull T possibleProxy) throws ClassCastException {
 		return UtilImpl.deproxy(possibleProxy);
 	}
 
@@ -99,76 +117,99 @@ public class Util {
 	 * @param value
 	 * @return
 	 */
-	public static String processStringValue(String value) {
+	public static @Nullable String processStringValue(@Nullable String value) {
 		return UtilImpl.processStringValue(value);
 	}
 
 	/**
 	 * Internationalises a string for the user's locale and performs message formatting on tokens like {0}, {1} etc.
 	 */
-	public static String i18n(String key, String... values) {
+	public static @Nonnull String nullSafeI18n(@Nonnull String key, String... values) {
+		// NB Don't attempt to get a user unless persistence has been initialised
+		User u = (AbstractPersistence.IMPLEMENTATION_CLASS == null) ? null : CORE.getUser();
+		return nullSafeI18n(key, (u == null) ? null : u.getLocale(), values);
+	}
+	
+	/**
+	 * Internationalises a string for the user's locale and performs message formatting on tokens like {0}, {1} etc.
+	 * Only returns null if the key is null.
+	 */
+	public static @Nullable String i18n(@Nullable String key, String... values) {
 		if (key == null) {
 			return null;
 		}
-		
-		// NB Don't attempt to get a user unless persistence has been initialised
-		User u = (AbstractPersistence.IMPLEMENTATION_CLASS == null) ? null : CORE.getUser();
-		return i18n(key, (u == null) ? null : u.getLocale(), values);
+		return nullSafeI18n(key, values);
 	}
 	
 	// language code -> (key -> string)
 	// Use of this map is WAY faster than using ResourceBundle which sux arse.
-	// This map is synchronized on during the put but reads are left free.
-	// The usage of this map is almost always read.
 	// The map is keyed on language code because there are less language codes than locales.
-	// NB Make the map volatile to ensure it is readable by multiple threads.
-	private static volatile Map<String, Map<String, String>> I18N_PROPERTIES = new TreeMap<>();
+	// NB Copy-on-write publication keeps reads lock-free and avoids concurrent TreeMap mutation.
+	private static final Object I18N_PROPERTIES_LOCK = new Object();
+	@SuppressWarnings("java:S3077") // Copy-on-write publishes immutable map snapshots through this volatile reference.
+	private static volatile Map<String, Map<String, String>> I18N_PROPERTIES = Collections.emptyMap();
 	
 	/**
 	 * Internationalises a string for a particular locale and performs message formatting on tokens like {0}, {1} etc.
 	 */
-	public static String i18n(String key, Locale locale, String... values) {
-		String result = key;
+	@SuppressWarnings("java:S3776") // complexity OK
+	public static @Nonnull String nullSafeI18n(@Nonnull String key, @Nullable Locale locale, String... values) {
+		String result = null;
 
-		if (key != null) {
-			try {
-				Locale l = (locale == null) ? Locale.ENGLISH : locale;
-				String lang = l.getLanguage();
-				Map<String, String> properties = I18N_PROPERTIES.get(lang);
-				if (properties == null) {
-					synchronized (I18N_PROPERTIES) {
-						properties = I18N_PROPERTIES.get(lang);
-						if (properties == null) {
-							ResourceBundle bundle = ResourceBundle.getBundle("resources.i18n", l, Thread.currentThread().getContextClassLoader());
-							properties = new TreeMap<>();
-							for (String bundleKey : bundle.keySet()) {
-								properties.put(bundleKey, bundle.getString(bundleKey));
-							}
-							ResourceBundle.clearCache(Thread.currentThread().getContextClassLoader());
-							I18N_PROPERTIES.put(lang, properties);
+		try {
+			Locale l = (locale == null) ? Locale.ENGLISH : locale;
+			String lang = l.getLanguage();
+			Map<String, String> properties = I18N_PROPERTIES.get(lang);
+			if (properties == null) {
+				synchronized (I18N_PROPERTIES_LOCK) {
+					properties = I18N_PROPERTIES.get(lang);
+					if (properties == null) {
+						ResourceBundle bundle = ResourceBundle.getBundle("resources.i18n", l, Thread.currentThread().getContextClassLoader());
+						properties = new TreeMap<>();
+						for (String bundleKey : bundle.keySet()) {
+							properties.put(bundleKey, bundle.getString(bundleKey));
 						}
+						// Make sure the properties are unmodifiable
+						properties = Collections.unmodifiableMap(properties);
+						ResourceBundle.clearCache(Thread.currentThread().getContextClassLoader());
+
+						// Copy-on-write publication of the new unmodifiable properties map
+						Map<String, Map<String, String>> updatedProperties = new TreeMap<>(I18N_PROPERTIES);
+						updatedProperties.put(lang, properties);
+						I18N_PROPERTIES = Collections.unmodifiableMap(updatedProperties);
 					}
-				}
-				result = properties.get(key);
-				if (result == null) {
-					if ((lang != null) && (! lang.equals(Locale.ENGLISH.getLanguage()))) {
-						result = i18n(key, Locale.ENGLISH, values);
-					}
-					if (result == null) {
-						result = key;
-					}
-				}
-	
-				if ((values != null) && (values.length > 0)) {
-					result = MessageFormat.format(result, (Object[]) values);
 				}
 			}
-			catch (@SuppressWarnings("unused") MissingResourceException e) {
-				LOGGER.warning("Could not find bundle \"resources.i18n\"");
+			result = properties.get(key);
+			if (result == null) {
+				if ((lang != null) && (! lang.equals(Locale.ENGLISH.getLanguage()))) {
+					result = nullSafeI18n(key, Locale.ENGLISH, values);
+				}
+				if (result == null) {
+					result = key;
+				}
+			}
+
+			if ((values != null) && (values.length > 0)) {
+				result = MessageFormat.format(result, (Object[]) values);
 			}
 		}
+		catch (@SuppressWarnings("unused") MissingResourceException e) {
+		    utilLogger.warn("Could not find bundle \"resources.i18n\"");
+		}
 
-		return result;
+		return (result == null) ? key : result;
+	}
+	
+	/**
+	 * Internationalises a string for a particular locale and performs message formatting on tokens like {0}, {1} etc.
+	 * Only returns null if the key is null.
+	 */
+	public static @Nullable String i18n(@Nullable String key, @Nullable Locale locale, String... values) {
+		if (key == null) {
+			return null;
+		}
+		return nullSafeI18n(key, locale, values);
 	}
 
 	public static boolean isRTL() {
@@ -177,11 +218,30 @@ public class Util {
 		return isRTL((u == null) ? null : u.getLocale());
 	}
 
-	public static boolean isRTL(Locale locale) {
+	public static boolean isRTL(@Nullable Locale locale) {
 		return (locale != null) && (! ComponentOrientation.getOrientation(locale).isLeftToRight());
 	}
 
-	public static int UTF8Length(CharSequence sequence) {
+	/**
+	 * Get the Country Name for a 2 letter country code in the current user's locale.
+	 * @param twoLetterCountryCode	To convert.
+	 * @return	The country name in the current user's locale, or if no user, the default system locale, or null if unknown. 
+	 */
+	public static @Nullable String countryNameFromCode(@Nonnull String twoLetterCountryCode) {
+		User user = CORE.getUser();
+		Locale userLocale = user.getLocale();
+		Locale countryLocale = new Locale("", twoLetterCountryCode);
+		return UtilImpl.processStringValue((userLocale == null) ?
+												countryLocale.getDisplayCountry() :
+												countryLocale.getDisplayCountry(userLocale));
+	}
+	
+	/**
+	 * Determine the length in bytes of a UTF-8 CharSequence.
+	 * @param sequence	To determine the byte length of.
+	 * @return	The byte length.
+	 */
+	public static int utf8Length(@Nonnull CharSequence sequence) {
 		int count = 0;
 		for (int i = 0, len = sequence.length(); i < len; i++) {
 			char ch = sequence.charAt(i);
@@ -203,7 +263,13 @@ public class Util {
 		return count;
 	}
 
-	public static int lastIndexOfRegEx(String string, String regex) {
+	/**
+	 * Get the lastIndexOf() for a regular expression.
+	 * @param string	The String to search
+	 * @param regex	The regex to search on.
+	 * @return	The index of the last occurrence of the regex match.
+	 */
+	public static int lastIndexOfRegEx(@Nonnull String string, @Nonnull String regex) {
 		int result = -1;
 
 		Pattern p = Pattern.compile(regex);
@@ -216,22 +282,19 @@ public class Util {
 	}
 
 	/**
-	 * 
-	 * @param object
-	 * @throws Exception
+	 * Set any Skyve Persistent Beans found in the object to transient (not persisted).
+	 * @param object	The object to set transient
 	 */
-	public static void setTransient(Object object) throws Exception {
+	public static void setTransient(@Nullable Object object) {
 		UtilImpl.setTransient(object);
 	}
 
 	/**
-	 * 
-	 * @param object
-	 * @param bizDataGroupId
-	 * @throws Exception
+	 * Set the data group of any Skyve beans found in the object
+	 * @param object	The object to set the data group for
+	 * @param bizDataGroupId	The data group to set (or clear if null)
 	 */
-	// set the data group of a bean and all its children
-	public static void setDataGroup(Object object, String bizDataGroupId) throws Exception {
+	public static void setDataGroup(@Nullable Object object, @Nullable String bizDataGroupId) {
 		UtilImpl.setDataGroup(object, bizDataGroupId);
 	}
 
@@ -247,30 +310,37 @@ public class Util {
 	 * @return The randomly constructed bean.
 	 * @throws Exception
 	 */
-	public static <T extends Bean> T constructRandomInstance(User user, Module module, Document document, int depth)
+	public static @Nonnull <T extends Bean> T constructRandomInstance(@Nonnull User user,
+																		@Nonnull Module module,
+																		@Nonnull Document document,
+																		int depth)
 	throws Exception {
 		return TestUtil.constructRandomInstance(user, module, document, depth);
 	}
 
-	public static String getContentDirectory() {
+	public static @Nonnull String getContentDirectory() {
 		return UtilImpl.CONTENT_DIRECTORY;
 	}
 
-	public static String getAddinsDirectory() {
+	public static @Nonnull String getAddinsDirectory() {
 		return (UtilImpl.ADDINS_DIRECTORY == null) ? (UtilImpl.CONTENT_DIRECTORY + "addins/") : UtilImpl.ADDINS_DIRECTORY;
 	}
 	
-	public static String getBackupDirectory() {
+	public static @Nonnull String getBackupDirectory() {
 		return (UtilImpl.BACKUP_DIRECTORY == null) ? UtilImpl.CONTENT_DIRECTORY : UtilImpl.BACKUP_DIRECTORY;
 	}
 
-	public static String getCacheDirectory() {
+	public static @Nonnull String getCacheDirectory() {
 		return (UtilImpl.CACHE_DIRECTORY == null) ? (UtilImpl.CONTENT_DIRECTORY + "SKYVE_CACHE/") : UtilImpl.CACHE_DIRECTORY;
 	}
 
-	public static String getThumbnnailDirectory() {
+	public static @Nonnull String getThumbnnailDirectory() {
 		return (UtilImpl.THUMBNAIL_DIRECTORY == null) ? (UtilImpl.CONTENT_DIRECTORY + "SKYVE_THUMBNAILS/") : UtilImpl.THUMBNAIL_DIRECTORY;
 	}
+
+    public static ArchiveConfig getArchiveConfig() {
+        return UtilImpl.ARCHIVE_CONFIG;
+    }
 
 	public static String getModuleDirectory() {
 		return UtilImpl.MODULE_DIRECTORY;
@@ -284,13 +354,14 @@ public class Util {
 		return ((UtilImpl.SUPPORT_EMAIL_ADDRESS == null) ? "" : UtilImpl.SUPPORT_EMAIL_ADDRESS);
 	}
 
+	@SuppressWarnings("java:S3077") // Double-checked locking publishes an immutable Boolean reference.
 	private static volatile Boolean secureUrl = null;
 	
 	public static boolean isSecureUrl() {
 		if (secureUrl == null) {
 			synchronized (Util.class) {
 				if (secureUrl == null) {
-					secureUrl = Boolean.valueOf((UtilImpl.SERVER_URL == null) ? false : UtilImpl.SERVER_URL.startsWith("https://"));
+					secureUrl = Boolean.valueOf((UtilImpl.SERVER_URL != null) && UtilImpl.SERVER_URL.startsWith("https://"));
 				}
 			}
 		}
@@ -317,29 +388,47 @@ public class Util {
 		return UtilImpl.SERVER_URL + UtilImpl.SKYVE_CONTEXT;
 	}
 
-	public static String getHomeUrl() {
+	/**
+	 * This is the base URL for the Skyve app - set via the "url" object in the JSON config.
+	 * This is the url.server + url.context + '/'.
+	 * @return	The base URL (Base HREF)
+	 */
+	public static @Nonnull String getBaseUrl() {
+		StringBuilder result = new StringBuilder(128);
+		result.append(UtilImpl.SERVER_URL).append(UtilImpl.SKYVE_CONTEXT).append('/');
+		return result.toString();
+	}
+
+	/**
+	 * The home page URL for the Skyve app - set via the "url" object in the JSON config.
+	 * This is used as a default redirect after login.
+	 * @return	The home URL.
+	 */
+	public static @Nonnull String getHomeUrl() {
 		StringBuilder result = new StringBuilder(128);
 		result.append(UtilImpl.SERVER_URL).append(UtilImpl.SKYVE_CONTEXT).append(UtilImpl.HOME_URI);
 		return result.toString();
 	}
 
-	public static String getLoginUrl() {
+	public static @Nonnull String getLoginUrl() {
 		StringBuilder result = new StringBuilder(128);
 		result.append(UtilImpl.SERVER_URL).append(UtilImpl.SKYVE_CONTEXT).append(UtilImpl.AUTHENTICATION_LOGIN_URI);
 		return result.toString();
 	}
 
-	public static String getLoggedOutUrl() {
+	public static @Nonnull String getLoggedOutUrl() {
 		StringBuilder result = new StringBuilder(128);
 		result.append(UtilImpl.SERVER_URL).append(UtilImpl.SKYVE_CONTEXT).append(UtilImpl.AUTHENTICATION_LOGGED_OUT_URI);
 		return result.toString();
 	}
 
-	public static String getDocumentUrl(String bizModule, String bizDocument) {
+	public static @Nonnull String getDocumentUrl(@Nonnull String bizModule, @Nonnull String bizDocument) {
 		return getDocumentUrl(bizModule, bizDocument, null);
 	}
 
-	public static String getDocumentUrl(String bizModule, String bizDocument, String bizId) {
+	public static @Nonnull String getDocumentUrl(@Nonnull String bizModule,
+													@Nonnull String bizDocument,
+													@Nullable String bizId) {
 		StringBuilder result = new StringBuilder(128);
 
 		result.append(UtilImpl.SERVER_URL).append(UtilImpl.SKYVE_CONTEXT).append(UtilImpl.HOME_URI);
@@ -351,7 +440,7 @@ public class Util {
 		return result.toString();
 	}
 
-	public static String getDocumentUrl(Bean bean) {
+	public static @Nonnull String getDocumentUrl(@Nonnull Bean bean) {
 		return getDocumentUrl(bean.getBizModule(), bean.getBizDocument(), bean.getBizId());
 	}
 	
@@ -365,7 +454,11 @@ public class Util {
 	 * @param anchorMarkup - the html markup value (usually text) of the anchor 
 	 * @return - the constructed URL as a String
 	 */
-	public static String getDocumentAnchorUrl(String bizModule, String bizDocument, String bizId, boolean targetNewWindow, String anchorMarkup) {
+	public static @Nonnull String getDocumentAnchorUrl(@Nonnull String bizModule,
+														@Nonnull String bizDocument,
+														@Nullable String bizId,
+														boolean targetNewWindow,
+														@Nonnull String anchorMarkup) {
 		StringBuilder result = new StringBuilder(128);
 
 		result.append("<a href=\"").append(getDocumentUrl(bizModule, bizDocument, bizId));
@@ -380,16 +473,19 @@ public class Util {
 		return result.toString();
 	}
 
-	public static String getGridUrl(String bizModule, String queryName) {
+	public static @Nonnull String getListUrl(@Nonnull String bizModule, @Nonnull String queryName) {
 		StringBuilder result = new StringBuilder(128);
 
 		result.append(UtilImpl.SERVER_URL).append(UtilImpl.SKYVE_CONTEXT).append(UtilImpl.HOME_URI);
-		result.append("?a=g&m=").append(bizModule).append("&q=").append(queryName);
+		result.append("?a=l&m=").append(bizModule).append("&q=").append(queryName);
 
 		return result.toString();
 	}
 	
-	public static String getContentUrl(String bizModule, String bizDocument, String binding, String contentId) {
+	public static @Nonnull String getContentUrl(@Nonnull String bizModule,
+													@Nonnull String bizDocument,
+													@Nonnull String binding,
+													@Nonnull String contentId) {
 		StringBuilder result = new StringBuilder(128);
 
 		result.append(UtilImpl.SERVER_URL).append(UtilImpl.SKYVE_CONTEXT).append(UtilImpl.HOME_URI);
@@ -400,7 +496,9 @@ public class Util {
 		return result.toString();
 	}
 	
-	public static String getResourceUrl(String bizModule, String bizDocument, String resourceFileName) {
+	public static @Nonnull String getResourceUrl(@Nullable String bizModule,
+													@Nullable String bizDocument,
+													@Nonnull String resourceFileName) {
 		StringBuilder result = new StringBuilder(128);
 
 		result.append(UtilImpl.SERVER_URL).append(UtilImpl.SKYVE_CONTEXT).append(UtilImpl.HOME_URI);
@@ -412,11 +510,11 @@ public class Util {
 		return result.toString();
 	}
 
-	public static String getResourceUrl(String resourceFileName) {
+	public static @Nonnull String getResourceUrl(@Nonnull String resourceFileName) {
 		return getResourceUrl(null, null, resourceFileName);
 	}
 	
-	public static String getResetPasswordUrl() {
+	public static @Nonnull String getResetPasswordUrl() {
 		StringBuilder result = new StringBuilder(128);
 		result.append(Util.getSkyveContextUrl())
 			  .append("/pages/resetPassword.jsp").append("?")
@@ -438,7 +536,12 @@ public class Util {
 	 * @param height - the height of the image in pixels
 	 * @return - the constructed URL as a String
      */
-    public static String getContentImageUrl(String bizModule, String bizDocument, String binding, String contentId, int width, int height) {
+    public static @Nonnull String getContentImageUrl(@Nonnull String bizModule,
+    													@Nonnull String bizDocument,
+    													@Nonnull String binding,
+    													@Nonnull String contentId,
+    													int width,
+    													int height) {
     	StringBuilder result = new StringBuilder(128);
     	
     	result.append("<img src=\"");
@@ -461,7 +564,12 @@ public class Util {
 	 * @param anchorMarkup - the html markup value (usually text) of the anchor 
 	 * @return - the constructed URL as a String
 	 */	
-    public static String getContentAnchorUrl(String bizModule, String bizDocument, String binding, String contentId, boolean targetNewWindow, String anchorMarkup) {
+    public static @Nonnull String getContentAnchorUrl(@Nonnull String bizModule,
+    													@Nonnull String bizDocument,
+    													@Nonnull String binding,
+    													@Nonnull String contentId,
+    													boolean targetNewWindow,
+    													@Nonnull String anchorMarkup) {
         String contentUrl = getContentUrl(bizModule, bizDocument, binding, contentId);
         StringBuilder result = new StringBuilder(128);
         
@@ -489,7 +597,105 @@ public class Util {
 	 * @param height - the height of the image in pixels
 	 * @return - the constructed URL as a String
 	 */
-    public static String getContentAnchorWithImageUrl(String bizModule, String bizDocument, String binding, String contentId, boolean targetNewWindow, int width, int height) {
-    	return getContentAnchorUrl(bizModule, bizDocument, binding, contentId, targetNewWindow, getContentImageUrl(bizModule, bizDocument, binding, contentId, width, height));
+    public static @Nonnull String getContentAnchorWithImageUrl(@Nonnull String bizModule,
+    															@Nonnull String bizDocument,
+    															@Nonnull String binding,
+    															@Nonnull String contentId,
+    															boolean targetNewWindow,
+    															int width,
+    															int height) {
+    	return getContentAnchorUrl(bizModule,
+    								bizDocument,
+    								binding,
+    								contentId,
+    								targetNewWindow,
+    								getContentImageUrl(bizModule, bizDocument, binding, contentId, width, height));
     }
+
+	/**
+	 * Yields the HTML hex code for a given colour.
+	 * @param colour	The colour
+	 * @return	The colour code.
+	 */
+	public static @Nonnull String htmlColourCode(Color colour) {
+		return '#' + StringUtils.leftPad(Integer.toHexString(colour.getRGB() & 0x00ffffff), 6, "0");
+	}
+	
+	/**
+	 * Yields the Color for a given HTML hex code.
+	 * @param activity	The scope
+	 * @return	The colour
+	 */
+	public static @Nonnull Color htmlColour(String colourCode) {
+		return Color.decode(colourCode);
+	}
+	
+	/**
+	 * Appending or printing or writing to a Writer doesn't guarantee that the entire String will be written.
+	 * This method writes 1K at a time.
+	 * (Note that there was nothing quite the same in commons-io)
+	 * 
+	 * @param chars The CharSequence to copy.
+	 * @param writer	The writer to copy to
+	 * @throws IOException
+	 */
+	public static void chunkCharsToWriter(CharSequence chars, Writer writer)
+	throws IOException {
+		for (int i = 0, l = chars.length(); i < l; i += 1024) {
+			int end = Math.min(i + 1024, l);
+			writer.write(chars.subSequence(i, end).toString());
+		}
+	}
+	
+	/**
+	 * Writing to an OutputStream doesn't guarantee that the entire byte array will be written.
+	 * This method writes 1K at a time.
+	 * 
+	 * @param bytes	The bytes to copy.
+	 * @param stream	The stream to copy to
+	 * @throws IOException
+	 */
+	public static void chunkBytesToOutputStream(byte[] bytes, OutputStream stream)
+	throws IOException {
+		int length = bytes.length;
+		int offset = 0;
+		while (offset < length) {
+			int bytesToWrite = Math.min(1024, length - offset);
+			stream.write(bytes, offset, bytesToWrite);
+			offset += bytesToWrite;
+		}
+	}
+
+	/**
+	 * Returns the first non-null value between the two provided parameters.
+	 * 
+	 * @param <T> the type of the values
+	 * @param val the primary value to check
+	 * @param ifNullValue the fallback value to return if val is null
+	 * @return val if it is not null, otherwise ifNullValue
+	 */
+	public static <T> T coalesceNull(T val, T ifNullValue) {
+		return (val == null ? ifNullValue : val);
+	}
+	
+	/**
+	 * Convenience method for returning autocomplete suggestions for a String attribute based on previous values
+	 *
+	 * @param moduleName The name of the module containing the document
+	 * @param documentName The name of the document to query
+	 * @param attributeName The name of the attribute to retrieve suggestions for
+	 * @param value The prefix value to filter suggestions (null returns all distinct values)
+	 * @return A list of distinct String values matching the prefix, ordered alphabetically
+	 * @throws Exception
+	 */
+	public static List<String> getCompleteSuggestions(String moduleName, String documentName, String attributeName, String value) {
+		DocumentQuery q = CORE.getPersistence().newDocumentQuery(moduleName, documentName);
+		if (value != null) {
+			q.getFilter().addLike(attributeName, value + "%");
+		}
+		q.addBoundProjection(attributeName, attributeName);
+		q.addBoundOrdering(attributeName);
+		q.setDistinct(true);
+		return q.scalarResults(String.class);
+	}
 }

@@ -9,6 +9,9 @@ import org.skyve.util.Util;
 
 import modules.admin.domain.Communication;
 
+/**
+ * Extends Communication documents with admin runtime helper behaviour.
+ */
 public class CommunicationExtension extends Communication {
 	private static final long serialVersionUID = 4916984359227145959L;
 
@@ -16,6 +19,10 @@ public class CommunicationExtension extends Communication {
 	private static final String BATCH_FORMAT = "yyyyMMddHHmmss";
 	private static Date batchDateTime = null;
 
+	/**
+	 * Performs the getBasePath operation.
+	 * @return the operation result
+	 */
 	@Override
 	public String getBasePath() {
 
@@ -27,12 +34,16 @@ public class CommunicationExtension extends Communication {
 			sb.append(BATCH_FOLDER_PREFIX).append(FileUtil.safeFileName(customerName));
 			sb.append(File.separator).append(FileUtil.safeFileName(getDescription())).append(File.separator);
 
-			// Util.LOGGER.info("BASE PATH " + sb.toString());
+			// Util.LOGGER.info("BASE PATH {}", sb.toString());
 		}
 
 		return sb.toString();
 	}
 
+	/**
+	 * Performs the getBatch operation.
+	 * @return the operation result
+	 */
 	@Override
 	public String getBatch() {
 		// cache the datetime that this batch was started so that all emails end up in the same folder
@@ -42,6 +53,10 @@ public class CommunicationExtension extends Communication {
 		return CORE.getDateFormat(BATCH_FORMAT).format(batchDateTime);
 	}
 
+	/**
+	 * Performs the setTemplate operation.
+	 * @param template the template value
+	 */
 	@Override
 	public void setTemplate(org.skyve.domain.app.admin.CommunicationTemplate template) {
 		setTemplate((modules.admin.domain.CommunicationTemplate) template);

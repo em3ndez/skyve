@@ -20,7 +20,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.zip.GZIPOutputStream;
 
-import org.skyve.impl.util.UtilImpl;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.WriteListener;
@@ -38,6 +39,7 @@ import jakarta.servlet.http.HttpServletResponse;
 public class CompressionResponseStream
     extends ServletOutputStream {
 
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(CompressionResponseStream.class);
 
     // ----------------------------------------------------------- Constructors
 
@@ -47,6 +49,7 @@ public class CompressionResponseStream
      *
      * @param response The associated response
      */
+    @SuppressWarnings("resource")
     public CompressionResponseStream(HttpServletResponse response) throws IOException{
 
         super();
@@ -84,6 +87,7 @@ public class CompressionResponseStream
     /**
      * The underlying gzip output stream to which we should write data.
      */
+    @SuppressWarnings("resource")
     protected OutputStream gzipstream = null;
 
     /**
@@ -105,6 +109,7 @@ public class CompressionResponseStream
     /**
      * The underlying servket output stream to which we should write data.
      */
+    @SuppressWarnings("resource")
     protected ServletOutputStream output = null;
 
 
@@ -125,7 +130,7 @@ public class CompressionResponseStream
         compressionThreshold = threshold;
         buffer = new byte[compressionThreshold];
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("buffer is set to "+compressionThreshold);
+	        LOGGER.info("buffer is set to {}", Integer.valueOf(compressionThreshold));
         }
     }
 
@@ -137,7 +142,7 @@ public class CompressionResponseStream
 	public void close() throws IOException {
 
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("close() @ CompressionResponseStream");
+        	LOGGER.info("close() @ CompressionResponseStream");
         }
         if (closed)
             throw new IOException("This output stream has already been closed");
@@ -167,7 +172,7 @@ public class CompressionResponseStream
 	public void flush() throws IOException {
 
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("flush() @ CompressionResponseStream");
+        	LOGGER.info("flush() @ CompressionResponseStream");
         }
         if (closed) {
             throw new IOException("Cannot flush a closed output stream");
@@ -182,11 +187,11 @@ public class CompressionResponseStream
     public void flushToGZip() throws IOException {
 
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("flushToGZip() @ CompressionResponseStream");
+        	LOGGER.info("flushToGZip() @ CompressionResponseStream");
         }
         if (bufferCount > 0) {
             if (debug > 1) {
-            	UtilImpl.LOGGER.info("flushing out to GZipStream, bufferCount = " + bufferCount);
+	            LOGGER.info("flushing out to GZipStream, bufferCount = {}", Integer.valueOf(bufferCount));
             }
             writeToGZip(buffer, 0, bufferCount);
             bufferCount = 0;
@@ -224,7 +229,7 @@ public class CompressionResponseStream
      * @exception IOException if an input/output error occurs
      */
     @Override
-	public void write(byte b[]) throws IOException {
+    public void write(byte[] b) throws IOException {
 
         write(b, 0, b.length);
 
@@ -242,10 +247,10 @@ public class CompressionResponseStream
      * @exception IOException if an input/output error occurs
      */
     @Override
-	public void write(byte b[], int off, int len) throws IOException {
+    public void write(byte[] b, int off, int len) throws IOException {
 
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("write, bufferCount = " + bufferCount + " len = " + len + " off = " + off);
+	        LOGGER.info("write, bufferCount = {} len = {} off = {}", Integer.valueOf(bufferCount), Integer.valueOf(len), Integer.valueOf(off));
         }
 
         if (closed)
@@ -275,18 +280,18 @@ public class CompressionResponseStream
         writeToGZip(b, off, len);
     }
 
-    public void writeToGZip(byte b[], int off, int len) throws IOException {
+    public void writeToGZip(byte[] b, int off, int len) throws IOException {
 
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("writeToGZip, len = " + len);
+	        	LOGGER.info("writeToGZip, len = {}", Integer.valueOf(len));
         }
         if (gzipstream == null) {
             if (debug > 1) {
-            	UtilImpl.LOGGER.info("new GZIPOutputStream");
+            	LOGGER.info("new GZIPOutputStream");
             }
             if (response.isCommitted()) {
                 if (debug > 1)
-                	UtilImpl.LOGGER.info("Response already committed. Using original output stream");
+                	LOGGER.info("Response already committed. Using original output stream");
                 gzipstream = output;
             } else {
                 response.addHeader("Content-Encoding", "gzip");

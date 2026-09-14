@@ -1,5 +1,8 @@
 package org.skyve.impl.snapshot;
 
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
+
 import jakarta.annotation.Nullable;
 
 /**
@@ -7,14 +10,20 @@ import jakarta.annotation.Nullable;
  * This class can be used as a validator or converter of different client snapshot payload types.
  */
 public abstract class SnapshotAdapter {
+	// NB An instance member LOGGER is OK here as this is not Serializable
+	@SuppressWarnings("java:S116")
+	protected final Logger LOGGER = SkyveLoggerFactory.getLogger(getClass());
+
 	/**
 	 * SmartClient adapter.
 	 */
+	@SuppressWarnings("java:S2390") // parent class initialises concrete subclass instances by design
 	public static final SnapshotAdapter SMART_CLIENT = new SmartClientSnapshotAdapter();
 	
 	/**
 	 * Vue adapter.
 	 */
+	@SuppressWarnings("java:S2390") // parent class initialises concrete subclass instances by design
 	public static final SnapshotAdapter VUE = new VueSnapshotAdapter();
 	
 	/**

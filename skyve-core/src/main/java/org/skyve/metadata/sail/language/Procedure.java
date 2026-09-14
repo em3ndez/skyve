@@ -6,6 +6,7 @@ import java.util.List;
 import org.skyve.impl.util.XMLMetaData;
 import org.skyve.metadata.sail.language.step.Comment;
 import org.skyve.metadata.sail.language.step.Execute;
+import org.skyve.metadata.sail.language.step.Pause;
 import org.skyve.metadata.sail.language.step.TestFailure;
 import org.skyve.metadata.sail.language.step.TestSuccess;
 import org.skyve.metadata.sail.language.step.TestValue;
@@ -50,11 +51,31 @@ import jakarta.xml.bind.annotation.XmlElementRefs;
 import jakarta.xml.bind.annotation.XmlRootElement;
 import jakarta.xml.bind.annotation.XmlType;
 
+/**
+ * A reusable sequence of {@link Step} objects used as a before/after hook within
+ * an {@link Interaction} or {@link Automation}.
+ *
+ * <p>Procedures serve as setup and teardown blocks: the {@code before} procedure
+ * of an interaction runs before its main {@code method} steps; the {@code after}
+ * procedure runs unconditionally after. The same set of step types available in
+ * an interaction method body is available in a procedure.
+ *
+ * <p>JAXB-bound to the SAIL XML namespace; serialised as {@code <before>} or
+ * {@code <after>} elements within an {@link Automation} or {@link Interaction}.
+ *
+ * @see Interaction
+ * @see Automation
+ * @see Step
+ */
 @XmlType(namespace = XMLMetaData.SAIL_NAMESPACE)
 @XmlRootElement(namespace = XMLMetaData.SAIL_NAMESPACE)
 public class Procedure {
 	private List<Step> steps = new ArrayList<>();
 
+	/**
+	 * Returns the steps.
+	 * @return the result
+	 */
 	@XmlElementRefs({@XmlElementRef(type = Login.class),
 						@XmlElementRef(type = Logout.class),
 						@XmlElementRef(type = NavigateList.class),
@@ -91,6 +112,7 @@ public class Procedure {
 						@XmlElementRef(type = TestFailure.class),
 						@XmlElementRef(type = Comment.class),
 						@XmlElementRef(type = Execute.class),
+						@XmlElementRef(type = Pause.class),
 						@XmlElementRef(type = PushListContext.class),
 						@XmlElementRef(type = PushEditContext.class),
 						@XmlElementRef(type = PopContext.class),

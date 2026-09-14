@@ -20,7 +20,8 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 
-import org.skyve.impl.util.UtilImpl;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.http.HttpServletResponse;
@@ -37,6 +38,8 @@ import jakarta.servlet.http.HttpServletResponseWrapper;
 
 public class CompressionServletResponseWrapper extends HttpServletResponseWrapper {
 
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(CompressionServletResponseWrapper.class);
+
     // ----------------------------------------------------- Constructor
 
     /**
@@ -48,7 +51,7 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
         super(response);
         origResponse = response;
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("CompressionServletResponseWrapper constructor gets called");
+        	LOGGER.info("CompressionServletResponseWrapper constructor gets called");
         }
     }
 
@@ -65,13 +68,14 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
      * Descriptive information about this Response implementation.
      */
 
-    protected static final String info = "CompressionServletResponseWrapper";
+    protected static final String INFO = "CompressionServletResponseWrapper";
 
     /**
      * The ServletOutputStream that has been returned by
      * <code>getOutputStream()</code>, if any.
      */
 
+    @SuppressWarnings("resource")
     protected ServletOutputStream stream = null;
 
 
@@ -80,6 +84,7 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
      * <code>getWriter()</code>, if any.
      */
 
+    @SuppressWarnings("resource")
     protected PrintWriter writer = null;
 
     /**
@@ -106,7 +111,7 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
     @Override
 	public void setContentType(String contentType) {
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("setContentType to "+contentType);
+        	LOGGER.info("setContentType to {}", contentType);
         }
         this.contentType = contentType;
         origResponse.setContentType(contentType);
@@ -118,7 +123,7 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
      */
     public void setCompressionThreshold(int threshold) {
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("setCompressionThreshold to " + threshold);
+	        LOGGER.info("setCompressionThreshold to {}", Integer.valueOf(threshold));
         }
         this.threshold = threshold;
     }
@@ -138,17 +143,17 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
      *
      * @exception IOException if an input/output error occurs
      */
+    @SuppressWarnings("resource")
     public ServletOutputStream createOutputStream() throws IOException {
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("createOutputStream gets called");
+        	LOGGER.info("createOutputStream gets called");
         }
 
-        @SuppressWarnings("hiding")
-		CompressionResponseStream stream = new CompressionResponseStream(origResponse);
-        stream.setDebugLevel(debug);
-        stream.setBuffer(threshold);
+        CompressionResponseStream compressionStream = new CompressionResponseStream(origResponse);
+        compressionStream.setDebugLevel(debug);
+        compressionStream.setBuffer(threshold);
 
-        return stream;
+        return compressionStream;
 
     }
 
@@ -181,7 +186,7 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
     @Override
 	public void flushBuffer() throws IOException {
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("flush buffer @ CompressionServletResponseWrapper");
+        	LOGGER.info("flush buffer @ CompressionServletResponseWrapper");
         }
         ((CompressionResponseStream)stream).flush();
 
@@ -195,6 +200,7 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
      * @exception IOException if an input/output error occurs
      */
     @Override
+    @SuppressWarnings("resource")
 	public ServletOutputStream getOutputStream() throws IOException {
 
         if (writer != null)
@@ -203,7 +209,7 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
         if (stream == null)
             stream = createOutputStream();
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("stream is set to "+stream+" in getOutputStream");
+        	LOGGER.info("stream is set to {} in getOutputStream", stream);
         }
 
         return (stream);
@@ -218,6 +224,7 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
      * @exception IOException if an input/output error occurs
      */
     @Override
+    @SuppressWarnings("resource")
 	public PrintWriter getWriter() throws IOException {
 
         if (writer != null)
@@ -228,12 +235,11 @@ public class CompressionServletResponseWrapper extends HttpServletResponseWrappe
 
         stream = createOutputStream();
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("stream is set to "+stream+" in getWriter");
+        	LOGGER.info("stream is set to {} in getWriter", stream);
         }
-        //String charset = getCharsetFromContentType(contentType);
         String charEnc = origResponse.getCharacterEncoding();
         if (debug > 1) {
-        	UtilImpl.LOGGER.info("character encoding is " + charEnc);
+        	LOGGER.info("character encoding is {}", charEnc);
         }
         // HttpServletResponse.getCharacterEncoding() shouldn't return null
         // according the spec, so feel free to remove that "if"

@@ -3,12 +3,12 @@ package org.skyve.impl.web.service.smartclient;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.List;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.UUID;
-import java.util.logging.Level;
 
 import org.skyve.EXT;
 import org.skyve.content.MimeType;
@@ -25,12 +25,11 @@ import org.skyve.domain.messages.SecurityException;
 import org.skyve.domain.messages.SessionEndedException;
 import org.skyve.domain.messages.ValidationException;
 import org.skyve.domain.types.converters.Converter;
-import org.skyve.domain.types.converters.enumeration.DynamicEnumerationConverter;
 import org.skyve.impl.bind.BindUtil;
 import org.skyve.impl.cache.StateUtil;
 import org.skyve.impl.metadata.customer.CustomerImpl;
 import org.skyve.impl.metadata.model.document.DocumentImpl;
-import org.skyve.impl.metadata.model.document.field.ConvertableField;
+import org.skyve.impl.metadata.model.document.field.ConvertibleField;
 import org.skyve.impl.metadata.model.document.field.Enumeration;
 import org.skyve.impl.metadata.model.document.field.Field;
 import org.skyve.impl.persistence.AbstractPersistence;
@@ -39,6 +38,7 @@ import org.skyve.impl.util.ValidationUtil;
 import org.skyve.impl.web.AbstractWebContext;
 import org.skyve.impl.web.ServletConstants;
 import org.skyve.impl.web.UserAgent;
+import org.skyve.impl.web.WebErrorUtil;
 import org.skyve.impl.web.WebUtil;
 import org.skyve.metadata.MetaDataException;
 import org.skyve.metadata.controller.DownloadAction;
@@ -61,6 +61,11 @@ import org.skyve.metadata.view.View.ViewType;
 import org.skyve.util.Binder.TargetMetaData;
 import org.skyve.util.OWASP;
 import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
+import org.slf4j.Logger;
 
 import jakarta.servlet.ServletConfig;
 import jakarta.servlet.ServletException;
@@ -69,11 +74,27 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 
+/**
+ * Handles HTTP requests for this Skyve web endpoint.
+ */
 public class SmartClientEditServlet extends HttpServlet {
 	private static final long serialVersionUID = 1L;
 
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(SmartClientEditServlet.class);
+    private static final Logger BIZLET_LOGGER = Category.BIZLET.logger();
+
+    private static final String REQUEST_MALFORMED = "Request is malformed";
+	private static final String ENTERING_PRE_EXECUTE_WITH_NULL_PARENT = "Entering {}.preExecute: {}, {}, null, {}";
+	private static final String ENTERING_PRE_EXECUTE = "Entering {}.preExecute: {}, {}, {}, {}";
+	private static final String EXITING_PRE_EXECUTE = "Exiting {}.preExecute: {}";
+	private static final String ENTERING_PRE_RERENDER = "Entering {}.preRerender: {}, {}, {}";
+	private static final String EXITING_PRE_RERENDER = "Exiting {}.preRerender: {}";
+
 	private static Class<? extends SmartClientViewRenderer> MANIPULATOR_CLASS = null;
 	
+	/**
+	 * Initializes the servlet and resolves an optional custom SmartClient view renderer implementation.
+	 */
 	@Override
 	@SuppressWarnings("unchecked")
 	public void init(ServletConfig config) throws ServletException {
@@ -90,6 +111,21 @@ public class SmartClientEditServlet extends HttpServlet {
 		}
 	}
 	
+	/**
+	 * Creates a JSON manipulator for SmartClient view rendering/apply operations.
+	 *
+	 * @param user active user
+	 * @param module module containing the document
+	 * @param document document metadata
+	 * @param view view metadata
+	 * @param uxui active UX/UI profile name
+	 * @param bean bean bound to the view
+	 * @param editIdCounter base edit-id counter for generated component ids
+	 * @param createIdCounter base create-id counter for generated component ids
+	 * @param forApply whether the manipulator is for apply processing
+	 * @return configured JSON manipulator
+	 */
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	private static ViewJSONManipulator newManipulator(User user,
 														Module module, 
 														Document document, 
@@ -111,25 +147,41 @@ public class SmartClientEditServlet extends HttpServlet {
 		}
 	}
 	
+	/**
+	 * Handles SmartClient edit GET requests by delegating to the shared request processor.
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doGet(HttpServletRequest request, HttpServletResponse response) 
 	throws ServletException, IOException {
-		UtilImpl.LOGGER.info("SmartClientEdit - get....");
+		LOGGER.info("SmartClientEdit - get....");
 		processRequest(request, response);
 	}
 	
+	/**
+	 * Handles SmartClient edit POST requests by delegating to the shared request processor.
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
     protected void doPost(HttpServletRequest request, HttpServletResponse response) 
 	throws ServletException, IOException  {
-		UtilImpl.LOGGER.info("SmartClientEdit - post....");
+		LOGGER.info("SmartClientEdit - post....");
 		processRequest(request, response);
 	}
 	
 	// NB - Never throw ServletException as this will halt the SmartClient Relogin flow.
+	/**
+	 * Processes SmartClient edit requests and writes a JSON response.
+	 *
+	 * @param request inbound HTTP request
+	 * @param response outbound HTTP response
+	 * @throws IOException when writing the response fails
+	 */
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	private static void processRequest(HttpServletRequest request, HttpServletResponse response) 
 	throws IOException {
 		response.setContentType(MimeType.json.toString());
-        response.setCharacterEncoding(Util.UTF8);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.addHeader("Cache-control", "private,no-cache,no-store"); // never
 		response.addDateHeader("Expires", 0); // never
 
@@ -167,7 +219,7 @@ public class SmartClientEditServlet extends HttpServlet {
 			        	if (webContext == null) {
 			        		throw new ConversationEndedException(request.getLocale());
 			        	}
-			        	UtilImpl.LOGGER.info("USE OLD CONVERSATION!!!!");
+			        	LOGGER.info("USE OLD CONVERSATION!!!!");
 			            persistence = webContext.getConversation();
 			            persistence.setForThread();
 			        }
@@ -175,15 +227,15 @@ public class SmartClientEditServlet extends HttpServlet {
 			            // Create and inject any dependencies
 						webContext = new SmartClientWebContext(UUID.randomUUID().toString(), request);
 
-			    		UtilImpl.LOGGER.info("START NEW CONVERSATION!!!!");
+			    		LOGGER.info("START NEW CONVERSATION!!!!");
 			            persistence = AbstractPersistence.get();
 			            persistence.evictAllCached();
 			            webContext.setConversation(persistence);
 			    	}
 			        webContext.setAction(OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.ACTION_NAME))));
 			
-					UxUi uxui = UserAgent.getUxUi(request);
-					UtilImpl.LOGGER.info("UX/UI = " + uxui.getName());
+					UxUi uxui = UserAgent.getSelection(request).getUxUi();
+					LOGGER.info("UX/UI = {}", uxui.getName());
 					
 			    	persistence.begin();
 			    	Principal userPrincipal = request.getUserPrincipal();
@@ -212,7 +264,7 @@ public class SmartClientEditServlet extends HttpServlet {
 					String bizId = OWASP.sanitise(Sanitisation.text, (String) parameters.get(Bean.DOCUMENT_ID));
 					
 					// the bean in the web context - the conversation context
-			    	Bean contextBean = webContext.getCurrentBean();
+			    	Bean contextBean = webContext.getNullableCurrentBean();
 	
 			    	// the bean pointed to by the form binding
 			    	Bean formBean = null;
@@ -275,9 +327,9 @@ public class SmartClientEditServlet extends HttpServlet {
 							(! ImplicitActionName.Save.toString().equals(actionName)) &&
 							(! ImplicitActionName.ZoomOut.toString().equals(actionName)) &&
 							(! ImplicitActionName.Print.toString().equals(actionName))) {
-						UtilImpl.LOGGER.info("ACTION " + formBinding + " : " + gridBinding);
+						LOGGER.info("ACTION {} : {}", formBinding, gridBinding);
 						if ((editIdCounter == null) || (createIdCounter == null)) {
-							throw new ServletException("Request is malformed");
+							throw new ServletException(REQUEST_MALFORMED);
 						}
 
 						SmartClientListServlet.checkCsrfToken(session, request, response, currentCsrfToken);
@@ -306,74 +358,73 @@ public class SmartClientEditServlet extends HttpServlet {
 					else {
 						ImplicitActionName action = (actionName == null) ? null : ImplicitActionName.valueOf(actionName);
 						switch (operation) {
-						case fetch:
-							UtilImpl.LOGGER.info("FETCH with binding " + formBinding);
-							if ((editIdCounter == null) || (createIdCounter == null)) {
-								throw new ServletException("Request is malformed");
-							}
-							fetch(webContext,
-					                user,
-									customer,
-									contextBean,
-									processModule,
-									processDocument,
-									formBinding,
-									source,
-									bizId,
-									Integer.parseInt(editIdCounter),
-									Integer.parseInt(createIdCounter),
-									action,
-									parameters,
-									persistence,
-									uxui.getName(),
-									pw);
-							break;
-						case add:
-						case update:
-							UtilImpl.LOGGER.info("ADD/UPDATE with binding " + formBinding + " : " + gridBinding);
-							if ((editIdCounter == null) || (createIdCounter == null)) {
-								throw new ServletException("Request is malformed");
-							}
-
-							SmartClientListServlet.checkCsrfToken(session, request, response, currentCsrfToken);
-							
-							apply(webContext,
-				                    user, 
-									customer, 
-									formModule,
-									formDocument,
-									formBean,
-									processDocument, 
-									processBean,
-									formBinding,
-									gridBinding,
-									source,
-									action,
-									null,
-									Integer.parseInt(editIdCounter),
-									Integer.parseInt(createIdCounter),
-									parameters, 
-									persistence,
-									uxui.getName(),
-									pw);
-							break;
-						case remove:
-							UtilImpl.LOGGER.info("REMOVE with binding " + formBinding);
-
-							SmartClientListServlet.checkCsrfToken(session, request, response, currentCsrfToken);
-
-							PersistentBean beanToDelete = (PersistentBean) processBean;
-							Bizlet<PersistentBean> bizletToDelete = ((DocumentImpl) processDocument).getBizlet(customer);
-							remove(webContext,
-									user,
-					                customer, 
-									processDocument, 
-									beanToDelete, 
-									bizletToDelete, 
-									persistence, 
-									pw);
-							break;
-						default:
+							case fetch:
+								LOGGER.info("FETCH with binding {}", formBinding);
+								if ((editIdCounter == null) || (createIdCounter == null)) {
+									throw new ServletException(REQUEST_MALFORMED);
+								}
+								fetch(webContext,
+						                user,
+										customer,
+										contextBean,
+										processModule,
+										processDocument,
+										formBinding,
+										source,
+										bizId,
+										Integer.parseInt(editIdCounter),
+										Integer.parseInt(createIdCounter),
+										action,
+										parameters,
+										persistence,
+										uxui.getName(),
+										pw);
+								break;
+							case add, update:
+								LOGGER.info("ADD/UPDATE with binding {} : {}", formBinding, gridBinding);
+								if ((editIdCounter == null) || (createIdCounter == null)) {
+									throw new ServletException(REQUEST_MALFORMED);
+								}
+	
+								SmartClientListServlet.checkCsrfToken(session, request, response, currentCsrfToken);
+								
+								apply(webContext,
+					                    user, 
+										customer, 
+										formModule,
+										formDocument,
+										formBean,
+										processDocument, 
+										processBean,
+										formBinding,
+										gridBinding,
+										source,
+										action,
+										null,
+										Integer.parseInt(editIdCounter),
+										Integer.parseInt(createIdCounter),
+										parameters, 
+										persistence,
+										uxui.getName(),
+										pw);
+								break;
+							case remove:
+								LOGGER.info("REMOVE with binding {}", formBinding);
+	
+								SmartClientListServlet.checkCsrfToken(session, request, response, currentCsrfToken);
+	
+								PersistentBean beanToDelete = (PersistentBean) processBean;
+								Bizlet<PersistentBean> bizletToDelete = ((DocumentImpl) processDocument).getBizlet(customer);
+								remove(webContext,
+										user,
+						                customer, 
+										processDocument, 
+										beanToDelete, 
+										bizletToDelete, 
+										persistence, 
+										pw);
+								break;
+							default:
 						}
 					}
 
@@ -385,12 +436,12 @@ public class SmartClientEditServlet extends HttpServlet {
 				}
 			}
 			catch (Throwable t) {
-			    t.printStackTrace();
 		    	if (persistence != null) {
 		    		persistence.rollback();
 		    	}
 	
-		    	produceErrorResponse(t, operation, true, pw);
+				String reference = WebErrorUtil.logUnexpectedAndGetReference(LOGGER, "SmartClient edit request failed for operation " + operation, t);
+				produceErrorResponse(t, operation, true, pw, reference);
 			}
 		    finally {
 	    	    // commit and close (its already been serialized to the conversations cache if needed)
@@ -400,18 +451,39 @@ public class SmartClientEditServlet extends HttpServlet {
 		    }
 		}
 	}
-    
+
 	/**
 	 * Pump out error text for smart client pages.
-	 * @param t	The exception.
-	 * @param operation	fetch, add, remove or update.
-	 * @param includeBindings	Only edit views can use the bindings available in the error messages.
-	 * 							If bindings are included for errors generated from listgrids operations, no errors are shown
-	 * @param pw	To append to.
+	 * 
+	 * @param t The exception.
+	 * @param operation fetch, add, remove or update.
+	 * @param includeBindings Only edit views can use the bindings available in the error messages.
+	 *        If bindings are included for errors generated from listgrids operations, no errors are shown
+	 * @param pw To append to.
 	 */
 	static void produceErrorResponse(Throwable t, Operation operation, boolean includeBindings, PrintWriter pw) {
-		if (t instanceof MessageException) {
-			List<Message> ms = ((MessageException) t).getMessages();
+		String reference = null;
+		if (! (t instanceof MessageException)) {
+			reference = WebErrorUtil.logUnexpectedAndGetReference(LOGGER, "SmartClient error response generated without catch context", t);
+		}
+		produceErrorResponse(t, operation, includeBindings, pw, reference);
+	}
+
+	/**
+	 * Pump out error text for smart client pages.
+	 * 
+	 * @param t The exception.
+	 * @param operation fetch, add, remove or update.
+	 * @param includeBindings Only edit views can use the bindings available in the error messages. If bindings
+	 *        are included for errors generated from listgrids operations, no errors are shown
+	 * @param pw To append to.
+	 * @param reference If the error is unexpected, this is the reference logged against it, to help with support.
+	 *        This will be null for expected errors (ie MessageExceptions) as these are already logged at the
+	 *        point they are thrown.
+	 */
+	static void produceErrorResponse(Throwable t, Operation operation, boolean includeBindings, PrintWriter pw, String reference) {
+		if (t instanceof MessageException me) {
+			List<Message> ms = me.getMessages();
 			
     		// We need keys to send a -4 message back
 	    	StringBuilder sb = new StringBuilder(128);
@@ -436,35 +508,36 @@ public class SmartClientEditServlet extends HttpServlet {
             if (Operation.fetch.equals(operation)) {
                 pw.append("\"startRow\":0,\"endRow\":0,\"totalRows\":0,");
             }
-            pw.append("\"data\":\"An error occured while processing your request.<br/>");
-
-            String message = t.getMessage();
-            if (message != null) {
-                pw.append(OWASP.escapeJsString(message)).append('"');
-            }
-            else {
-                pw.append("no error message...\"");
-            }
+            pw.append("\"data\":\"");
+            pw.append(WebErrorUtil.escapeJsStringWithHtmlFormatting(WebErrorUtil.genericMessage(reference))).append('"');
     	}
 
     	pw.append("}}");
 	}
 	
+	/**
+	 * Appends a formatted HTML list of messages to the response payload.
+	 *
+	 * @param synopsis leading summary text
+	 * @param ms messages to render
+	 * @param pw response writer
+	 */
 	static void appendErrorText(String synopsis, List<Message> ms, PrintWriter pw) {
     	pw.append(synopsis).append("<br/><ul>");
     	for (Message m : ms) {
 	    	pw.append("<li>");
-	        pw.append(OWASP.escapeJsString(m.getText()));
+	        pw.append(OWASP.escapeJsStringWithHtmlFormatting(m.getText()));
 	        pw.append("</li>");
     	}
     	pw.append("</ul>");
 	}
 
     /**
-     * 
-     * @param e
-     * @param sb
-     * @return if there are any keys in the message
+	 * Appends validation errors keyed by sanitised bindings.
+	 *
+	 * @param ms validation messages to inspect
+	 * @param sb JSON fragment builder receiving errors
+	 * @return {@code true} when at least one bound validation error exists
      */
     private static boolean pumpOutValidationErrors(List<Message> ms, StringBuilder sb) {
     	boolean result = false;
@@ -474,14 +547,7 @@ public class SmartClientEditServlet extends HttpServlet {
 	    		result = true;
 	    		// no '.' or '[' or ']' allowed in JSON identifiers
 	    		sb.append('"').append(BindUtil.sanitiseBinding(binding)).append("\":\"");
-	    		String message = m.getText();
-	    		if (message == null) {
-	    			sb.append("An error has occurred");
-	    		}
-	    		else {
-		    		sb.append(OWASP.escapeJsString(m.getText()));
-	    		}
-	    		sb.append("\",");
+			sb.append(OWASP.escapeJsStringWithHtmlFormatting(OWASP.escapeHtml(m.getText()))).append("\",");
 	    	}
     	}
     	
@@ -489,6 +555,28 @@ public class SmartClientEditServlet extends HttpServlet {
     }
     
 
+	/**
+	 * Fetches and prepares bean/view state for SmartClient edit responses.
+	 *
+	 * @param webContext active web conversation context
+	 * @param user active user
+	 * @param customer active customer metadata
+	 * @param contextBean current conversation bean
+	 * @param processModule module for the requested operation
+	 * @param processDocument document for the requested operation
+	 * @param formBinding form binding path, or {@code null}
+	 * @param source rerender source id, or {@code null}
+	 * @param bizId target business id, or {@code null}
+	 * @param editIdCounter base edit-id counter for generated component ids
+	 * @param createIdCounter base create-id counter for generated component ids
+	 * @param action implicit action, or {@code null}
+	 * @param parameters request parameters map
+	 * @param persistence active persistence context
+	 * @param uxui active UX/UI profile name
+	 * @param pw response writer
+	 * @throws Exception when fetch processing fails
+	 */
+	@SuppressWarnings({"java:S107", "java:S3776", "java:S6541"}) // Long parameter list preserves the existing framework/API contract; complexity OK
 	private static void fetch(AbstractWebContext webContext,
 			                    User user,
 		    					Customer customer,
@@ -509,6 +597,7 @@ public class SmartClientEditServlet extends HttpServlet {
 		final CustomerImpl internalCustomer = (CustomerImpl) customer;
 		final Bizlet<Bean> processBizlet = ((DocumentImpl) processDocument).getBizlet(customer);
     	Bean processBean = null;
+    	RequestKey key = null;
     	
     	if (formBinding == null) { // top level
 	    	if (bizId == null) { // new instance
@@ -526,23 +615,27 @@ public class SmartClientEditServlet extends HttpServlet {
 	    							uxui);
 	    		
 	    		if (action == null) { // callbacks not fired after a zoom out on the parent view post
+					key = RequestKey.create(processDocument);
+
 					boolean vetoed = internalCustomer.interceptBeforePreExecute(ImplicitActionName.New, processBean, null, webContext);
 					if (! vetoed) {
 						if (processBizlet != null) {
-							if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preExecute", "Entering " + processBizlet.getClass().getName() + ".preExecute: " + ImplicitActionName.New + ", " + processBean + ", null, " + webContext);
+							if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_EXECUTE_WITH_NULL_PARENT, processBizlet.getClass().getName(), ImplicitActionName.New, processBean, webContext);
 			    			processBean = processBizlet.preExecute(ImplicitActionName.New, processBean, null, webContext);
-			    			if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preExecute", "Exiting " + processBizlet.getClass().getName() + ".preExecute: " + processBean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_EXECUTE, processBizlet.getClass().getName(), processBean);
 						}
 						internalCustomer.interceptAfterPreExecute(ImplicitActionName.New, processBean, null, webContext);
 					}
 	    		}
 	    		else if (source != null) { // rerender event
+					key = RequestKey.rerender(processDocument);
+
 					boolean vetoed = internalCustomer.interceptBeforePreRerender(source, processBean, webContext);
 					if (! vetoed) {
 						if (processBizlet != null) {
-							if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preRerender", "Entering " + processBizlet.getClass().getName() + ".preRerender: " + source + ", " + processBean + ", " + webContext);
+							if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_RERENDER, processBizlet.getClass().getName(), source, processBean, webContext);
 			    			processBizlet.preRerender(source, processBean, webContext);
-			    			if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preRerender", "Exiting " + processBizlet.getClass().getName() + ".preRerender: " + processBean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_RERENDER, processBizlet.getClass().getName(), processBean);
 						}
 						internalCustomer.interceptAfterPreRerender(source, processBean, webContext);
 					}
@@ -564,23 +657,27 @@ public class SmartClientEditServlet extends HttpServlet {
 	    		}
 
 	    		if (action == null) { // callbacks not fired after a zoom out on the parent view post
+					key = RequestKey.edit(processDocument);
+
 					boolean vetoed = internalCustomer.interceptBeforePreExecute(ImplicitActionName.Edit, processBean, null, webContext);
 					if (! vetoed) {
 						if (processBizlet != null) {
-							if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preExecute", "Entering " + processBizlet.getClass().getName() + ".preExecute: " + ImplicitActionName.Edit + ", " + processBean + ", null, " + webContext);
+							if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_EXECUTE_WITH_NULL_PARENT, processBizlet.getClass().getName(), ImplicitActionName.Edit, processBean, webContext);
 			    			processBean = processBizlet.preExecute(ImplicitActionName.Edit, processBean, null, webContext);
-			    			if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preExecute", "Exiting " + processBizlet.getClass().getName() + ".preExecute: " + processBean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_EXECUTE, processBizlet.getClass().getName(), processBean);
 						}
 						internalCustomer.interceptAfterPreExecute(ImplicitActionName.Edit, processBean, null, webContext);
 					}
 	    		}
 	    		else if (source != null) { // rerender event
+					key = RequestKey.rerender(processDocument);
+
 					boolean vetoed = internalCustomer.interceptBeforePreRerender(source, processBean, webContext);
 					if (! vetoed) {
 						if (processBizlet != null) {
-							if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preRerender", "Entering " + processBizlet.getClass().getName() + ".preRerender: " + source + ", " + processBean + ", " + webContext);
+							if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_RERENDER, processBizlet.getClass().getName(), source, processBean, webContext);
 			    			processBizlet.preRerender(source, processBean, webContext);
-			    			if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preRerender", "Exiting " + processBizlet.getClass().getName() + ".preRerender: " + processBean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_RERENDER, processBizlet.getClass().getName(), processBean);
 						}
 						internalCustomer.interceptAfterPreRerender(source, processBean, webContext);
 					}
@@ -605,7 +702,7 @@ public class SmartClientEditServlet extends HttpServlet {
     			Module contextModule = customer.getModule(contextBean.getBizModule());
     			Document contextDocument = contextModule.getDocument(customer, contextBean.getBizDocument());
     			TargetMetaData target = BindUtil.getMetaDataForBinding(customer, contextModule, contextDocument, formBinding);
-        		Attribute targetRelation = (target == null) ? null : target.getAttribute();
+        		Attribute targetRelation = target.getAttribute();
 
             	// check for create privilege if the collection is persistent and the collection document is persistent
             	if ((targetRelation != null) && targetRelation.isPersistent() && // collection is persistent
@@ -627,12 +724,14 @@ public class SmartClientEditServlet extends HttpServlet {
 
 	    		// call preExecute()
 	    		if (action == null) { // callbacks not fired after a zoom out on the parent view post
+					key = RequestKey.create(processDocument);
+
 					boolean vetoed = internalCustomer.interceptBeforePreExecute(ImplicitActionName.Add, processBean, parentBean, webContext);
 					if (! vetoed) {
 						if (processBizlet != null) {
-							if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preExecute", "Entering " + processBizlet.getClass().getName() + ".preExecute: " + ImplicitActionName.Add + ", " + processBean + ", " + parentBean + ", " + webContext);
+							if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_EXECUTE, processBizlet.getClass().getName(), ImplicitActionName.Add, processBean, parentBean, webContext);
 			    			processBean = processBizlet.preExecute(ImplicitActionName.Add, processBean, parentBean, webContext);
-			    			if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preExecute", "Exiting " + processBizlet.getClass().getName() + ".preExecute: " + processBean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_EXECUTE, processBizlet.getClass().getName(), processBean);
 						}
 						internalCustomer.interceptAfterPreExecute(ImplicitActionName.Add, processBean, parentBean, webContext);
 
@@ -646,6 +745,8 @@ public class SmartClientEditServlet extends HttpServlet {
 					}
 	    		}
 	    		else if (source != null) { // rerender event
+					key = RequestKey.rerender(processDocument);
+
 					boolean vetoed = internalCustomer.interceptBeforePreRerender(source, processBean, webContext);
 					if (! vetoed) {
 			    		// add the newInstance to the context bean before preRerender
@@ -657,15 +758,17 @@ public class SmartClientEditServlet extends HttpServlet {
 			    		}
 
 			    		if (processBizlet != null) {
-							if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preRerender", "Entering " + processBizlet.getClass().getName() + ".preRerender: " + source + ", " + processBean + ", " + webContext);
+							if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_RERENDER, processBizlet.getClass().getName(), source, processBean, webContext);
 			    			processBizlet.preRerender(source, processBean, webContext);
-			    			if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preRerender", "Exiting " + processBizlet.getClass().getName() + ".preRerender: " + processBean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_RERENDER, processBizlet.getClass().getName(), processBean);
 						}
 						internalCustomer.interceptAfterPreRerender(source, processBean, webContext);
 					}
 	    		}
 	    		else {
-		    		// add the newInstance to the context bean
+					key = RequestKey.create(processDocument);
+
+					// add the newInstance to the context bean
 		    		if (referenceValue instanceof List<?>) {
 		    			BindUtil.addElementToCollection(contextBean, formBinding, processBean);
 		    		}
@@ -686,23 +789,27 @@ public class SmartClientEditServlet extends HttpServlet {
     			}
     			
 	    		if (action == null) { // callbacks not fired after a zoom out on the parent view post
+					key = RequestKey.edit(processDocument);
+
 					boolean vetoed = internalCustomer.interceptBeforePreExecute(ImplicitActionName.Edit, processBean, parentBean, webContext);
 					if (! vetoed) {
 						if (processBizlet != null) {
-							if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preExecute", "Entering " + processBizlet.getClass().getName() + ".preExecute: " + ImplicitActionName.Edit + ", " + processBean + ", " + parentBean + ", " + webContext);
+							if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_EXECUTE, processBizlet.getClass().getName(), ImplicitActionName.Edit, processBean, parentBean, webContext);
 			    			processBean = processBizlet.preExecute(ImplicitActionName.Edit, processBean, parentBean, webContext);
-			    			if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preExecute", "Exiting " + processBizlet.getClass().getName() + ".preExecute: " + processBean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_EXECUTE, processBizlet.getClass().getName(), processBean);
 						}
 						internalCustomer.interceptAfterPreExecute(ImplicitActionName.Edit, processBean, parentBean, webContext);
 					}
 	    		}
 	    		else if (source != null) { // rerender event
+					key = RequestKey.rerender(processDocument);
+
 					boolean vetoed = internalCustomer.interceptBeforePreRerender(source, processBean, webContext);
 					if (! vetoed) {
 		    			if (processBizlet != null) {
-							if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preRerender", "Entering " + processBizlet.getClass().getName() + ".preRerender: " + source + ", " + processBean + ", " + webContext);
+							if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_RERENDER, processBizlet.getClass().getName(), source, processBean, webContext);
 			    			processBizlet.preRerender(source, processBean, webContext);
-			    			if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preRerender", "Exiting " + processBizlet.getClass().getName() + ".preRerender: " + processBean);
+								if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_RERENDER, processBizlet.getClass().getName(), processBean);
 		    			}
 						internalCustomer.interceptAfterPreRerender(source, processBean, webContext);
 					}
@@ -736,8 +843,8 @@ public class SmartClientEditServlet extends HttpServlet {
 			message.append(manipulator.toJSON(webContext, null));
 			message.append("]}}");
 			// append in one atomic operation so that if an error is thrown, the response isn't half-sent
-			pw.append(message);
-		}
+			Util.chunkCharsToWriter(message, pw);
+    	}
 		finally {
 			try {
 				postRender(internalCustomer, processBizlet, processBean, webContext);
@@ -745,16 +852,21 @@ public class SmartClientEditServlet extends HttpServlet {
 			finally {
 				// lastly put the conversation in the cache, after the response is sent
 				// and all lazy loading of domain objects has been realised
-				StateUtil.cacheConversation(webContext);
+				StateUtil.commitAndCacheConversation(webContext);
+
+				if (key != null) {
+					Monitoring.measure(key);
+				}
 			}
 		}
     }
     
-    /**
-     * Collect the request parameters filtering out system parameters unsanitising bindings and converting nulls etc
-     * @param request
-     * @return sorted map of parameters
-     */
+	/**
+	 * Collects request parameters, removing system keys and normalising values.
+	 *
+	 * @param request inbound HTTP request
+	 * @return sorted map of normalised parameters
+	 */
     public static SortedMap<String, Object> collectRequestParameters(HttpServletRequest request) {
     	SortedMap<String, Object> result = new TreeMap<>();
 		java.util.Enumeration<String> names = request.getParameterNames();
@@ -771,7 +883,7 @@ public class SmartClientEditServlet extends HttpServlet {
 				
 				// "null" can be sent by Smart Client
 				if (value != null) {
-					if ((value.length() == 0) || "null".equals(value)) {
+					if (value.isEmpty() || "null".equals(value)) {
 						value = null;
 					}
 				}
@@ -781,18 +893,20 @@ public class SmartClientEditServlet extends HttpServlet {
 		return result;
     }
 
-    /**
-     * Set the declared view parameters into its backing bean.
-     * @param customer
-     * @param user
-     * @param persistence
-     * @param processModule	The backing bean's module
-     * @param processDocument	The backing bean's document
-     * @param processBean	The backing bean
-     * @param parameters	The map of parameters to potentially apply
-     * @param uxui	Used to get the view
-     * @throws Exception
-     */
+	/**
+	 * Applies declared view parameters to a new backing bean instance.
+	 *
+	 * @param customer active customer metadata
+	 * @param user active user
+	 * @param persistence active persistence context
+	 * @param processModule backing bean module
+	 * @param processDocument backing bean document
+	 * @param processBean backing bean instance
+	 * @param parameters request parameters to apply
+	 * @param uxui UX/UI profile used to resolve the view
+	 * @throws Exception when parameter conversion or binding fails
+	 */
+    @SuppressWarnings({"java:S107", "java:S3776"}) // Long parameter list preserves the existing framework/API contract; complexity OK.
     public static void applyNewParameters(Customer customer, 
 	    									User user, 
 	    									AbstractPersistence persistence, 
@@ -822,58 +936,45 @@ public class SmartClientEditServlet extends HttpServlet {
 																				processModule, 
 																				processDocument, 
 																				parameterBinding);
-		    			if (target != null) {
-		    				Attribute attribute = target.getAttribute();
-		    				if (attribute != null) {
-			    				if ((attribute instanceof Association) && (parameterValue instanceof String)) {
-			    					// find the existing bean with retrieve
-			    					Document referenceDocument = target.getDocument().getRelatedDocument(customer, 
-																											attribute.getName());
-			    					Bean parameterBean = persistence.retrieve(referenceDocument, 
-																				(String) parameterValue);
-			    					// NB parameterBean can be null if it wasn't found in the retrieve above
-			    					if (parameterBean != null) {
-				    					if (! user.canReadBean(parameterBean.getBizId(), 
-				    											parameterBean.getBizModule(), 
-				    											parameterBean.getBizDocument(), 
-				    											parameterBean.getBizCustomer(), 
-				    											parameterBean.getBizDataGroupId(),
-				    											parameterBean.getBizUserId())) {
-				    						throw new SecurityException("this data", user.getName());
-				    					}
+	    				Attribute attribute = target.getAttribute();
+	    				if (attribute != null) {
+		    				if ((attribute instanceof Association) && (parameterValue instanceof String)) {
+		    					// find the existing bean with retrieve
+		    					Document referenceDocument = target.getDocument().getRelatedDocument(customer, 
+																										attribute.getName());
+		    					Bean parameterBean = persistence.retrieve(referenceDocument, 
+																			(String) parameterValue);
+		    					// NB parameterBean can be null if it wasn't found in the retrieve above
+		    					if (parameterBean != null) {
+			    					if (! user.canReadBean(parameterBean.getBizId(), 
+			    											parameterBean.getBizModule(), 
+			    											parameterBean.getBizDocument(), 
+			    											parameterBean.getBizCustomer(), 
+			    											parameterBean.getBizDataGroupId(),
+			    											parameterBean.getBizUserId())) {
+			    						throw new SecurityException("this data", user.getName());
 			    					}
-			    					parameterValue = parameterBean;
-			    				}
-			    				else {
-				    				// Determine the type and converter of the parameter
-				    				Converter<?> converter = null;
-				    	    		Class<?> type = String.class;
-
-				    	    		if (attribute instanceof Enumeration) {
-				    					Enumeration e = (Enumeration) attribute;
-				    					e = e.getTarget();
-				    					if (e.isDynamic()) {
-				    						converter = new DynamicEnumerationConverter(e);
-				    					}
-				    					else {
-				    						type = e.getEnum();
-				    					}
-									}
-									else if (attribute instanceof Field) {
-										type = attribute.getAttributeType().getImplementingType();
-									}
-
-				    	    		if (attribute instanceof ConvertableField) {
-										ConvertableField field = (ConvertableField) attribute;
-										converter = field.getConverterForCustomer(customer);
-									}
-				    	    		
-				    	    		if (type != null) {
-				    	    			parameterValue = BindUtil.fromString(customer, converter, type, parameterValue.toString());
-				    	    		}
-			    				}
+		    					}
+		    					parameterValue = parameterBean;
 		    				}
-		    			}
+		    				else {
+			    				// Determine the type and converter of the parameter
+			    				Converter<?> converter = null;
+			    	    		Class<?> type = String.class;
+
+								if (attribute instanceof Field) {
+									type = attribute.getImplementingType();
+				    	    		if (attribute instanceof Enumeration enumeration) {
+				    	    			converter = enumeration.getConverter();
+									}
+				    	    		else if (attribute instanceof ConvertibleField convertible) {
+										converter = convertible.getConverterForCustomer(customer);
+									}
+								}
+			    	    		
+		    	    			parameterValue = BindUtil.fromString(customer, converter, type, parameterValue.toString());
+		    				}
+	    				}
 	    			}
 	    			
 	    			// For the new parameters on the target edit view, set the value of the boundTo
@@ -884,6 +985,31 @@ public class SmartClientEditServlet extends HttpServlet {
 		}
     }
     
+	/**
+	 * Applies request changes and executes action/rerender/save flows.
+	 *
+	 * @param webContext active web conversation context
+	 * @param user active user
+	 * @param customer active customer metadata
+	 * @param formModule module of the form bean
+	 * @param formDocument document of the form bean
+	 * @param formBean form bean instance
+	 * @param processDocument document being processed
+	 * @param processBean bean being processed
+	 * @param formBinding response binding context
+	 * @param gridBinding grid binding context, or {@code null}
+	 * @param source rerender source id, or {@code null}
+	 * @param implicitAction implicit action, or {@code null}
+	 * @param customActionName custom action name, or {@code null}
+	 * @param editIdCounter base edit-id counter for generated component ids
+	 * @param createIdCounter base create-id counter for generated component ids
+	 * @param parameters request parameters map
+	 * @param persistence active persistence context
+	 * @param uxui active UX/UI profile name
+	 * @param pw response writer
+	 * @throws Exception when apply processing fails
+	 */
+	@SuppressWarnings({"java:S107", "java:S3776", "java:S6541"}) // Long parameter list preserves the existing framework/API contract; complexity OK
 	private static void apply(AbstractWebContext webContext,
 		                        User user,
 		    					Customer customer,
@@ -933,6 +1059,7 @@ public class SmartClientEditServlet extends HttpServlet {
 		
 		// if we need to redirect once the XHR response is received by the browser, this will be not null
 		String redirectUrl = null;
+		RequestKey key = null;
 		
 		if (implicitAction == null) { // not an implicit action
 			if (mutableCustomActionName != null) { // a custom action
@@ -966,6 +1093,8 @@ public class SmartClientEditServlet extends HttpServlet {
 																processBean.getBizId());
 				}
 				else if (serverSideAction != null) { // server-side action
+					key = RequestKey.action(processDocument, mutableCustomActionName);
+
 					boolean vetoed = internalCustomer.interceptBeforeServerSideAction(processDocument,
 																						mutableCustomActionName,
 																						processedBean, 
@@ -981,33 +1110,39 @@ public class SmartClientEditServlet extends HttpServlet {
 				}
 			}
 			else if (source != null) { // rerender event
+				key = RequestKey.rerender(processDocument);
+
 				boolean vetoed = internalCustomer.interceptBeforePreRerender(source, processedBean, webContext);
 				if (! vetoed) {
 					if (processBizlet != null) {
-						if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preRerender", "Entering " + processBizlet.getClass().getName() + ".preRerender: " + source + ", " + processedBean + ", " + webContext);
+						if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_RERENDER, processBizlet.getClass().getName(), source, processedBean, webContext);
 						processBizlet.preRerender(source, processedBean, webContext);
-						if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preRerender", "Exiting " + processBizlet.getClass().getName() + ".preRerender: " + processedBean);
+						if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_RERENDER, processBizlet.getClass().getName(), processedBean);
 					}
 					internalCustomer.interceptAfterPreRerender(source, processedBean, webContext);
 				}
 			}
 		}
 		else { // an implicit action
-			UtilImpl.LOGGER.info("PRE-EXECUTE on " + implicitAction);
+			LOGGER.info("PRE-EXECUTE on {}", implicitAction);
+			
+			key = RequestKey.action(processDocument, implicitAction.toString());
 
 			// Process pre-execute
 			boolean vetoed = internalCustomer.interceptBeforePreExecute(implicitAction, processedBean, null, webContext);
 			if (! vetoed) {
 				if (processBizlet != null) {
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preExecute", "Entering " + processBizlet.getClass().getName() + ".preExecute: " + implicitAction + ", " + processedBean + ", null, " + webContext);
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_EXECUTE_WITH_NULL_PARENT, processBizlet.getClass().getName(), implicitAction, processedBean, webContext);
 					processedBean = processBizlet.preExecute(implicitAction, processedBean, null, webContext);
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, processBizlet.getClass().getName(), "preExecute", "Exiting " + processBizlet.getClass().getName() + ".preExecute: " + processedBean);
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_EXECUTE, processBizlet.getClass().getName(), processedBean);
 				}
 				internalCustomer.interceptAfterPreExecute(implicitAction, processedBean, null, webContext);
 			}
 
 			// We are zooming out, so run the required validation and security checks
 			if (ImplicitActionName.ZoomOut.equals(implicitAction)) {
+				key = RequestKey.zoomOut(processDocument);
+
 				// We cannot do security tests at this point because
 				// ZoomOut is the only way out of the UI.
 				// Create privilege is checked at instantiation time - on the zoom in operation
@@ -1021,14 +1156,16 @@ public class SmartClientEditServlet extends HttpServlet {
 			// We are saving, so run security checks and save the bean
 			if ((formBinding == null) && (gridBinding == null) && // top level
 					(ImplicitActionName.OK.equals(implicitAction) || ImplicitActionName.Save.equals(implicitAction)) && // Save or OK pressed
-					(processedBean instanceof PersistentBean)) { // we have a persistent bean to apply
+					(processedBean instanceof PersistentBean persistentBean)) { // we have a persistent bean to apply
+				key = RequestKey.save(processDocument);
+				
 				if (processedBean.isNotPersisted() && (! user.canCreateDocument(processDocument))) {
 					throw new SecurityException("create this data", user.getName());
 				}
 				else if (processedBean.isPersisted() && (! user.canUpdateDocument(processDocument))) {
 					throw new SecurityException("update this data", user.getName());
 				}
-				processedBean = persistence.save(processDocument, (PersistentBean) processedBean);
+				processedBean = persistence.save(processDocument, persistentBean);
 			}
 		}
 		
@@ -1081,8 +1218,31 @@ public class SmartClientEditServlet extends HttpServlet {
 							createIdCounter,
 							redirectUrl,
 							pw);
+		
+		if (key != null) {
+			Monitoring.measure(key);
+		}
 	}
 
+	/**
+	 * Writes a successful SmartClient response payload for the current form state.
+	 *
+	 * @param webContext active web conversation context
+	 * @param user active user
+	 * @param internalCustomer internal customer metadata implementation
+	 * @param formModule form module
+	 * @param formDocument form document
+	 * @param formView form view metadata
+	 * @param uxui active UX/UI profile name
+	 * @param formBean form bean to render
+	 * @param formBizlet form bizlet, or {@code null}
+	 * @param editIdCounter base edit-id counter for generated component ids
+	 * @param createIdCounter base create-id counter for generated component ids
+	 * @param redirectUrl redirect URL for client follow-up, or {@code null}
+	 * @param pw response writer
+	 * @throws Exception when response rendering fails
+	 */
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	private static void pumpOutResponse(AbstractWebContext webContext,
 		                                    User user,
 		                                    CustomerImpl internalCustomer,
@@ -1117,7 +1277,7 @@ public class SmartClientEditServlet extends HttpServlet {
 			result.append("}}");
 
 			// append in one atomic operation so that if an error is thrown, the response isn't half-sent
-			pw.append(result);
+			Util.chunkCharsToWriter(result, pw);
 		}
 		finally {
 			try {
@@ -1126,11 +1286,25 @@ public class SmartClientEditServlet extends HttpServlet {
 			finally {
 				// lastly put the conversation in the cache, after the response is sent
 				// and all lazy loading of domain objects has been realised
-				StateUtil.cacheConversation(webContext);
+				StateUtil.commitAndCacheConversation(webContext);
 			}
 		}
 	}
 	
+	/**
+	 * Removes a persistent bean and writes a successful delete response.
+	 *
+	 * @param webContext active web conversation context
+	 * @param user active user
+	 * @param customer active customer metadata
+	 * @param processDocument document from which the bean is deleted
+	 * @param beanToDelete bean requested for deletion
+	 * @param bizlet document bizlet, or {@code null}
+	 * @param persistence active persistence context
+	 * @param pw response writer
+	 * @throws Exception when delete processing fails
+	 */
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	private static void remove(AbstractWebContext webContext,
 								User user,
 		                        Customer customer,
@@ -1169,7 +1343,7 @@ public class SmartClientEditServlet extends HttpServlet {
 		}
 		
 		// Run preExecute after the copy is taken, in case we rollback
-		UtilImpl.LOGGER.info("PRE-EXECUTE on " + ImplicitActionName.Delete);
+		LOGGER.info("PRE-EXECUTE on {}", ImplicitActionName.Delete);
 		CustomerImpl internalCustomer = (CustomerImpl) customer;
 		boolean vetoed = internalCustomer.interceptBeforePreExecute(ImplicitActionName.Delete, 
 																		persistentBeanToDelete, 
@@ -1177,12 +1351,12 @@ public class SmartClientEditServlet extends HttpServlet {
 																		webContext);
 		if (! vetoed) {
 			if (bizlet != null) {
-				if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preExecute", "Entering " + bizlet.getClass().getName() + ".preExecute: " + ImplicitActionName.Delete + ", " + persistentBeanToDelete + ", null, " + webContext);
+				if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(ENTERING_PRE_EXECUTE_WITH_NULL_PARENT, bizlet.getClass().getName(), ImplicitActionName.Delete, persistentBeanToDelete, webContext);
 				persistentBeanToDelete = bizlet.preExecute(ImplicitActionName.Delete, 
 															persistentBeanToDelete, 
 															null,
 															webContext);
-				if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preExecute", "Exiting " + bizlet.getClass().getName() + ".preExecute: " + persistentBeanToDelete);
+				if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info(EXITING_PRE_EXECUTE, bizlet.getClass().getName(), persistentBeanToDelete);
 			}
 			internalCustomer.interceptAfterPreExecute(ImplicitActionName.Delete, 
 														persistentBeanToDelete, 
@@ -1196,19 +1370,29 @@ public class SmartClientEditServlet extends HttpServlet {
 
 		try {
 			postRender(internalCustomer, bizlet, persistentBeanToDelete, webContext);
+			Monitoring.measure(RequestKey.delete(processDocument));
 		}
 		finally {
-			StateUtil.cacheConversation(webContext);
+			StateUtil.commitAndCacheConversation(webContext);
 		}
 	}
 	
+	/**
+	 * Executes post-render interceptors and bizlet callbacks.
+	 *
+	 * @param internalCustomer internal customer metadata implementation
+	 * @param bizlet bizlet instance, or {@code null}
+	 * @param bean rendered bean
+	 * @param webContext active web conversation context
+	 * @param <T> rendered bean type
+	 */
 	private static <T extends Bean> void postRender(CustomerImpl internalCustomer, Bizlet<T> bizlet, T bean, AbstractWebContext webContext) {
 		boolean vetoed = internalCustomer.interceptBeforePostRender(bean, webContext);
 		if (! vetoed) {
 			if (bizlet != null) {
-				if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postRender", "Entering " + bizlet.getClass().getName() + ".postRender: " + bean + ", " + webContext);
+				if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.postRender: {}, {}", bizlet.getClass().getName(), bean, webContext);
     			bizlet.postRender(bean, webContext);
-    			if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postRender", "Exiting " + bizlet.getClass().getName() + ".postRender: " + bean + ", " + webContext);
+    			if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.postRender: {}, {}", bizlet.getClass().getName(), bean, webContext);
 			}
 			internalCustomer.interceptAfterPostRender(bean, webContext);
 		}

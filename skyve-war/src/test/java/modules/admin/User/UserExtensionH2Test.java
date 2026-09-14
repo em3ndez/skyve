@@ -3,6 +3,8 @@ package modules.admin.User;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,12 +16,11 @@ import modules.admin.UserProxy.UserProxyExtension;
 import modules.admin.domain.User;
 import util.AbstractH2Test;
 
-public class UserExtensionH2Test extends AbstractH2Test {
-
+class UserExtensionH2Test extends AbstractH2Test {
 	private UserExtension bean;
 
 	@BeforeEach
-	public void setup() throws Exception {
+	void setup() {
 		DataBuilder db = new DataBuilder().fixture(FixtureType.crud);
 		bean = db.build(User.MODULE_NAME, User.DOCUMENT_NAME);
 		// create the test data
@@ -27,7 +28,7 @@ public class UserExtensionH2Test extends AbstractH2Test {
 	}
 
 	@Test
-	public void testToProxyCopiesExpectedAttributes() {
+	void testToProxyCopiesExpectedAttributes() {
 		// validate the test data
 		assertThat(bean.getContact(), is(notNullValue()));
 
@@ -47,10 +48,8 @@ public class UserExtensionH2Test extends AbstractH2Test {
 
 	@Test
 	@SuppressWarnings("boxing")
-	public void testToProxyDoesNotCreateDuplicates() throws Exception {
-		// validate the test data
-		assertThat(CORE.getPersistence().newDocumentQuery(User.MODULE_NAME, User.DOCUMENT_NAME).beanResults()
-				.size(), is(2));
+	void testToProxyDoesNotCreateDuplicates() {
+		int initalSize = CORE.getPersistence().newDocumentQuery(User.MODULE_NAME, User.DOCUMENT_NAME).beanResults().size();
 
 		// call the method under test
 		UserProxyExtension result = bean.toUserProxy();
@@ -58,7 +57,37 @@ public class UserExtensionH2Test extends AbstractH2Test {
 
 		// verify the result
 		assertThat(result, is(notNullValue()));
-		assertThat(CORE.getPersistence().newDocumentQuery(User.MODULE_NAME, User.DOCUMENT_NAME).beanResults()
-				.size(), is(2));
+		assertThat(CORE.getPersistence().newDocumentQuery(User.MODULE_NAME, User.DOCUMENT_NAME).beanResults().size(),
+					is(initalSize));
+	}
+
+	@Test
+	void testGetPasswordLastChangedCountryNameWithValidCode() {
+		bean.setPasswordLastChangedCountryCode("AU");
+		String result = bean.getPasswordLastChangedCountryName();
+		// Should return a non-null country name for a valid country code
+		assertNotNull(result);
+	}
+
+	@Test
+	void testOwningUserReturnsFalseWhenBizIdDoesNotMatchCurrentUser() {
+		// bean is a different user from the test runner's admin user
+		// owningUser() checks if CORE.getPersistence().getUser().getId() equals bean.getBizId()
+		// Since bean is a saved User, not the currently-running test user, this returns false
+		assertFalse(bean.owningUser());
+	}
+
+	@Test
+	void testBizKeyReturnsUserName() {
+		bean.setInactive(Boolean.FALSE);
+		String key = bean.bizKey();
+		// Should not start with INACTIVE
+		assertFalse(key.startsWith("INACTIVE"));
+	}
+
+	@Test
+	void testGetAssignedRolesReturnsListForPersistedUser() {
+		// Just call the method to ensure it doesn't throw and returns a list
+		assertNotNull(bean.getAssignedRoles());
 	}
 }

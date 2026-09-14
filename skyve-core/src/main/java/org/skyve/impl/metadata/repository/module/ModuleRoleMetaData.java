@@ -2,11 +2,15 @@ package org.skyve.impl.metadata.repository.module;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import org.skyve.impl.domain.types.jaxb.CDATAAdapter;
 import org.skyve.impl.metadata.repository.NamedMetaData;
+import org.skyve.impl.metadata.repository.PropertyMapAdapter;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.util.XMLMetaData;
+import org.skyve.metadata.DecoratedMetaData;
 
 import jakarta.xml.bind.annotation.XmlElement;
 import jakarta.xml.bind.annotation.XmlElementRef;
@@ -14,18 +18,31 @@ import jakarta.xml.bind.annotation.XmlElementRefs;
 import jakarta.xml.bind.annotation.XmlElementWrapper;
 import jakarta.xml.bind.annotation.XmlType;
 import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
-
-@XmlType(namespace = XMLMetaData.MODULE_NAMESPACE,
+/**
+ * JAXB-annotated descriptor for a {@code <role>} element in a module descriptor.
+ *
+ * <p>Defines a named security role with a description, a list of document
+ * privileges ({@link DocumentPrivilegeMetaData}), and a list of user-access
+ * entries.  Extends {@link NamedMetaData} to bind the role to its symbolic name.
+ *
+ * <p>Threading: not thread-safe.  Read-only after JAXB unmarshalling.
+ *
+ * @see DocumentPrivilegeMetaData
+ * @see ModuleRoleUserAccessMetaData
+ */@XmlType(namespace = XMLMetaData.MODULE_NAMESPACE,
 			name = "role",
-			propOrder = {"documentation", "description", "privileges", "accesses"})
-public class ModuleRoleMetaData extends NamedMetaData {
+			propOrder = {"documentation", "description", "privileges", "accesses", "properties"})
+public class ModuleRoleMetaData extends NamedMetaData implements DecoratedMetaData {
 	private static final long serialVersionUID = -7824222183005636350L;
 
 	private String documentation;
 	private String description;
 	private List<DocumentPrivilegeMetaData> privileges = new ArrayList<>();
 	private List<ModuleRoleUserAccessMetaData> accesses = new ArrayList<>();
-
+	
+	@XmlElement(namespace = XMLMetaData.MODULE_NAMESPACE)
+	@XmlJavaTypeAdapter(PropertyMapAdapter.class)
+	private Map<String, String> properties = new TreeMap<>();
 	
 	public String getDocumentation() {
 		return documentation;
@@ -64,5 +81,10 @@ public class ModuleRoleMetaData extends NamedMetaData {
 						@XmlElementRef(type = ModuleRoleContentUserAccessMetaData.class)})
 	public List<ModuleRoleUserAccessMetaData> getAccesses() {
 		return accesses;
+	}
+	
+	@Override
+	public Map<String, String> getProperties() {
+		return properties;
 	}
 }

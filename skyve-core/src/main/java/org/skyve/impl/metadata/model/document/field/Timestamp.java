@@ -7,9 +7,24 @@ import jakarta.xml.bind.annotation.XmlElement;
 import jakarta.xml.bind.annotation.XmlRootElement;
 import jakarta.xml.bind.annotation.XmlType;
 
+/**
+ * Document field type for audit-timestamp values with millisecond precision.
+ *
+ * <p>Stored as a {@code DATETIME} or {@code TIMESTAMP} column with millisecond
+ * resolution.  The domain type is {@link org.skyve.domain.types.Timestamp}.
+ * Typically used for {@code bizCreatedDateTime} and {@code bizUpdatedDateTime}
+ * audit columns.
+ *
+ * <p>Threading: not thread-safe.  Instances are populated during metadata loading
+ * and are read-only once placed in the repository cache.
+ *
+ * @see ConvertibleField
+ * @see org.skyve.domain.types.Timestamp
+ */
 @XmlType(namespace = XMLMetaData.DOCUMENT_NAMESPACE)
 @XmlRootElement(namespace = XMLMetaData.DOCUMENT_NAMESPACE)
-public class Timestamp extends ConvertableField {
+@SuppressWarnings("java:S110") // This inheritance-depth warning is ridiculous for intentional framework hierarchies.
+public class Timestamp extends ConvertibleField {
 	private static final long serialVersionUID = -5008213051812011630L;
 
 	private DateValidator validator;

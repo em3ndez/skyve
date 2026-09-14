@@ -9,8 +9,17 @@ import modules.admin.domain.ReportTemplate.GenerateExisting;
 import modules.admin.domain.ReportTemplate.ReportType;
 import modules.admin.domain.ReportTemplate.WizardState;
 
+/**
+ * Navigates forwards through the report template wizard
+ */
 public class Next implements ServerSideAction<ReportTemplateExtension> {
-
+	/**
+	 * Executes execute.
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @return the result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public ServerSideActionResult<ReportTemplateExtension> execute(ReportTemplateExtension bean, WebContext webContext)
 			throws Exception {

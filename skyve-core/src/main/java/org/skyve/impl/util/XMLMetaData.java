@@ -12,18 +12,16 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.StringReader;
 import java.io.StringWriter;
-import java.util.Arrays;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
+import java.util.Set;
 
-import javax.xml.XMLConstants;
 import javax.xml.transform.Result;
 import javax.xml.transform.stream.StreamResult;
 import javax.xml.validation.Schema;
-import javax.xml.validation.SchemaFactory;
 
 import org.dom4j.Attribute;
 import org.dom4j.CDATA;
@@ -31,10 +29,10 @@ import org.dom4j.Document;
 import org.dom4j.DocumentHelper;
 import org.dom4j.Element;
 import org.dom4j.Namespace;
+import org.dom4j.Node;
 import org.dom4j.QName;
 import org.dom4j.Visitor;
 import org.dom4j.VisitorSupport;
-import org.dom4j.io.SAXReader;
 import org.skyve.impl.metadata.repository.behaviour.ActionMetaData;
 import org.skyve.impl.metadata.repository.behaviour.BizletMetaData;
 import org.skyve.impl.metadata.repository.customer.CustomerMetaData;
@@ -45,6 +43,8 @@ import org.skyve.impl.metadata.repository.view.ViewMetaData;
 import org.skyve.metadata.MetaDataException;
 import org.skyve.metadata.sail.language.Automation;
 import org.skyve.util.Util;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 import org.xml.sax.SAXException;
 
 import jakarta.xml.bind.JAXBContext;
@@ -75,6 +75,8 @@ import jakarta.xml.bind.Unmarshaller;
  * Therefore we have to resort to post processing the output with DOM4J.
  */
 public class XMLMetaData {
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(XMLMetaData.class);
+
 	public static final String COMMON_NAMESPACE = "http://www.skyve.org/xml/common";
 	public static final String ROUTER_NAMESPACE = "http://www.skyve.org/xml/router";
 	public static final String CUSTOMER_NAMESPACE = "http://www.skyve.org/xml/customer";
@@ -85,8 +87,11 @@ public class XMLMetaData {
 	public static final String SAIL_NAMESPACE = "http://www.skyve.org/xml/sail";
 	public static final String CDATA_START_TAG = "<![CDATA[";
 	public static final String CDATA_END_TAG = "]]>";
+	private static final String XML_SUFFIX = ".xml";
 	public static final int CDATA_MIN_LENGTH = CDATA_START_TAG.length() + CDATA_END_TAG.length();
-	
+
+	private static final String CUSTOMER_OVERRIDDEN_PATH = "../../";
+			
 	private static final JAXBContext ROUTER_CONTEXT;
 	private static final Schema ROUTER_SCHEMA;
 
@@ -151,7 +156,7 @@ public class XMLMetaData {
 			StringWriter sos = new StringWriter(1024);
 			marshaller.marshal(router, sos);
 
-			Document document = new SAXReader().read(new StringReader(sos.toString()));
+			Document document = SecureDom4j.newSAXReader().read(new StringReader(sos.toString()));
 			Visitor visitor = new JAXBFixingVisitor(ROUTER_NAMESPACE);
 			document.accept(visitor);
 			return document.asXML();
@@ -167,7 +172,7 @@ public class XMLMetaData {
 		File f = new File(file);
 		try (FileInputStream fis = new FileInputStream(f)) {
 			try (BufferedInputStream bis = new BufferedInputStream(fis)) {
-				try (InputStreamReader isr = new InputStreamReader(bis, Util.UTF8)) {
+				try (InputStreamReader isr = new InputStreamReader(bis, StandardCharsets.UTF_8)) {
 					try (BufferedReader br = new BufferedReader(isr)) {
 						Unmarshaller unmarshaller = ROUTER_CONTEXT.createUnmarshaller();
 						unmarshaller.setSchema(ROUTER_SCHEMA);
@@ -203,12 +208,11 @@ public class XMLMetaData {
 			StringWriter sos = new StringWriter(1024);
 			marshaller.marshal(customer, sos);
 
-			Document document = new SAXReader().read(new StringReader(sos.toString()));
+			Document document = SecureDom4j.newSAXReader().read(new StringReader(sos.toString()));
 			Visitor visitor = new JAXBFixingVisitor(CUSTOMER_NAMESPACE);
 			document.accept(visitor);
 
-			String xml = cleanup(document.asXML());
-			return xml;
+			return cleanup(document.asXML());
 		}
 		catch (Exception e) {
 			throw new MetaDataException("Could not marshal customer " + customer.getName(), e);
@@ -234,13 +238,13 @@ public class XMLMetaData {
 		filePath.append("customers/").append(customer.getName()).append('/');
 		File file = new File(filePath.toString());
 		file.mkdirs();
-		filePath.append(customer.getName()).append(".xml");
+		filePath.append(customer.getName()).append(XML_SUFFIX);
 		file = new File(filePath.toString());
-		Util.LOGGER.info(String.format("Attempting to write %s.xml to %s", customer.getName(), file.getAbsolutePath()));
+		LOGGER.info("Attempting to write {}.xml to {}", customer.getName(), file.getAbsolutePath());
 
 		try (FileOutputStream fos = new FileOutputStream(file)) {
 			try (BufferedOutputStream bos = new BufferedOutputStream(fos)) {
-				try (OutputStreamWriter osw = new OutputStreamWriter(bos, Util.UTF8)) {
+				try (OutputStreamWriter osw = new OutputStreamWriter(bos, StandardCharsets.UTF_8)) {
 					try (BufferedWriter bw = new BufferedWriter(osw)) {
 						String contents = marshalCustomer(customer);
 						bw.write(contents);
@@ -260,7 +264,7 @@ public class XMLMetaData {
 		File f = new File(file);
 		try (FileInputStream fis = new FileInputStream(f)) {
 			try (BufferedInputStream bis = new BufferedInputStream(fis)) {
-				try (InputStreamReader isr = new InputStreamReader(bis, Util.UTF8)) {
+				try (InputStreamReader isr = new InputStreamReader(bis, StandardCharsets.UTF_8)) {
 					try (BufferedReader br = new BufferedReader(isr)) {
 						Unmarshaller unmarshaller = CUSTOMER_CONTEXT.createUnmarshaller();
 						unmarshaller.setSchema(CUSTOMER_SCHEMA);
@@ -298,12 +302,11 @@ public class XMLMetaData {
 			StringWriter sos = new StringWriter(1024);
 			marshaller.marshal(module, sos);
 
-			Document document = new SAXReader().read(new StringReader(sos.toString()));
+			Document document = SecureDom4j.newSAXReader().read(new StringReader(sos.toString()));
 			Visitor visitor = new JAXBFixingVisitor(MODULE_NAMESPACE);
 			document.accept(visitor);
 			
-			String xml = cleanup(document.asXML());
-			return xml;
+			return cleanup(document.asXML());
 		}
 		catch (Exception e) {
 			throw new MetaDataException("Could not marshal module " + module.getName(), e);
@@ -334,13 +337,13 @@ public class XMLMetaData {
 		filePath.append(module.getName()).append('/');
 		File file = new File(filePath.toString());
 		file.mkdirs();
-		filePath.append(module.getName()).append(".xml");
+		filePath.append(module.getName()).append(XML_SUFFIX);
 		file = new File(filePath.toString());
-		Util.LOGGER.info(String.format("Attempting to write module.xml to %s", file.getAbsolutePath()));
+		LOGGER.info("Attempting to write module.xml to {}", file.getAbsolutePath());
 
 		try (FileOutputStream fos = new FileOutputStream(file)) {
 			try (BufferedOutputStream bos = new BufferedOutputStream(fos)) {
-				try (OutputStreamWriter osw = new OutputStreamWriter(bos, Util.UTF8)) {
+				try (OutputStreamWriter osw = new OutputStreamWriter(bos, StandardCharsets.UTF_8)) {
 					try (BufferedWriter bw = new BufferedWriter(osw)) {
 						String contents = marshalModule(module, overridden);
 						bw.write(contents);
@@ -360,7 +363,7 @@ public class XMLMetaData {
 		File f = new File(file);
 		try (FileInputStream fis = new FileInputStream(f)) {
 			try (BufferedInputStream bis = new BufferedInputStream(fis)) {
-				try (InputStreamReader isr = new InputStreamReader(bis, Util.UTF8)) {
+				try (InputStreamReader isr = new InputStreamReader(bis, StandardCharsets.UTF_8)) {
 					try (BufferedReader br = new BufferedReader(isr)) {
 						Unmarshaller unmarshaller = MODULE_CONTEXT.createUnmarshaller();
 						unmarshaller.setSchema(MODULE_SCHEMA);
@@ -397,12 +400,11 @@ public class XMLMetaData {
 			StringWriter sos = new StringWriter(1024);
 			marshaller.marshal(document, sos);
 
-			Document doc = new SAXReader().read(new StringReader(sos.toString()));
+			Document doc = SecureDom4j.newSAXReader().read(new StringReader(sos.toString()));
 			Visitor visitor = new JAXBFixingVisitor(DOCUMENT_NAMESPACE);
 			doc.accept(visitor);
 
-			String xml = cleanup(doc.asXML());
-			return xml;
+			return cleanup(doc.asXML());
 		}
 		catch (Exception e) {
 			throw new MetaDataException("Could not marshal document " + document.getName(), e);
@@ -433,13 +435,13 @@ public class XMLMetaData {
 		filePath.append(document.getName()).append('/');
 		File file = new File(filePath.toString());
 		file.mkdirs();
-		filePath.append(document.getName()).append(".xml");
+		filePath.append(document.getName()).append(XML_SUFFIX);
 		file = new File(filePath.toString());
-		Util.LOGGER.info(String.format("Attempting to write document.xml to %s", file.getPath()));
+		LOGGER.info("Attempting to write document.xml to {}", file.getPath());
 
 		try (FileOutputStream fos = new FileOutputStream(file)) {
 			try (BufferedOutputStream bos = new BufferedOutputStream(fos)) {
-				try (OutputStreamWriter osw = new OutputStreamWriter(bos, Util.UTF8)) {
+				try (OutputStreamWriter osw = new OutputStreamWriter(bos, StandardCharsets.UTF_8)) {
 					try (BufferedWriter bw = new BufferedWriter(osw)) {
 						String contents = marshalDocument(document, overridden);
 						bw.write(contents);
@@ -459,7 +461,7 @@ public class XMLMetaData {
 		File f = new File(file);
 		try (FileInputStream fis = new FileInputStream(f)) {
 			try (BufferedInputStream bis = new BufferedInputStream(fis)) {
-				try (InputStreamReader isr = new InputStreamReader(bis, Util.UTF8)) {
+				try (InputStreamReader isr = new InputStreamReader(bis, StandardCharsets.UTF_8)) {
 					try (BufferedReader br = new BufferedReader(isr)) {
 						Unmarshaller unmarshaller = DOCUMENT_CONTEXT.createUnmarshaller();
 						unmarshaller.setSchema(DOCUMENT_SCHEMA);
@@ -493,14 +495,14 @@ public class XMLMetaData {
 			StringBuilder location = new StringBuilder(64);
 			location.append(BEHAVIOUR_NAMESPACE).append(' ');
 			if (customerOverridden) {
-				location.append("../../");
+				location.append(CUSTOMER_OVERRIDDEN_PATH);
 			}
 			location.append("../../../../schemas/behaviour.xsd");
 			marshaller.setProperty(Marshaller.JAXB_SCHEMA_LOCATION, location.toString());
 			StringWriter sos = new StringWriter(1024);
 			marshaller.marshal(bizlet, sos);
 
-			Document document = new SAXReader().read(new StringReader(sos.toString()));
+			Document document = SecureDom4j.newSAXReader().read(new StringReader(sos.toString()));
 			Visitor visitor = new JAXBFixingVisitor(BEHAVIOUR_NAMESPACE);
 			document.accept(visitor);
 			return document.asXML();
@@ -532,11 +534,11 @@ public class XMLMetaData {
 		file.mkdirs();
 		filePath.append(file.getName()).append("Bizlet.xml");
 		file = new File(filePath.toString());
-		Util.LOGGER.info(String.format("Attempting to write bizlet.xml to %s", file.getPath()));
+		LOGGER.info("Attempting to write bizlet.xml to {}", file.getPath());
 
 		try (FileOutputStream fos = new FileOutputStream(file)) {
 			try (BufferedOutputStream bos = new BufferedOutputStream(fos)) {
-				try (OutputStreamWriter osw = new OutputStreamWriter(bos, Util.UTF8)) {
+				try (OutputStreamWriter osw = new OutputStreamWriter(bos, StandardCharsets.UTF_8)) {
 					try (BufferedWriter bw = new BufferedWriter(osw)) {
 						String contents = marshalBizlet(bizlet, customerOverridden);
 						bw.write(contents);
@@ -556,7 +558,7 @@ public class XMLMetaData {
 		File f = new File(file);
 		try (FileInputStream fis = new FileInputStream(f)) {
 			try (BufferedInputStream bis = new BufferedInputStream(fis)) {
-				try (InputStreamReader isr = new InputStreamReader(bis, Util.UTF8)) {
+				try (InputStreamReader isr = new InputStreamReader(bis, StandardCharsets.UTF_8)) {
 					try (BufferedReader br = new BufferedReader(isr)) {
 						Unmarshaller unmarshaller = BIZLET_CONTEXT.createUnmarshaller();
 						unmarshaller.setSchema(BEHAVIOUR_SCHEMA);
@@ -590,14 +592,14 @@ public class XMLMetaData {
 			StringBuilder location = new StringBuilder(64);
 			location.append(BEHAVIOUR_NAMESPACE).append(' ');
 			if (customerOverridden) {
-				location.append("../../");
+				location.append(CUSTOMER_OVERRIDDEN_PATH);
 			}
 			location.append("../../../../schemas/behaviour.xsd");
 			marshaller.setProperty(Marshaller.JAXB_SCHEMA_LOCATION, location.toString());
 			StringWriter sos = new StringWriter(1024);
 			marshaller.marshal(action, sos);
 
-			Document document = new SAXReader().read(new StringReader(sos.toString()));
+			Document document = SecureDom4j.newSAXReader().read(new StringReader(sos.toString()));
 			Visitor visitor = new JAXBFixingVisitor(BEHAVIOUR_NAMESPACE);
 			document.accept(visitor);
 			return document.asXML();
@@ -631,13 +633,13 @@ public class XMLMetaData {
 		filePath.append("actions/");
 		File file = new File(filePath.toString());
 		file.mkdirs();
-		filePath.append(action.getName()).append(".xml");
+		filePath.append(action.getName()).append(XML_SUFFIX);
 		file = new File(filePath.toString());
-		Util.LOGGER.info(String.format("Attempting to write action.xml to %s", file.getPath()));
+		LOGGER.info("Attempting to write action.xml to {}", file.getPath());
 
 		try (FileOutputStream fos = new FileOutputStream(file)) {
 			try (BufferedOutputStream bos = new BufferedOutputStream(fos)) {
-				try (OutputStreamWriter osw = new OutputStreamWriter(bos, Util.UTF8)) {
+				try (OutputStreamWriter osw = new OutputStreamWriter(bos, StandardCharsets.UTF_8)) {
 					try (BufferedWriter bw = new BufferedWriter(osw)) {
 						String contents = marshalAction(action, customerOverridden);
 						bw.write(contents);
@@ -657,7 +659,7 @@ public class XMLMetaData {
 		File f = new File(file);
 		try (FileInputStream fis = new FileInputStream(f)) {
 			try (BufferedInputStream bis = new BufferedInputStream(fis)) {
-				try (InputStreamReader isr = new InputStreamReader(bis, Util.UTF8)) {
+				try (InputStreamReader isr = new InputStreamReader(bis, StandardCharsets.UTF_8)) {
 					try (BufferedReader br = new BufferedReader(isr)) {
 						Unmarshaller unmarshaller = ACTION_CONTEXT.createUnmarshaller();
 						unmarshaller.setSchema(BEHAVIOUR_SCHEMA);
@@ -691,7 +693,7 @@ public class XMLMetaData {
 			StringBuilder location = new StringBuilder(64);
 			location.append(VIEW_NAMESPACE).append(' ');
 			if (customerOverridden) {
-				location.append("../../");
+				location.append(CUSTOMER_OVERRIDDEN_PATH);
 			}
 			if (uxuiOverridden) {
 				location.append("../");
@@ -701,7 +703,7 @@ public class XMLMetaData {
 			StringWriter sos = new StringWriter(1024);
 			marshaller.marshal(view, sos);
 
-			Document document = new SAXReader().read(new StringReader(sos.toString()));
+			Document document = SecureDom4j.newSAXReader().read(new StringReader(sos.toString()));
 			Visitor visitor = new JAXBFixingVisitor(VIEW_NAMESPACE);
 			document.accept(visitor);
 			return document.asXML();
@@ -736,13 +738,13 @@ public class XMLMetaData {
 		filePath.append("views/");
 		File file = new File(filePath.toString());
 		file.mkdirs();
-		filePath.append(view.getName()).append(".xml");
+		filePath.append(view.getName()).append(XML_SUFFIX);
 		file = new File(filePath.toString());
-		Util.LOGGER.info(String.format("Attempting to write view.xml to %s", file.getPath()));
+		LOGGER.info("Attempting to write view.xml to {}", file.getPath());
 
 		try (FileOutputStream fos = new FileOutputStream(file)) {
 			try (BufferedOutputStream bos = new BufferedOutputStream(fos)) {
-				try (OutputStreamWriter osw = new OutputStreamWriter(bos, Util.UTF8)) {
+				try (OutputStreamWriter osw = new OutputStreamWriter(bos, StandardCharsets.UTF_8)) {
 					try (BufferedWriter bw = new BufferedWriter(osw)) {
 						String contents = marshalView(view, customerOverridden, uxuiOverridden);
 						bw.write(contents);
@@ -762,7 +764,7 @@ public class XMLMetaData {
 		File f = new File(file);
 		try (FileInputStream fis = new FileInputStream(f)) {
 			try (BufferedInputStream bis = new BufferedInputStream(fis)) {
-				try (InputStreamReader isr = new InputStreamReader(bis, Util.UTF8)) {
+				try (InputStreamReader isr = new InputStreamReader(bis, StandardCharsets.UTF_8)) {
 					try (BufferedReader br = new BufferedReader(isr)) {
 						Unmarshaller unmarshaller = VIEW_CONTEXT.createUnmarshaller();
 						unmarshaller.setSchema(VIEW_SCHEMA);
@@ -799,7 +801,7 @@ public class XMLMetaData {
 			StringWriter sos = new StringWriter(1024);
 			marshaller.marshal(automation, sos);
 
-			Document document = new SAXReader().read(new StringReader(sos.toString()));
+			Document document = SecureDom4j.newSAXReader().read(new StringReader(sos.toString()));
 			Visitor visitor = new JAXBFixingVisitor(VIEW_NAMESPACE);
 			document.accept(visitor);
 			return document.asXML();
@@ -814,7 +816,7 @@ public class XMLMetaData {
 		// We need to specifically mention UTF-8 to get this to happen in the adapter abomination below
 		try (FileInputStream fis = new FileInputStream(file)) {
 			try (BufferedInputStream bis = new BufferedInputStream(fis)) {
-				try (InputStreamReader isr = new InputStreamReader(bis, Util.UTF8)) {
+				try (InputStreamReader isr = new InputStreamReader(bis, StandardCharsets.UTF_8)) {
 					try (BufferedReader br = new BufferedReader(isr)) {
 						Unmarshaller unmarshaller = SAIL_CONTEXT.createUnmarshaller();
 						unmarshaller.setSchema(SAIL_SCHEMA);
@@ -855,9 +857,8 @@ public class XMLMetaData {
 	 */
 	private static Schema getSchema(String schemaFileName) 
 	throws JAXBException {
-		SchemaFactory sf = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
 		try {
-			return sf.newSchema(new File(schemaFileName));
+			return SecureDom4j.newSchemaFactory().newSchema(new File(schemaFileName));
 		}
 		catch (SAXException se) {
 			// this can only happen if there's a deployment error and the resource is missing.
@@ -884,6 +885,7 @@ public class XMLMetaData {
 		}
 
 		@Override
+		@SuppressWarnings("java:S3776") // Complexity OK
 		public void visit(Element node) {
 			Namespace ns = node.getNamespace();
 
@@ -910,20 +912,22 @@ public class XMLMetaData {
 			}
 
 			// detect any empty customer elements which require children
-			if (uri.equals(CUSTOMER_NAMESPACE)) {
-				if (node.getParent() == null) {
-					removeEmptyChildElements(node, new String[] { "textSearchRoles",
-																	"flagRoles",
-																	"switchModeRoles",
-																	"interceptors",
-																	"observers" });
-				}
+			if (uri.equals(CUSTOMER_NAMESPACE) && (node.getParent() == null)) {
+				removeEmptyChildElements(node, new String[] { "textSearchRoles",
+																"flagRoles",
+																"switchModeRoles",
+																"interceptors",
+																"observers" });
 			}
-
+			
 			// detect any empty module elements which require children
 			if (uri.equals(MODULE_NAMESPACE)) {
-				if (node.getParent() == null) {
+				Element parent = node.getParent();
+				if (parent == null) {
 					removeEmptyChildElements(node, new String[] { "jobs", "queries", "privileges" });
+				}
+				else if (parent.getName().equals("roles")) {
+					removeEmptyChildElements(node, new String[] { "privileges", "accesses" });
 				}
 			}
 
@@ -961,6 +965,17 @@ public class XMLMetaData {
 				}
 			}
 			
+			// detect any empty view elements which require children
+			if (uri.equals(VIEW_NAMESPACE)) {
+				Element parent = node.getParent();
+				if (parent == null) { // view element
+					removeEmptyChildElements(node, new String[] { "newParameters" });
+				}
+				else if (node.getName().equals("listGrid")) {
+					removeEmptyChildElements(node, new String[] { "onEditedHandlers", "onDeletedHandlers", "onSelectedHandlers" });
+				}
+			}
+
 			ListIterator<?> namespaces = node.additionalNamespaces().listIterator();
 			while (namespaces.hasNext()) {
 				Namespace additionalNamespace = (Namespace) namespaces.next();
@@ -981,48 +996,58 @@ public class XMLMetaData {
 
 			// Replace escaped characters within CDATA tags
 			String text = Util.processStringValue(node.getText());
-			if (text != null) {
-				if (text.startsWith(CDATA_START_TAG) && text.endsWith(CDATA_END_TAG)) {
-					text = text.substring(CDATA_START_TAG.length(), text.length() - CDATA_END_TAG.length());
-					text = text.replace("&amp;", "&")
-								.replace("&quot;", "\"")
-								.replace("&lt;", "<")
-								.replace("&gt;", ">");
-					CDATA cdata = DocumentHelper.createCDATA(text);
-					node.clearContent();
-					node.add(cdata);
-				}
+			if ((text != null) && 
+					text.startsWith(CDATA_START_TAG) && 
+					text.endsWith(CDATA_END_TAG)) {
+				text = text.substring(CDATA_START_TAG.length(), text.length() - CDATA_END_TAG.length());
+				text = text.replace("&amp;", "&")
+							.replace("&quot;", "\"")
+							.replace("&lt;", "<")
+							.replace("&gt;", ">");
+				CDATA cdata = DocumentHelper.createCDATA(text);
+				node.clearContent();
+				node.add(cdata);
 			}
 		}
-
+		
 		private static void removeDefaultAttributes(Element node, Map<String, Boolean> attributesToRemove) {
 			Iterator<?> attributes = node.attributes().iterator();
 			while (attributes.hasNext()) {
 				Attribute a = (Attribute) attributes.next();
 
-				if (attributesToRemove.keySet().contains(a.getName())) {
-					if (Boolean.valueOf(a.getValue()).equals(attributesToRemove.get(a.getName()))) {
-						attributes.remove();
-					}
+				if (attributesToRemove.keySet().contains(a.getName()) && 
+						Boolean.valueOf(a.getValue()).equals(attributesToRemove.get(a.getName()))) {
+					attributes.remove();
 				}
 			}
 		}
 
 		private static void removeEmptyChildElements(Element parent, String[] nodesToRemove) {
-			List<String> nodesToRemoveList = Arrays.asList(nodesToRemove);
+			Set<String> nodesToRemoveSet = Set.of(nodesToRemove);
 			
-			ListIterator<?> childNodes = parent.elements().listIterator();
+			ListIterator<Element> childNodes = parent.elements().listIterator();
 			while (childNodes.hasNext()) {
-				Element child = (Element) childNodes.next();
+				Element child = childNodes.next();
 
-				if (nodesToRemoveList.contains(child.getName())) {
-					if (child.isTextOnly() && child.elements().size() == 0) {
-						childNodes.remove();
-					}
+				if (nodesToRemoveSet.contains(child.getName()) && 
+						child.isTextOnly() &&
+						child.elements().isEmpty()) {
+					childNodes.remove();
 				}
 			}
+
+	        // If this element has no child elements, remove all text nodes
+	        if (parent.elements().isEmpty()) {
+				for (Iterator<Node> it = parent.nodeIterator(); it.hasNext();) {
+					Node node = it.next();
+					if (node.getNodeType() == Node.TEXT_NODE) {
+						it.remove();
+					}
+				}
+	        }
 		}
 	}
+	
 	
 	public static void main(String[] args) throws Exception {
 		JAXBContext jaxbContext = JAXBContext.newInstance(CustomerMetaData.class, 

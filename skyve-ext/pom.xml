@@ -4,7 +4,7 @@
 	<parent>
 		<groupId>org.skyve</groupId>
 		<artifactId>skyve-parent</artifactId>
-		<version>9.2.0-SNAPSHOT</version>
+		<version>10.0.0-SNAPSHOT</version>
 	</parent>
 	<artifactId>skyve-ext</artifactId>
 	
@@ -22,6 +22,12 @@
 			<groupId>org.skyve</groupId>
 			<artifactId>skyve-core</artifactId>
 			<version>${skyve.version}</version>
+			<scope>compile</scope>
+		</dependency>
+		<!-- Declared directly so this version wins dependency mediation in downstream projects over hibernate-spatial's transitive version -->
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
 			<scope>compile</scope>
 		</dependency>
 		<dependency>
@@ -51,14 +57,29 @@
 			<scope>compile</scope>
 		</dependency>
 		<dependency>
-			<groupId>commons-io</groupId>
-			<artifactId>commons-io</artifactId>
+			<groupId>net.sf.jasperreports</groupId>
+			<artifactId>jasperreports</artifactId>
 			<scope>compile</scope>
 		</dependency>
 		<dependency>
 			<groupId>net.sf.jasperreports</groupId>
-			<artifactId>jasperreports</artifactId>
+			<artifactId>jasperreports-pdf</artifactId>
 			<scope>compile</scope>
+		</dependency>
+		<dependency>
+			<groupId>net.sf.jasperreports</groupId>
+			<artifactId>jasperreports-excel-poi</artifactId>
+			<scope>compile</scope>
+		</dependency>
+		<dependency>
+			<groupId>net.sf.jasperreports</groupId>
+			<artifactId>jasperreports-charts</artifactId>
+			<scope>compile</scope>
+		</dependency>
+		<dependency>
+			<groupId>net.sf.jasperreports</groupId>
+			<artifactId>jasperreports-jdt</artifactId>
+			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.javassist</groupId>
@@ -143,17 +164,28 @@
 			<artifactId>cron-utils</artifactId>
 			<scope>compile</scope>
 		</dependency>
+		<dependency>
+		    <groupId>org.jsoup</groupId>
+		    <artifactId>jsoup</artifactId>
+		    <version>1.23.1</version>
+		</dependency>
 		<!-- For image markup -->
 		<dependency>
 			<groupId>org.apache.xmlgraphics</groupId>
 			<artifactId>batik-all</artifactId>
-			<version>1.17</version>
+			<scope>compile</scope>
 			<exclusions>
 				<exclusion>
 					<groupId>xml-apis</groupId>
 					<artifactId>xml-apis</artifactId>
 				</exclusion>
 			</exclusions>
+		</dependency>
+		<!-- xml-apis-ext provides org.w3c.dom.stylesheets/css needed by Batik but absent from the JDK module path -->
+		<dependency>
+			<groupId>xml-apis</groupId>
+			<artifactId>xml-apis-ext</artifactId>
+			<scope>compile</scope>
 		</dependency>
 		<dependency>
 			<groupId>com.azure</groupId>
@@ -163,14 +195,28 @@
 			<!-- This is an optional dependency and will need to be included in the pom of any project that wishes to use it. -->
 			<optional>true</optional>
 		</dependency>
-		<!-- For JSON parsing -->
 		<dependency>
-		    <groupId>net.minidev</groupId>
-		    <artifactId>json-smart</artifactId>
-		    <scope>compile</scope>
+			<groupId>org.apache.lucene</groupId>
+			<artifactId>lucene-core</artifactId>
+			<scope>compile</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.lucene</groupId>
+			<artifactId>lucene-queryparser</artifactId>
+			<scope>compile</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.lucene</groupId>
+			<artifactId>lucene-analysis-common</artifactId>
+			<scope>compile</scope>
 		</dependency>
 
 		<!-- Test dependencies -->
+		<dependency>
+			<groupId>org.eclipse.angus</groupId>
+			<artifactId>jakarta.mail</artifactId>
+			<scope>test</scope>
+		</dependency>
 		<dependency>
 			<groupId>org.junit.jupiter</groupId>
 			<artifactId>junit-jupiter-engine</artifactId>
@@ -184,6 +230,16 @@
 		<dependency>
 			<groupId>org.mockito</groupId>
 			<artifactId>mockito-core</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.mockito</groupId>
+			<artifactId>mockito-junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.hamcrest</groupId>
+			<artifactId>hamcrest</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>

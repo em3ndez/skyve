@@ -33,18 +33,45 @@ public class LoginServlet extends HttpServlet {
 	public static final String LOGIN_PATH = "/login";
 	public static final String LOGGED_OUT_PATH = "/loggedOut";
 	
+	/**
+	 * Processes HTTP GET requests for login and logged-out endpoints.
+	 *
+	 * @param request the servlet request
+	 * @param response the servlet response
+	 * @throws ServletException when request processing fails
+	 * @throws IOException when request forwarding fails
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doGet(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		processRequest(request, response);
 	}
 
+	/**
+	 * Processes HTTP POST requests for login and logged-out endpoints.
+	 *
+	 * @param request the servlet request
+	 * @param response the servlet response
+	 * @throws ServletException when request processing fails
+	 * @throws IOException when request forwarding fails
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doPost(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		processRequest(request, response);
 	}
 	
+	/**
+	 * Resolves the active customer context and forwards to customer-aware login pages.
+	 *
+	 * @param request the servlet request
+	 * @param response the servlet response
+	 * @throws ServletException when repository lookup or forwarding fails
+	 * @throws IOException when request forwarding fails
+	 */
+	@SuppressWarnings("java:S3776") // Readability and cohesiveness over cyclomatic complexity
 	private static void processRequest(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		String customerName = null;

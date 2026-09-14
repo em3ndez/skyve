@@ -1,12 +1,10 @@
 package org.skyve.impl.web.faces.actions;
 
-import java.util.logging.Level;
-
 import org.skyve.domain.PersistentBean;
 import org.skyve.domain.messages.Message;
 import org.skyve.domain.messages.OptimisticLockException;
-import org.skyve.domain.messages.SecurityException;
 import org.skyve.domain.messages.OptimisticLockException.OperationType;
+import org.skyve.domain.messages.SecurityException;
 import org.skyve.domain.messages.ValidationException;
 import org.skyve.impl.metadata.customer.CustomerImpl;
 import org.skyve.impl.metadata.model.document.DocumentImpl;
@@ -20,18 +18,39 @@ import org.skyve.metadata.model.document.Bizlet;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
 import org.skyve.metadata.user.User;
-import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
 import org.skyve.web.WebContext;
+import org.slf4j.Logger;
 
+/**
+ * Executes a Faces callback action within the current Skyve web context.
+ */
 public class DeleteAction extends FacesAction<Void> {
+    private static final Logger FACES_LOGGER = Category.FACES.logger();
+    private static final Logger BIZLET_LOGGER = Category.BIZLET.logger();
+
 	private FacesView facesView;
+	
+	/**
+	 * Creates a delete action for the current bean in the supplied view context.
+	 *
+	 * @param facesView the active Faces view state
+	 */
 	public DeleteAction(FacesView facesView) {
 		this.facesView = facesView;
 	}
 
+	/**
+	 * Deletes the current bean after permission checks, optimistic-lock validation, and pre-execute interception.
+	 *
+	 * @return {@code null}; this action mutates persistence and view state through side effects
+	 * @throws Exception when deletion cannot be completed
+	 */
 	@Override
 	public Void callback() throws Exception {
-		if (UtilImpl.FACES_TRACE) Util.LOGGER.info("DeleteAction");
+		if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("DeleteAction");
 
 		AbstractPersistence persistence = AbstractPersistence.get();
 		PersistentBean beanToDelete = (PersistentBean) ActionUtil.getTargetBeanForView(facesView);
@@ -75,9 +94,9 @@ public class DeleteAction extends FacesAction<Void> {
 		if (! vetoed) {
 			Bizlet<PersistentBean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 			if (bizlet != null) {
-				if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preExecute", "Entering " + bizlet.getClass().getName() + ".preExecute: " + ImplicitActionName.Delete + ", " + persistentBeanToDelete + ", null, " + ", " + webContext);
+				if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.preExecute: {}, {}, null, , {}", bizlet.getClass().getName(), ImplicitActionName.Delete, persistentBeanToDelete, webContext);
 				persistentBeanToDelete = bizlet.preExecute(ImplicitActionName.Delete, persistentBeanToDelete, null, webContext);
-				if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preExecute", "Exiting " + bizlet.getClass().getName() + ".preExecute: " + persistentBeanToDelete);
+				if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.preExecute: {}", bizlet.getClass().getName(), persistentBeanToDelete);
 			}
 			internalCustomer.interceptAfterPreExecute(ImplicitActionName.Delete, persistentBeanToDelete, null, webContext);
 
@@ -86,6 +105,8 @@ public class DeleteAction extends FacesAction<Void> {
 			// We want to call post render
 			facesView.setPostRender(bizlet, persistentBeanToDelete);
 		}
+		
+		Monitoring.measure(RequestKey.delete(document));
 		
 		return null;
 	}

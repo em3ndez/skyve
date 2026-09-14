@@ -89,6 +89,7 @@ class ReactListView extends ReactComponent {
 		fw.write("\t}\n\n");
 	}
 	
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void renderDataTable(FileWriter fw) throws IOException {
 		fw.write("\t\t\t<DataTable value={this.state.data}\n");
 		fw.write("\t\t\t\t\t\tselectionMode=\"single\"\n");
@@ -104,9 +105,9 @@ class ReactListView extends ReactComponent {
 				if (column.isHidden()) {
 					continue;
 				}
-				// don't show unprojected columns
-				if ((column instanceof MetaDataQueryProjectedColumn) && 
-						(! ((MetaDataQueryProjectedColumn) column).isProjected())) {
+				// show projected columns
+				if ((column instanceof MetaDataQueryProjectedColumn projectedColumn) && 
+						(! projectedColumn.isProjected())) {
 					continue;
 				}
 // TODO Fix				SmartClientQueryColumnDefinition def = SmartClientGenerateUtils.getQueryColumn(u, c, module, document, column, false);

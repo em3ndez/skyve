@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 
 import org.skyve.bizport.BizPortWorkbook;
@@ -18,17 +19,38 @@ import org.skyve.metadata.controller.BizExportAction;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
 import org.skyve.metadata.user.User;
-import org.skyve.util.Util;
+import org.skyve.util.OWASP;
 
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
+
+/**
+ * Handles HTTP requests for this Skyve web endpoint.
+ *
+ * <p>Servlet API override parameters are intentionally left unannotated because
+ * {@link HttpServlet} does not declare nullness constraints for them.
+ */
 public class BizportExportServlet extends HttpServlet {
 	private static final long serialVersionUID = 1L;
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(BizportExportServlet.class);
 
+	/**
+	 * Executes a BizPort export action for the current conversation and streams the resulting workbook.
+	 *
+	 * <p>This method restores the cached conversation, binds its persistence context to the current thread,
+	 * resolves the authenticated user, checks export-action permissions, executes pre/post interception hooks,
+	 * serializes the generated workbook, and writes the appropriate attachment response headers.
+	 *
+	 * <p>Side effects: mutates servlet response headers, may recache the conversation after successful export,
+	 * and writes a minimal HTML error response if export generation fails unexpectedly.
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	public void doGet(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		try (OutputStream out = response.getOutputStream()) {
@@ -83,13 +105,13 @@ public class BizportExportServlet extends HttpServlet {
 							switch (result.getFormat()) {
 								case xls:
 									response.setContentType(MimeType.excel.toString());
-									response.setCharacterEncoding(Util.UTF8);
-									response.setHeader("Content-Disposition", "attachment; filename=\"" + resourceName + "-export.xls\"");
+									response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+									response.setHeader("Content-Disposition", "attachment; filename=\"" + OWASP.sanitiseFileName(resourceName + "-export.xls") + '"');
 									break;
 								case xlsx:
 									response.setContentType(MimeType.xlsx.toString());
-									response.setCharacterEncoding(Util.UTF8);
-									response.setHeader("Content-Disposition", "attachment; filename=\"" + resourceName + "-export.xlsx\"");
+									response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+									response.setHeader("Content-Disposition", "attachment; filename=\"" + OWASP.sanitiseFileName(resourceName + "-export.xlsx") + '"');
 									break;
 								default:
 							}
@@ -101,32 +123,33 @@ public class BizportExportServlet extends HttpServlet {
 			    		response.setHeader("Cache-Control", "cache");
 			            response.setHeader("Pragma", "cache");
 			            response.addDateHeader("Expires", System.currentTimeMillis() + (60000)); // 1 minute
-						// The following allows partial requests which are useful for large media or downloading files with pause and resume functions.
-						response.setHeader("Accept-Ranges", "bytes");
 			
 			            out.write(bytes);
 			            out.flush();
 
 						// lastly put the conversation in the cache, after the response is sent
 						// and all lazy loading of domain objects has been realised
-						StateUtil.cacheConversation(webContext);
+						StateUtil.commitAndCacheConversation(webContext);
 					}
 					catch (InvocationTargetException e) {
 						throw e.getTargetException();
 					}
+				}
+				catch (Throwable t) {
+					persistence.rollback();
+					throw t;
 				}
 				finally {
 					persistence.commit(true);
 				}
 			}
 			catch (Throwable t) {
-				System.err.println("Problem generating the export - " + t.toString());
-				t.printStackTrace();
+				LOGGER.error("Problem generating the export", t);
 				response.setContentType(MimeType.html.toString());
-				response.setCharacterEncoding(Util.UTF8);
-				out.write("<html><head/><body><h3>".getBytes(Util.UTF8));
-				out.write("An error occured whilst processing your report.".getBytes(Util.UTF8));
-				out.write("</body></html>".getBytes(Util.UTF8));
+				response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+				out.write("<html><head/><body><h3>".getBytes(StandardCharsets.UTF_8));
+				out.write("An error occured whilst processing your report.".getBytes(StandardCharsets.UTF_8));
+				out.write("</body></html>".getBytes(StandardCharsets.UTF_8));
 			}
 		}
 	}

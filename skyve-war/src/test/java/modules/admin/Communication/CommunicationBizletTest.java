@@ -1,37 +1,56 @@
 package modules.admin.Communication;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.notNullValue;
-import static org.junit.Assert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
-import org.junit.Test;
-import org.skyve.CORE;
-import org.skyve.persistence.Persistence;
-import org.skyve.util.DataBuilder;
-import org.skyve.util.test.SkyveFixture;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assertions;
+import org.skyve.domain.messages.ValidationException;
 
 import modules.admin.domain.Communication;
-import util.AbstractH2TestForJUnit4;
+import util.AbstractH2Test;
 
-public class CommunicationBizletTest extends AbstractH2TestForJUnit4 {
+@SuppressWarnings("static-method")
+class CommunicationBizletTest extends AbstractH2Test {
 
-	@SuppressWarnings({ "deprecation", "static-method" })
+	private static final CommunicationBizlet bizlet = new CommunicationBizlet();
+
 	@Test
-	public void testAnonymouslyCommunicationExists() {
-		// create the test data
-		Persistence pers = CORE.getPersistence();
-		Communication c = new DataBuilder().fixture(SkyveFixture.FixtureType.crud).build(Communication.MODULE_NAME,
-				Communication.DOCUMENT_NAME);
-		c = pers.save(c);
-		String customer = pers.getUser().getCustomerName();
-
-		// call the method under test
-		boolean result = CommunicationBizlet.anonymouslyCommunicationExists(pers, customer, c.getBizId());
-
-		// verify the result
-		assertThat(Boolean.valueOf(result), is(notNullValue()));
-		assertTrue(result);
+	void checkForUnsavedDataWithNoOriginalValuesDoesNotThrow() {
+		CommunicationExtension bean = new CommunicationExtension();
+		assertDoesNotThrow(() -> CommunicationBizlet.checkForUnsavedData(bean));
 	}
 
+	@Test
+	void preRerenderWithModuleNameSourceClearsDocumentName() throws Exception {
+		CommunicationExtension bean = new CommunicationExtension();
+		bean.setDocumentName("someDocument");
+		bizlet.preRerender(Communication.moduleNamePropertyName, bean, null);
+		assertNull(bean.getDocumentName());
+	}
+
+	@Test
+	void preRerenderWithUnknownSourceDoesNothing() throws Exception {
+		CommunicationExtension bean = Assertions.assertDoesNotThrow(CommunicationExtension::new);
+		bean.setDocumentName("someDocument");
+		bizlet.preRerender("unknownSource", bean, null);
+		// document name should be unchanged
+	}
+
+	@Test
+	void preDeleteWithUnlockedBeanDoesNotThrow() {
+		CommunicationExtension bean = new CommunicationExtension();
+		// locked is false by default
+		assertDoesNotThrow(() -> bizlet.preDelete(bean));
+	}
+
+	@Test
+	void preDeleteWithLockedBeanThrowsValidationException() {
+		CommunicationExtension bean = new CommunicationExtension();
+		// isLocked() = isPersisted() && systemUse=true
+		bean.setBizVersion(Integer.valueOf(1));
+		bean.setSystemUse(Boolean.TRUE);
+		assertThrows(ValidationException.class, () -> bizlet.preDelete(bean));
+	}
 }

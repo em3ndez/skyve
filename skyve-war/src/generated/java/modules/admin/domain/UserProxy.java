@@ -7,6 +7,7 @@ import jakarta.xml.bind.annotation.XmlSchemaType;
 import jakarta.xml.bind.annotation.XmlTransient;
 import jakarta.xml.bind.annotation.XmlType;
 import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
+import modules.admin.Contact.ContactExtension;
 import modules.admin.UserProxy.UserProxyExtension;
 import org.skyve.CORE;
 import org.skyve.domain.messages.DomainException;
@@ -17,7 +18,8 @@ import org.skyve.impl.domain.types.jaxb.DateTimeMapper;
 /**
  * User
  * <br/>
- * A proxy version of the admin.User (without roles and groups etc) used for referencing.
+ * A proxy version of the admin.User (without roles and groups etc) used for referencing.<br
+			admin.User extends this document and is coincident (same tuple).
  * 
  * @navhas n contact 1 Contact
  * @stereotype "persistent"
@@ -69,7 +71,7 @@ public abstract class UserProxy extends AbstractPersistentBean {
 	 * <br/>
 	 * The contact details for the user.
 	 **/
-	private Contact contact = null;
+	private ContactExtension contact = null;
 
 	/**
 	 * Inactive
@@ -111,12 +113,6 @@ public abstract class UserProxy extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof UserProxy) && 
-					this.getBizId().equals(((UserProxy) o).getBizId()));
 	}
 
 	/**
@@ -161,7 +157,7 @@ public abstract class UserProxy extends AbstractPersistentBean {
 	 * {@link #contact} accessor.
 	 * @return	The value.
 	 **/
-	public Contact getContact() {
+	public ContactExtension getContact() {
 		return contact;
 	}
 
@@ -170,7 +166,7 @@ public abstract class UserProxy extends AbstractPersistentBean {
 	 * @param contact	The new value.
 	 **/
 	@XmlElement
-	public void setContact(Contact contact) {
+	public void setContact(ContactExtension contact) {
 		if (this.contact != contact) {
 			preset(contactPropertyName, contact);
 			this.contact = contact;

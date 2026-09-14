@@ -1,13 +1,33 @@
-# Architecure Document
+# Architecture
 
 
-## Open source attributes
+## Open-Source Attributes
 
 - Jakarta EE / Spring
    - use CDI or Spring for injection of Skyve services
-- XML meta-data driven
+- XML metadata-driven
     - Declarative instead of procedural.
     - Data/Domain model, user interfaces, routing, menu, security
+    - Static Validation
+		- DomainGenerator.validate() does the whole metadata for a customer
+		- For individual metadata files there are 2 levels of validation
+			- Validate the file in isolation
+				- ConvertibleMetaData implementations validate and convert themselves to their “runtime” equivalent.
+					- ActionMetaData
+					- BizletMetaData
+					- CustomerMetaData
+					- DocumentMetaData
+					- ModuleMetadata
+					- Router
+					- ViewMetaData
+            - Cross metadata validation of a file taking into account its dependencies
+				- ProvidedRepository provides 4 methods
+					- validateCustomerForGenerateDomain()
+					- validateDocumentForGenerateDomain()
+					- validateModuleForGenerateDomain()
+					- validateViewForGenerateDomain()
+                    - These cross metadata validations use the runtime equivalents to validate against.
+		- There is also ValidateMetaDataJob that can validate all customers asynchronously. This is fired one shot when skyve starts up.
 - Regularly pen tested
 - Declarative Role-based Security
     - more than page based
@@ -16,12 +36,12 @@
 - Abstracted types and relations
 - Wrangles hibernate usage
 - No HTML
-- No Javascript
+- No JavaScript
 - Spatial
     - Geometry is a primary type
     - Utilises database support where possible
     - Skyve Hibernate Dialects
-    - Exposes API to search and manipulate gemoetries
+    - Exposes API to search and manipulate geometries
 - Content Management / Federated text search
     - Text extraction of attachments
     - Transactional content relations with data
@@ -97,18 +117,23 @@
 - Shaped data payloads
 - Client and server-side events.
 - Change tracking
-- Defined lifecycle and callbacks for UI and domain events.
+    - Defined lifecycle and callbacks for UI and domain events.
 - Workflow
 - SAIL
     - Generation from metadata
     - Selenese or Web Driver
-- Plugable converters/validators
+- Pluggable converters/validators
 - Unit test generation
     - CRUD Domain testing
     - Action tests
     - Test data generation
     - Data store test data seeding.
 - Background UI task
+    - A ViewBackgroundTask is a short-running asynchronous process that can be kicked off via WebContext (no percent complete or interrupt method)
+    - It is applicable to the UI and has access to and the ability to control the conversation caching in its execution via cacheConversation().
+    - It continues to use the Persistence instance from the conversation with all the state as if it was another user gesture - same level 1 cache, same local UI mutations.
+    - Its execute() method takes the current contextual bean and is never null (i.e. it has UI context).
+    - The persistence is set as async for the thread so that async timeouts are used during its execution, similar to jobs.
 - Push tech
 - User Agent Sniffing in router
 - JS API and inject
@@ -118,6 +143,10 @@
     - Programmatic charting
     - JS and server-side
 - Jobs
+    - A Job represents an asynchronous process that can be scheduled or run ad-hoc.
+    - It is registered against a module and available to be scheduled through the UI.
+    - Although job logging can be turned off for a Job, each run is generally logged.
+    - The persistence is set as async for the thread so that async timeouts are used during its execution.
 - Skyve Script
 - Security Integration
     - Database

@@ -13,6 +13,7 @@ This repository is the Java implementation of the Skyve framework specification.
   * [User Guide](#user-guide)
   * [Development Guide](#development-guide)
   * [Skyve Cookbook](#skyve-cookbook) 
+  * [Architecture & Design](#architecture--design)
 * [Creating a new Skyve project](#creating-a-new-skyve-project)
   * [Before you start](#before-you-start)
   * [Overview](#overview)
@@ -22,20 +23,38 @@ This repository is the Java implementation of the Skyve framework specification.
    * [Simple Example](#simple-example)
  * [Skyve Maven commands](#skyve-maven-commands)
  * [Updating Skyve version](#updating-skyve-version)
+   * [Preserving customisations](#preserving-customisations)
+* [Updating Skyve JavaScript](#updating-skyve-javascript)
 
 ## What is Skyve?
 
-Skyve is an open-source low-code platform that gives you access to all of the key capabilities needed to build sophisticated, robust and scalable cloud solutions. 
+Skyve is an open-source low-code platform for building secure, scalable enterprise applications — and it's uniquely suited to AI-assisted development.
 
-Skyve is platform/operating-system independent, works with all common database types, and is accessible through all common browsers and devices.
+Instead of generating thousands of lines of code that must be manually audited for security flaws, Skyve applications are declared in concise XML metadata. The platform interprets these declarations at runtime, enforcing security, rendering UIs, managing persistence, and handling schema evolution automatically. The entire metadata model is **statically validated** on every build — giving both human developers and AI agents immediate, deterministic feedback on correctness.
 
-By incorporating and integrating a range of other open-source technologies to handle persistence, rich UI, security, navigation, reporting, jobs, content, spatial, mobile integration; Skyve provides a platform with all the technology specific areas required to support the Skyve standard for enterprise applications.
+### Security by design
 
-Skyve also provides sophisticated validation and a high-level API so that you can build powerful enterprise SaaS solutions.
+Security in Skyve is declarative and impossible to accidentally bypass:
 
-At any time, branch out into "traditional" development without restriction, but will all the benefits of the API and integrated platform.
+- **Role-based CRUD with row-level scoping** — permissions are declared per document, enforced universally across persistence, queries, and UI. No endpoint-level checks to forget.
+- **Payload shaping** — REST and UI responses only include fields the user is permitted to see. Unpermitted input fields are silently ignored. No over-posting vulnerabilities.
+- **Forced-browsing prevention** — access vectors computed from roles, menus, and routes reject any request without a declared path. Users cannot reach documents by guessing URLs.
+- **Fail-closed defaults** — REST is blocked unless explicitly enabled. CSP, X-Frame, MIME-sniffing, and referrer headers are enforced on every response. CSRF tokens rotate per conversation.
+- **Multi-tenant isolation** — every row carries ownership fields (`bizCustomer`, `bizDataGroupId`, `bizUserId`); queries are automatically filtered to the user's scope.
 
-Skyve supports spatial concepts natively with MySQL (and MariaDB), SQL Server, Postgres and H2 - Oracle is in beta. Otherwise, pretty much anything supported by Hibernate should work (but we haven’t tested them all!).
+### Purpose-built for AI
+
+- **Minimal output** — AI agents declare metadata, not boilerplate. Less context, fewer tokens, fewer mistakes.
+- **Static validation loop** — `generateDomain` validates the entire model instantly. AI gets compiler-grade feedback to self-correct without guesswork.
+- **Constrained schema** — the metadata format limits what can be expressed, dramatically reducing hallucination and invalid output.
+- **Open source** — AI models have trained on Skyve's codebase, dev guide, and cookbook. Pattern recognition is strong.
+- **High leverage** — a 20-line document declaration delivers persistence, UI, security, search indexing, and API exposure.
+
+### Platform capabilities
+
+Skyve is platform/OS independent, works with all common database types (MySQL, MariaDB, PostgreSQL, SQL Server, H2 — Oracle in beta), and renders across JSF/PrimeFaces, SmartClient, Vue, and Flutter from a single view definition. Built-in capabilities include spatial/geometry as a primary type, federated content management and full-text search, job scheduling, reporting (Jasper & FreeMarker), bulk import/export, and database-independent backup/restore.
+
+At any time, branch out into traditional Java development without restriction — with all the benefits of the API and integrated platform.
 
 For more details on the framework and its capabilities, please check out the platform homepage - [www.skyve.org](https://skyve.org/).
 
@@ -67,13 +86,15 @@ The user guide is available at [https://skyvers.github.io/skyve-user-guide/](htt
 
 The development guide is available at [github.com/skyvers/skyve-dev-guide](https://github.com/skyvers/skyve-dev-guide). This contains detailed documentation covering the architecture and guiding principles of the framework, as well as explaining all the features and how to get started.
 
+Skyve 10 framework change notes are available in [docs/skyve-10-changes.md](/docs/skyve-10-changes.md).
+
 ### Skyve Cookbook
 
 The Skyve Cookbook is available at [github.com/skyvers/skyve-cookbook](https://github.com/skyvers/skyve-cookbook). This contains code samples of advanced usage such as REST API configuration and troubleshooting advice.
 
-### Architecure Document
+### Architecture & Design
 
-This document is a work in progress and can be found [here](/docs/architecture.md)
+The [Architecture & Design document](/docs/architecture-design.md) is a comprehensive guide to Skyve's internal architecture — covering why Skyve's metadata-driven approach is uniquely suited to AI-assisted development, the static validation pipeline, declarative security model, multi-tenant override system, persistence layer, rendering pipelines, and all major subsystems.
 
 ## Creating a new Skyve project
 
@@ -321,7 +342,7 @@ Depending on how you configure your Wildfly, if you are not publishing changes d
 ```
 mvn compile war:exploded skyve:touch
 ```
-This refreshes your project’s `/deployments’ directory and creates a ‘projectName.dodeploy’ file telling Wildfly to restart the module. This is used when there are any Java or module changes which are cannot be hot-reloaded.
+This refreshes your project's `/deployments' directory and creates a 'projectName.dodeploy' file telling Wildfly to restart the module. This is used when there are any Java or module changes which are cannot be hot-reloaded.
 
 ### Add Module
 ```
@@ -351,9 +372,10 @@ This will prompt you for a module name, document name and action name and create
 
 To update your project with a specific Skyve version, you will need to pull/check-out the Skyve project (from https://github.com/skyvers/skyve.git) prior to the following steps, ensuring you pull the specific Skyve version you're after. If in doubt, pull Skyve and check which version is retrieved. All Skyve releases are tagged, so it is typically safest to checkout the last tagged commit.
 
-⚠️ **Warning:** before continuing, make sure your project is under source control, and all files are committed locally. Upgrading a project can change lots of files, and will update your admin module and web resources. Any local changes you have made will be overwritten and need to be merged back in manually.
+⚠️ **Warning:** before continuing, make sure your project is under source control, and all files are committed locally. Upgrading a project can change lots of files, and will update your admin module and web resources. Any local changes you have made will be overwritten and need to be merged back in manually (see [preserving customisations](#preserving-customisations)).
 
 ### Configuring the assemble target
+
 These instructions apply to projects created using the [Creating a new Skyve Project](#creating-a-new-skyve-project) process above. If you created your project manually, these steps may differ.
 
 - If using Eclipse, create a new Run Configuration target, setting the base directory to your project's workspace, and setting the goal to `skyve:assemble`. Once setup in your pom this can also be run from the command line with `mvn skyve:assemble`.
@@ -368,6 +390,63 @@ These instructions apply to projects created using the [Creating a new Skyve Pro
 - When successful, run your project's generated tests
 - Deploy your project locally and sanity check everything still works correctly
 - When satisified, commit the changes to your project
+
+### Preserving customisations
+
+Skyve applications can, and are encouraged to be, customised to make them your own. This can include making changes to the admin module,  changing or customising themes or adding custom client-side logic.
+
+During an assemble operation, the following directories and their contents will be overwritten:
+
+- `src/main/java/modules/admin/*` - The admin module files
+- `src/main/java/modules/*.java` - Any Java files in the root of the module package
+- `src/main/java/resources/*` - Resource files
+- `src/main/java/schemas/*` - Schema files
+- `src/main/java/router/*` - Router files
+- `src/main/webapp/*` - Web application files including:
+  - `*.xhtml` and `*.jsp` files
+  - `desktop/*` directory
+  - `external/*` directory
+  - `pages/*` directory
+  - `WEB-INF/*` directory including:
+    - `beans.xml`
+    - `faces-config.xml`
+    - `jboss-classloading.xml`
+    - `jboss-deployment-structure.xml`
+    - `undertow-handlers.conf`
+    - `web.xml`
+    - `resources/skyve/*`
+- `src/test/java/util/*` - Test utility files
+
+If you have made customisations to any of these files and directories, make sure to:
+1. Commit to source control or back up your changes before running the assemble operation
+2. Review the changes after assembly
+3. Re-apply your customisations if necessary
+
+## Updating Skyve JavaScript
+
+Skyve's JavaScript files are located in `skyve-web/src/js` and are organised as follows:
+
+- `/common/` - JavaScript files used in both SmartClient and PrimeFaces
+- `/desktop/` - JavaScript files used in SmartClient
+- `/prime/` - JavaScript files used in PrimeFaces
+
+### Compressing JavaScript and CSS Files
+
+The JavaScript and CSS files are compressed for production use through the
+`compressJavascript` target in `skyve-web/build.xml`. Generated resources are committed, so
+normal Maven builds only package them and do not run the compressors. Run the Ant target
+explicitly after changing a readable JavaScript or CSS source file. The target downloads and
+verifies the pinned Closure Compiler when required, and invokes the pinned Lightning CSS CLI
+through `npx`. Node.js with `npx` is therefore required only when running this Ant target.
+
+To manually compress the JavaScript files in Eclipse:
+
+1. Open the Runner view in Eclipse (Window -> Show View -> Runner)
+2. Right-click in the Runner view
+3. Select "Run As" -> "Ant Build..."
+4. Navigate to and select `skyve-web/build.xml`
+5. Select the compression target
+6. Click "Run"
 
 [skyve-logo]: https://images.squarespace-cdn.com/content/5bac80be16b6407444b95a0c/1604036522472-OMV89LAE4GYP8JV9OC1C/skyve-logo-black.png?content-type=image%2Fpng
 [skyve-url]: https://www.skyve.org/

@@ -16,6 +16,8 @@ import org.skyve.impl.domain.types.jaxb.TimestampMapper;
 
 /**
  * Job
+ * <br/>
+ * Job execution record with execution status, progress tracking, and logging. Supports cancellable jobs and provides re-run capability for completed jobs.
  * 
  * @stereotype "persistent"
  */
@@ -152,12 +154,6 @@ public abstract class Job extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof Job) && 
-					this.getBizId().equals(((Job) o).getBizId()));
 	}
 
 	/**

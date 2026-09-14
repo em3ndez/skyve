@@ -12,10 +12,16 @@
 <%@page import="org.skyve.impl.web.WebUtil"%>
 <%@page import="org.skyve.metadata.user.User"%>
 <%@page import="org.skyve.util.Util"%>
+<%@page import="org.slf4j.LoggerFactory"%>
+<%@page import="org.slf4j.Logger"%>
+
+<%! static final Logger logger = LoggerFactory.getLogger("org.skyve.jsp.requestPasswordReset"); %>
+
 <%
+
 	String basePath = Util.getSkyveContextUrl() + "/";
 	String customer = WebUtil.determineCustomerWithoutSession(request);
-	boolean mobile = UserAgent.getType(request).isMobile();
+	boolean mobile = UserAgent.detectType(request).isMobile();
 	Principal p = request.getUserPrincipal();
 	User user = WebUtil.processUserPrincipalForRequest(request, (p == null) ? null : p.getName());
 	Locale locale = (user == null) ? request.getLocale() : user.getLocale();
@@ -32,6 +38,7 @@
 		siteKey = UtilImpl.CLOUDFLARE_TURNSTILE_SITE_KEY;
 	}
 	
+	String requestPasswordResetErrorMessage = null;
 	boolean postback = (emailValue != null);
 	if (postback) {
 		// Only validate if we have a captcha rendered
@@ -41,18 +48,17 @@
 			}
 			catch (Exception e) {
 				// don't stop - we need to give nothing away
-				UtilImpl.LOGGER.log(Level.SEVERE, 
-										String.format("Password Reset Request Failed for customer=%s and email=%s", customerValue, emailValue),
-										e);
+				logger.error("Password Reset Request Failed for customer={} and email={}", customerValue, emailValue, e);
 			}
 		}
 		else {
-			UtilImpl.LOGGER.severe("Recaptcha failed validation");
+		    logger.error("Recaptcha failed validation");
+		    requestPasswordResetErrorMessage = Util.i18n("page.resetPassword.captcha.error", locale);
 		}
 	}
 %>
 <!DOCTYPE html>
-<html dir="<%=Util.isRTL(locale) ? "rtl" : "ltr"%>">
+<html dir="<%=Util.isRTL(locale) ? "rtl" : "ltr"%>" lang="<%=locale.getLanguage()%>" xml:lang="<%=locale.getLanguage()%>">
 	<head>
 		<!-- Standard Meta -->
 	    <meta charset="utf-8" />
@@ -127,14 +133,18 @@
 			<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?compat=recaptcha" async defer></script>
 		<% } %>
 	</head>
-	<body>
+	<% if (requestPasswordResetErrorMessage != null) { %>
+		<body onload="alert('<%=requestPasswordResetErrorMessage%>');">
+	<% } else { %>
+		<body>
+	<% } %>
 		<div class="ui middle aligned center aligned grid">
 		    <div class="column">
 		    	<div style="text-align: center; margin: 0 auto; margin-bottom: 10px;">
 		    		<%@include file="fragments/logo.html" %>
 		    	</div>
 		    	
-		    	<% if (postback) { %>
+		    	<% if (postback && requestPasswordResetErrorMessage == null) { %>
 			    	<div class="ui large form">
 			            <div class="ui segment">
 			            	<div class="ui header">
@@ -143,7 +153,7 @@
 			            	<div class="field">
 			            		<%=Util.i18n("page.requestPasswordReset.complete.message", locale)%>
 			            	</div>
-			            	<a href="<%=request.getContextPath()%><%=Util.getHomeUri()%>" class="ui fluid large blue submit button"><%=Util.i18n("page.login.submit.label", locale)%></a>
+			            	<a href="<%=Util.getBaseUrl()%>" class="ui fluid large blue submit button"><%=Util.i18n("page.login.submit.label", locale)%></a>
 			            </div>
 			        </div>
 		    	<% } else { %>
@@ -192,9 +202,9 @@
 			                
 			                <div style="margin-top: 5px;">
 			                	<% if (UtilImpl.CUSTOMER == null) { %>
-				                	<a href="<%=request.getContextPath()%><%=Util.getHomeUri()%><%=(user == null) ? "" : ("?customer=" + user.getCustomerName())%>" class="ui fluid basic large button"><%=Util.i18n("page.login.submit.label", locale)%></a>
+				                	<a href="<%=Util.getBaseUrl()%><%=(user == null) ? "" : ("?customer=" + user.getCustomerName())%>" class="ui fluid basic large button"><%=Util.i18n("page.login.submit.label", locale)%></a>
 				                <% } else { %>
-				                	<a href="<%=request.getContextPath()%><%=Util.getHomeUri()%>" class="ui fluid basic large button"><%=Util.i18n("page.login.submit.label", locale)%></a>
+				                	<a href="<%=Util.getBaseUrl()%>" class="ui fluid basic large button"><%=Util.i18n("page.login.submit.label", locale)%></a>
 				                <% } %>
 			                </div>
 		                </div>

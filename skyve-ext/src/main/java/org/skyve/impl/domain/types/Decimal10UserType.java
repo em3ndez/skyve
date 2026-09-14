@@ -15,6 +15,10 @@ import org.hibernate.usertype.UserType;
 import org.skyve.domain.types.Decimal;
 import org.skyve.domain.types.Decimal10;
 
+/**
+ * Hibernate {@link org.hibernate.usertype.UserType} that maps the Skyve
+ * {@link org.skyve.domain.types.Decimal10} type to a SQL {@code NUMERIC} column.
+ */
 public class Decimal10UserType implements UserType, Serializable, LiteralType<Number> {
 	private static final long serialVersionUID = 189859600281114825L;
 
@@ -57,14 +61,14 @@ public class Decimal10UserType implements UserType, Serializable, LiteralType<Nu
 		if (value == null) {
 			ps.setNull(index, Types.NUMERIC);
 		}
-		else if (value instanceof Decimal10) {
-			ps.setBigDecimal(index, ((Decimal10) value).bigDecimalValue());
+		else if (value instanceof Decimal10 d) {
+			ps.setBigDecimal(index, d.bigDecimalValue());
 		}
-		else if (value instanceof Decimal) {
-			ps.setBigDecimal(index, new Decimal10((Decimal) value).bigDecimalValue());
+		else if (value instanceof Decimal d) {
+			ps.setBigDecimal(index, new Decimal10(d).bigDecimalValue());
 		}
-		else if (value instanceof BigDecimal) {
-			ps.setBigDecimal(index, new Decimal10((BigDecimal) value).bigDecimalValue());
+		else if (value instanceof BigDecimal d) {
+			ps.setBigDecimal(index, new Decimal10(d).bigDecimalValue());
 		}
 		else {
 			ps.setBigDecimal(index, new Decimal10(((Number) value).doubleValue()).bigDecimalValue());

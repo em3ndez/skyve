@@ -20,10 +20,14 @@ import org.skyve.util.Util;
 
 /**
  * Import Export
+ * <br/>
+ * ImportExport provides a comprehensive data import and export utility for any Skyve document. It supports 
+		uploading Excel/CSV files for import with automatic column detection and smart binding to document 
+		attributes. The column mapping system allows users to configure how spreadsheet columns map to document 
+		fields, with support for expressions and load actions.
  * 
  * @depend - - - Mode
  * @depend - - - RollbackErrors
- * @depend - - - LoadType
  * @navcomposed 1 importExportColumns 0..n ImportExportColumn
  * @stereotype "persistent"
  */
@@ -92,7 +96,7 @@ public abstract class ImportExport extends AbstractPersistentBean {
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum Mode implements Enumeration {
+	public enum Mode implements Enumeration {
 		importData("importData", "Import Data"),
 		exportData("exportData", "Export Data");
 
@@ -162,7 +166,7 @@ public abstract class ImportExport extends AbstractPersistentBean {
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum RollbackErrors implements Enumeration {
+	public enum RollbackErrors implements Enumeration {
 		rollbackErrors("rollbackErrors", "admin.importExport.rollbackErrors.rollbackErrors.description"),
 		noRollbackErrors("noRollbackErrors", "admin.importExport.rollbackErrors.noRollbackErrors.description");
 
@@ -213,84 +217,6 @@ public abstract class ImportExport extends AbstractPersistentBean {
 			RollbackErrors result = null;
 
 			for (RollbackErrors value : values()) {
-				if (value.toLocalisedDescription().equals(description)) {
-					result = value;
-					break;
-				}
-			}
-
-			return result;
-		}
-
-		public static List<DomainValue> toDomainValues() {
-			return domainValues;
-		}
-	}
-
-	/**
-	 * Loading strategy
-	 * <br/>
-	 * <p><b>Loading strategy</b></p>
-<p><b>Create related records if they don't exist (recommended)</b>
-<br/>
-<i>With this option, uploaded records will be created but where these reference other records, they will only be created if a match can't be found</i></p>
-<p><b>Create everything even if there might be duplicates</b>
-<br/>
-<i>With this option, new records will always be created</i></p>
-	 **/
-	@XmlEnum
-	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum LoadType implements Enumeration {
-		createFind("createFind", "admin.importExport.loadType.createFind.description"),
-		createAll("createAll", "admin.importExport.loadType.createAll.description");
-
-		private String code;
-		private String description;
-
-		/** @hidden */
-		private DomainValue domainValue;
-
-		/** @hidden */
-		private static List<DomainValue> domainValues = Stream.of(values()).map(LoadType::toDomainValue).collect(Collectors.toUnmodifiableList());
-
-		private LoadType(String code, String description) {
-			this.code = code;
-			this.description = description;
-			this.domainValue = new DomainValue(code, description);
-		}
-
-		@Override
-		public String toCode() {
-			return code;
-		}
-
-		@Override
-		public String toLocalisedDescription() {
-			return Util.i18n(description);
-		}
-
-		@Override
-		public DomainValue toDomainValue() {
-			return domainValue;
-		}
-
-		public static LoadType fromCode(String code) {
-			LoadType result = null;
-
-			for (LoadType value : values()) {
-				if (value.code.equals(code)) {
-					result = value;
-					break;
-				}
-			}
-
-			return result;
-		}
-
-		public static LoadType fromLocalisedDescription(String description) {
-			LoadType result = null;
-
-			for (LoadType value : values()) {
 				if (value.toLocalisedDescription().equals(description)) {
 					result = value;
 					break;
@@ -385,7 +311,7 @@ public abstract class ImportExport extends AbstractPersistentBean {
 <br/>
 <i>With this option, new records will always be created</i></p>
 	 **/
-	private LoadType loadType = LoadType.createFind;
+	private String loadType;
 
 	@Override
 	@XmlTransient
@@ -420,12 +346,6 @@ public abstract class ImportExport extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof ImportExport) && 
-					this.getBizId().equals(((ImportExport) o).getBizId()));
 	}
 
 	/**
@@ -722,7 +642,7 @@ public abstract class ImportExport extends AbstractPersistentBean {
 	 * {@link #loadType} accessor.
 	 * @return	The value.
 	 **/
-	public LoadType getLoadType() {
+	public String getLoadType() {
 		return loadType;
 	}
 
@@ -731,7 +651,7 @@ public abstract class ImportExport extends AbstractPersistentBean {
 	 * @param loadType	The new value.
 	 **/
 	@XmlElement
-	public void setLoadType(LoadType loadType) {
+	public void setLoadType(String loadType) {
 		preset(loadTypePropertyName, loadType);
 		this.loadType = loadType;
 	}
@@ -782,7 +702,7 @@ public abstract class ImportExport extends AbstractPersistentBean {
 	@XmlTransient
 	public boolean isLoadTypeCreateFind() {
 		return (!isShowExport()
-				&& LoadType.createFind.equals(loadType));
+				&& modules.admin.ImportExport.ImportExportUtil.CREATE_RELATED_RECORDS_IF_THEY_DON_T_EXIST.equals(loadType));
 	}
 
 	/**

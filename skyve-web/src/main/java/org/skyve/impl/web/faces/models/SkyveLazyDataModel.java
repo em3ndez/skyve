@@ -21,11 +21,11 @@ import org.skyve.domain.messages.SkyveException;
 import org.skyve.domain.types.Decimal;
 import org.skyve.domain.types.converters.Converter;
 import org.skyve.impl.bind.BindUtil;
-import org.skyve.impl.metadata.model.document.field.ConvertableField;
+import org.skyve.impl.metadata.model.document.field.ConvertibleField;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.SortParameterImpl;
+import org.skyve.impl.web.UserAgent;
 import org.skyve.impl.web.faces.views.FacesView;
-import org.skyve.metadata.MetaDataException;
 import org.skyve.metadata.SortDirection;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.Attribute;
@@ -44,12 +44,23 @@ import org.skyve.metadata.view.widget.bound.Parameter;
 import org.skyve.util.Binder.TargetMetaData;
 import org.skyve.util.OWASP;
 import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
 import org.skyve.web.SortParameter;
+import org.slf4j.Logger;
 
 import jakarta.annotation.Nonnull;
 
+/**
+ * Implements internal web-module behavior for this Skyve runtime concern.
+ */
 public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 	private static final long serialVersionUID = -2161288261538038204L;
+
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(SkyveLazyDataModel.class);
+    private static final Logger COMMAND_LOGGER = Category.COMMAND.logger();
 
 	private FacesView view;
 	private String moduleName;
@@ -60,6 +71,19 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 	private List<Parameter> parameters;
 	private boolean escape;
 	
+	/**
+	 * Creates a lazy data model for query/model-backed list rendering with optional filter parameters.
+	 *
+	 * @param view the owning faces view
+	 * @param moduleName the target module name
+	 * @param documentName the target document name
+	 * @param queryName the optional query name
+	 * @param modelName the optional model name
+	 * @param filterParameters optional filter parameter metadata
+	 * @param parameters optional query parameter metadata
+	 * @param escape whether list row values should be HTML-escaped
+	 */
+	@SuppressWarnings("java:S107") // too many params OK
 	public SkyveLazyDataModel(@Nonnull FacesView view,
 								String moduleName, 
 								String documentName, 
@@ -80,6 +104,9 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 	
 	/**
 	 * Can't implement this as the rows and the count come back together in the load method.
+	 *
+	 * @param filterBy filter metadata supplied by PrimeFaces
+	 * @return always {@code 0}; row count is set inside {@link #load(int, int, Map, Map)}
 	 */
 	@Override
 	public int count(Map<String, FilterMeta> filterBy) {
@@ -87,9 +114,16 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 	}
 	
 	/**
-	 * Return a page of filtered and sorted data (and set the rowCount)
+	 * Returns a page of filtered and sorted data and updates the total row count.
+	 *
+	 * @param first the zero-based first row index
+	 * @param pageSize the requested page size
+	 * @param multiSortMeta optional sort metadata
+	 * @param filters optional filter metadata
+	 * @return the adapted page rows for JSF rendering
 	 */
 	@Override
+	@SuppressWarnings("java:S3776") // complexity OK
 	public List<BeanMapAdapter> load(int first,
 										int pageSize,
 										Map<String, SortMeta> multiSortMeta,
@@ -98,18 +132,17 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 		Customer c = u.getCustomer();
 		Module m = c.getModule(moduleName);
 		Document d = null;
-		String uxui = view.getUxUi().getName();
+		String uxui = UserAgent.getSelection(EXT.getHttpServletRequest()).getUxUi().getName();
 		MetaDataQueryDefinition query = null;
 		ListModel<Bean> model = null;
+		RequestKey key = null;
 
 		// model type of request
 		if (modelName != null) {
 			EXT.checkAccess(u, UserAccess.modelAggregate(moduleName, documentName, modelName), uxui);
 			d = m.getDocument(c, documentName);
 			model = d.getListModel(c, modelName, true);
-			if (model == null) {
-				throw new MetaDataException(modelName + " is not a valid ListModel");
-			}
+			key = RequestKey.model(d, modelName);
 		}
 		// query type of request
 		else {
@@ -119,25 +152,23 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 					if (documentName == null) { // query name is the document name
 						EXT.checkAccess(u, UserAccess.documentAggregate(moduleName, queryName), uxui);
 						query = m.getDocumentDefaultQuery(c, queryName);
+						key = RequestKey.documentListModel(moduleName, queryName);
 					}
 					else {
 						EXT.checkAccess(u, UserAccess.documentAggregate(moduleName, documentName), uxui);
 						query = m.getDocumentDefaultQuery(c, documentName);
+						key = RequestKey.documentListModel(moduleName, documentName);
 					}
 				}
 				else {
 					EXT.checkAccess(u, UserAccess.queryAggregate(moduleName, queryName), uxui);
-				}
-				if (query == null) {
-					throw new MetaDataException(queryName + " is not a valid document query.");
+					key = RequestKey.queryListModel(moduleName, queryName);
 				}
 			}
 			else {
 				EXT.checkAccess(u, UserAccess.documentAggregate(moduleName, documentName), uxui);
 				query = m.getDocumentDefaultQuery(c, documentName);
-				if (query == null) {
-					throw new MetaDataException(documentName + " is not a valid document for a default query.");
-				}
+				key = RequestKey.documentListModel(moduleName, documentName);
 			}
 	        model = EXT.newListModel(query);
 		}
@@ -149,11 +180,13 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 		d = model.getDrivingDocument();
 		
 		if (! u.canReadDocument(d)) {
-			UtilImpl.LOGGER.info("User " + u.getName() + " cannot read document " + d.getOwningModuleName() + '.' + d.getName());
+			LOGGER.info("User {} cannot read document {}.{}", u.getName(), d.getOwningModuleName(), d.getName());
 			throw new SecurityException(d.getName() + " in module " + d.getOwningModuleName(), u.getName());
 		}
-		
-		if (UtilImpl.COMMAND_TRACE) UtilImpl.LOGGER.info(String.format("LOAD %s : %s", String.valueOf(first), String.valueOf(pageSize)));
+
+		if (UtilImpl.COMMAND_TRACE) {
+			COMMAND_LOGGER.info("LOAD {} : {}", Integer.valueOf(first), Integer.valueOf(pageSize));
+		}
 		model.setStartRow(first);
 		model.setEndRow(first + pageSize);
 
@@ -163,7 +196,7 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 
 		Page page;
 		try {
-			model.addFilterParameters(d, filterParameters, parameters);
+			model.addParameters(d, filterParameters, parameters);
 			if (filters != null) {
 				filter(filters, model, c);
 			}
@@ -171,8 +204,8 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 			page = model.fetch();
 		}
 		catch (Exception e) {
-			if (e instanceof SkyveException) {
-				throw (SkyveException) e;
+			if (e instanceof SkyveException se) {
+				throw se;
 			}
 			throw new DomainException(e);
 		}
@@ -184,11 +217,15 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 		for (Bean bean : beans) {
 			result.add(new BeanMapAdapter(bean, view.getWebContext()));
 		}
+		Monitoring.measure(key);
 		return result;
 	}
 
 	/**
 	 * Called when encoding the rows of a data table or data list.
+	 *
+	 * @param bean the row bean adapter
+	 * @return a stable row key composed of biz id, document, and module
 	 */
 	@Override
 	public String getRowKey(BeanMapAdapter bean) {
@@ -198,6 +235,9 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 	
 	/**
 	 * Called when a table or list row is selected.
+	 *
+	 * @param rowKey the row key produced by {@link #getRowKey(BeanMapAdapter)}
+	 * @return a bean adapter created from the row key components
 	 */
 	@Override
 	public BeanMapAdapter getRowData(String rowKey) {
@@ -211,12 +251,18 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 		return new BeanMapAdapter(bean, view.getWebContext());
 	}
 	
+	/**
+	 * Applies PrimeFaces sort metadata to the list model.
+	 *
+	 * @param multiSortMeta sort metadata entries
+	 * @param model the target list model
+	 */
 	private static void sort(Map<String, SortMeta> multiSortMeta, ListModel<Bean> model) {
 		int l = multiSortMeta.size();
 		SortParameter[] sortParameters = new SortParameter[l];
 		int i = 0;
 		for (SortMeta sm : multiSortMeta.values()) {
-			if (UtilImpl.COMMAND_TRACE) UtilImpl.LOGGER.info(String.format("    SORT by %s %s", sm.getField(), sm.getOrder()));
+			if (UtilImpl.COMMAND_TRACE) COMMAND_LOGGER.info("    SORT by {} {}", sm.getField(), sm.getOrder());
 			SortParameter sp = new SortParameterImpl();
 			sp.setBy(sm.getField());
 			sp.setDirection((SortOrder.DESCENDING.equals(sm.getOrder())) ? SortDirection.descending : null);
@@ -226,16 +272,26 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 		model.setSortParameters(sortParameters);
 	}
 	
+	/**
+	 * Applies PrimeFaces filter metadata to the list model.
+	 *
+	 * @param filters filter metadata entries
+	 * @param model the target list model
+	 * @param customer the current customer metadata
+	 * @throws Exception if metadata resolution or conversion fails
+	 */
+	@SuppressWarnings({"java:S3776", "java:S6541", "java:S112"}) // complex method OK
 	private static void filter(Map<String, FilterMeta> filters, ListModel<Bean> model, Customer customer)
 	throws Exception {
 		Document drivingDocument = model.getDrivingDocument();
 		Module drivingModule = customer.getModule(drivingDocument.getOwningModuleName());
 		Filter modelFilter = model.getFilter();
-		for (String key : filters.keySet()) {
-			FilterMeta fm = filters.get(key);
+		for (Map.Entry<String, FilterMeta> filterEntry : filters.entrySet()) {
+			String key = filterEntry.getKey();
+			FilterMeta fm = filterEntry.getValue();
 			Object value = fm.getFilterValue();
-			if (value instanceof String) {
-				value = Util.processStringValue((String) value);
+			if (value instanceof String string) {
+				value = Util.processStringValue(string);
 			}
 			if (value == null) {
 				continue;
@@ -243,86 +299,84 @@ public class SkyveLazyDataModel extends LazyDataModel<BeanMapAdapter> {
 			
 			TargetMetaData target = BindUtil.getMetaDataForBinding(customer, drivingModule, drivingDocument, key);
 			boolean contains = false;
-			if (target != null) {
-				Attribute attribute = target.getAttribute();
-				if (attribute != null) {
-					DomainType domainType = attribute.getDomainType();
-					if (domainType == DomainType.variant) {
-						value = ListModel.getTop100VariantDomainValueCodesFromDescriptionFilter(drivingDocument, attribute, value.toString());
-					}
-					else {
-						AttributeType type = attribute.getAttributeType();
-						// Use "like" if its textual and not a constant domain type
-						if (AttributeType.colour.equals(type) ||
-								AttributeType.markup.equals(type) ||
-								AttributeType.memo.equals(type) ||
-								AttributeType.text.equals(type)) {
-							if (domainType == null) {
-								contains = true;
-							}
-						}
-						// if we have a binding to an association use "like" and 
-						// make it to the bizKey since we have no relational stuff in the PF filter line.
-						else if (AttributeType.association.equals(type)) {
-							contains = true;
-							key = BindUtil.createCompoundBinding(key, Bean.BIZ_KEY);
-						}
-						else if (value instanceof String) {
-							Converter<?> converter = null;
-							if (attribute instanceof ConvertableField) {
-								converter = ((ConvertableField) attribute).getConverterForCustomer(customer);
-							}
-							Class<?> implementingType = type.getImplementingType();
-							if (! String.class.equals(implementingType)) {
-								try {
-									value = BindUtil.fromString(customer, converter, implementingType, (String) value);
-								}
-								catch (@SuppressWarnings("unused") Exception e) {
-									UtilImpl.LOGGER.info("Could not coerce the String value [" + value + 
-															"] for filter parameter [" + key + "] to the required type, so just ignore...");
-									continue;
-								}
-							}
-						}
-					}
+			Attribute attribute = target.getAttribute();
+			if (attribute != null) {
+				DomainType domainType = attribute.getDomainType();
+				if (domainType == DomainType.variant) {
+					value = ListModel.getTop100VariantDomainValueCodesFromDescriptionFilter(drivingDocument, attribute, value.toString());
 				}
-				// implicit field probably - if biz key implicit field then add as contains
-				// NB All other implicit fields should be exactly equal
-				else if (key.endsWith(Bean.BIZ_KEY)) {
-					contains = true;
+				else {
+					AttributeType type = attribute.getAttributeType();
+					// Use "like" if its textual and not a constant domain type
+					if (AttributeType.colour.equals(type) ||
+							AttributeType.markup.equals(type) ||
+							AttributeType.memo.equals(type) ||
+							AttributeType.text.equals(type)) {
+						if (domainType == null) {
+							contains = true;
+						}
+					}
+					// if we have a binding to an association use "like" and 
+					// make it to the bizKey since we have no relational stuff in the PF filter line.
+					else if (AttributeType.association.equals(type)) {
+						contains = true;
+						key = BindUtil.createCompoundBinding(key, Bean.BIZ_KEY);
+					}
+					else if (value instanceof String string) {
+						Converter<?> converter = null;
+						if (attribute instanceof ConvertibleField convertible) {
+							converter = convertible.getConverterForCustomer(customer);
+						}
+						Class<?> implementingType = attribute.getImplementingType();
+						if (! String.class.equals(implementingType)) {
+							try {
+								value = BindUtil.fromString(customer, converter, implementingType, string);
+							}
+							catch (@SuppressWarnings("unused") Exception e) {
+                                LOGGER.info("Could not coerce the String value [{}] for filter parameter [{}] to the required type, so just ignore...", string, key);
+								continue;
+							}
+						}
+					}
 				}
 			}
-			if (UtilImpl.COMMAND_TRACE) UtilImpl.LOGGER.info(String.format("    FILTER %s %s %s", key, contains ? "contains" : "=", value));
+			// implicit field probably - if biz key implicit field then add as contains
+			// NB All other implicit fields should be exactly equal
+			else if (key.endsWith(Bean.BIZ_KEY)) {
+				contains = true;
+			}
+
+			if (UtilImpl.COMMAND_TRACE) COMMAND_LOGGER.info("    FILTER {} {} {}", key, contains ? "contains" : "=", value);
 			if (contains) {
 				modelFilter.addContains(key, (String) value);
 			}
 			else {
-				if (value instanceof Boolean) {
-					modelFilter.addEquals(key, (Boolean) value);
+				if (value instanceof Boolean bool) {
+					modelFilter.addEquals(key, bool);
 				}
-				else if (value instanceof Date) {
-					modelFilter.addEquals(key, (Date) value);
+				else if (value instanceof Date date) {
+					modelFilter.addEquals(key, date);
 				}
-				else if (value instanceof Decimal) {
-					modelFilter.addEquals(key, (Decimal) value);
+				else if (value instanceof Decimal decimal) {
+					modelFilter.addEquals(key, decimal);
 				}
-				else if (value instanceof Enum<?>) {
-					modelFilter.addEquals(key, (Enum<?>) value);
+				else if (value instanceof Enum<?> enumeration) {
+					modelFilter.addEquals(key, enumeration);
 				}
-				else if (value instanceof Geometry) {
-					modelFilter.addEquals(key, (Geometry) value);
+				else if (value instanceof Geometry geometry) {
+					modelFilter.addEquals(key, geometry);
 				}
-				else if (value instanceof Integer) {
-					modelFilter.addEquals(key, (Integer) value);
+				else if (value instanceof Integer integer) {
+					modelFilter.addEquals(key, integer);
 				}
-				else if (value instanceof Long) {
-					modelFilter.addEquals(key, (Long) value);
+				else if (value instanceof Long longInteger) {
+					modelFilter.addEquals(key, longInteger);
 				}
-				else if (value instanceof String) {
-					modelFilter.addEquals(key, (String) value);
+				else if (value instanceof String string) {
+					modelFilter.addEquals(key, string);
 				}
-				else if (value instanceof Object[]) {
-					modelFilter.addIn(key, (Object[]) value);
+				else if (value instanceof Object[] array) {
+					modelFilter.addIn(key, array);
 				}
 				else {
 					throw new IllegalArgumentException(value + " is not a valid value for param " + key);

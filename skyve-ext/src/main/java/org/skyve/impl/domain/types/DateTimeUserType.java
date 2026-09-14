@@ -15,6 +15,10 @@ import org.hibernate.type.LiteralType;
 import org.hibernate.usertype.UserType;
 import org.skyve.domain.types.DateTime;
 
+/**
+ * Hibernate {@link org.hibernate.usertype.UserType} that maps the Skyve
+ * {@link org.skyve.domain.types.DateTime} type to a SQL {@code TIMESTAMP} column.
+ */
 public class DateTimeUserType implements UserType, LiteralType<Date>, Serializable {
 	private static final long serialVersionUID = 4767832769224136166L;
 
@@ -39,13 +43,14 @@ public class DateTimeUserType implements UserType, LiteralType<Date>, Serializab
 
 		long xTime = ((Date) x).getTime();
 		long yTime = ((Date) y).getTime();
+		if (xTime != yTime) {
+			return false;
+		}
+
 		boolean xts = (x instanceof Timestamp);
 		boolean yts = (y instanceof Timestamp);
 		int xNanos = xts ? ((Timestamp) x).getNanos() : 0;
 		int yNanos = yts ? ((Timestamp) y).getNanos() : 0;
-		if (xTime != yTime) {
-			return false;
-		}
 		if (xts && yts) {
 			// both are Timestamps
 			int xn = xNanos % 1000000;

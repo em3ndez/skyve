@@ -3,7 +3,6 @@ package org.skyve.impl.job;
 import java.util.Date;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.logging.Level;
 
 import org.quartz.Job;
 import org.quartz.JobExecutionContext;
@@ -26,7 +25,9 @@ import org.skyve.metadata.repository.ProvidedRepository;
 import org.skyve.metadata.view.model.list.RDBMSDynamicPersistenceListModel;
 import org.skyve.persistence.Persistence;
 import org.skyve.persistence.SQL;
-import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 /**
  * This job removes orphaned uploads and any textually indexed data left from delete/truncate SQL statements issued.
@@ -35,14 +36,19 @@ import org.skyve.util.Util;
  */
 public class ContentGarbageCollectionJob implements Job {
 	private static final long CONTENT_GC_ELIGIBLE_AGE_MILLIS = UtilImpl.CONTENT_GC_ELIGIBLE_AGE_MINUTES * 60000L;
-	
+	private static final String EXECUTE_PROBLEM_MESSAGE = "ContentGarbageCollectionJob.execute() problem...";
+
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(ContentGarbageCollectionJob.class);
+    private static final Logger CONTENT_LOGGER = Category.CONTENT.logger();
+
 	private Set<String> orphanedAttachmentContentIds = new TreeSet<>();
 	private Set<String> orphanedBeanBizIds = new TreeSet<>();
 	
 	@Override
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	public void execute(JobExecutionContext context)
 	throws JobExecutionException {
-		Util.LOGGER.info("Start Content Garbage Collection");
+		LOGGER.info("Start Content Garbage Collection");
 		try {
 			ContentChecker contentChecker = new ContentChecker();
 			ProvidedRepository r = ProvidedRepositoryFactory.get();
@@ -70,22 +76,17 @@ public class ContentGarbageCollectionJob implements Job {
 							String bizId = result.getBizId();
 							String contentId = result.getContentId();
 							Date lastModified = result.getLastModified();
-							if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.finest("ContentGarbageCollectionJob: FOUND customer=" + customerName + 
-																				" : module=" + moduleName + 
-																				" : document=" + documentName + 
-																				" : bizId=" + bizId + 
-																				" : attribute=" + attributeName + 
-																				" : contentId=" + contentId + 
-																				" : lastModified=" + lastModified);
+							if (UtilImpl.CONTENT_TRACE) CONTENT_LOGGER.trace("ContentGarbageCollectionJob: FOUND customer={} : module={} : document={} : bizId={} : attribute={} : contentId={} : lastModified={}", 
+																				customerName, moduleName, documentName, bizId, attributeName, contentId, lastModified);
 							// only process this if its at least a day old.
 							// Besides cutting out busy work on a data set in flux, it'll make sure that anyones freshly uploaded
 							// content that hasn't been saved (not pointed to yet in the database) won't be removed.
 							if (lastModified == null) {
 								if (result.isAttachment()) {
-									UtilImpl.LOGGER.warning("ContentGarbageCollectionJob: Cannot determine whether to remove attachment content with bizId/contentId " + bizId + "/" + contentId);
+									LOGGER.warn("ContentGarbageCollectionJob: Cannot determine whether to remove attachment content with bizId/contentId {}/{}", bizId, contentId);
 								}
 								else {
-									UtilImpl.LOGGER.warning("ContentGarbageCollectionJob: Cannot determine whether to remove bean content with bizId " + bizId);
+									LOGGER.warn("ContentGarbageCollectionJob: Cannot determine whether to remove bean content with bizId {}", bizId);
 								}
 							}
 							else if ((System.currentTimeMillis() - lastModified.getTime()) > CONTENT_GC_ELIGIBLE_AGE_MILLIS) { // of eligible age
@@ -95,20 +96,20 @@ public class ContentGarbageCollectionJob implements Job {
 								Persistent persistent = document.getPersistent();
 								if (persistent == null) { // was persistent with content but now transient
 									if (result.isAttachment()) {
-										UtilImpl.LOGGER.warning("ContentGarbageCollectionJob: Cannot determine whether to remove attachment content with bizId/contentId " + bizId + "/" + contentId + " as the owning document " + moduleName + "." + documentName + " is not persistent");
+										LOGGER.warn("ContentGarbageCollectionJob: Cannot determine whether to remove attachment content with bizId/contentId {}/{} as the owning document {}.{} is not persistent", bizId, contentId, moduleName, documentName);
 									}
 									else {
-										UtilImpl.LOGGER.warning("ContentGarbageCollectionJob: Cannot determine whether to remove bean content with bizId " + bizId + " as the owning document " + moduleName + "." + documentName + " is not persistent");
+										LOGGER.warn("ContentGarbageCollectionJob: Cannot determine whether to remove bean content with bizId {} as the owning document {}.{} is not persistent", bizId, moduleName, documentName);
 									}
 									continue;
 								}
 								String persistentIdentifier = persistent.getPersistentIdentifier();
 								if (persistentIdentifier == null) { // was persistent with content but now transient
 									if (result.isAttachment()) {
-										UtilImpl.LOGGER.warning("ContentGarbageCollectionJob: Cannot determine whether to remove attachment content with bizId/contentId " + bizId + "/" + contentId + " as the owning document " + moduleName + "." + documentName + " is not directly persistent");
+										LOGGER.warn("ContentGarbageCollectionJob: Cannot determine whether to remove attachment content with bizId/contentId {}/{} as the owning document {}.{} is not directly persistent", bizId, contentId, moduleName, documentName);
 									}
 									else {
-										UtilImpl.LOGGER.warning("ContentGarbageCollectionJob: Cannot determine whether to remove bean content with bizId " + bizId + " as the owning document " + moduleName + "." + documentName + " is not directly persistent");
+										LOGGER.warn("ContentGarbageCollectionJob: Cannot determine whether to remove bean content with bizId {} as the owning document {}.{} is not directly persistent", bizId, moduleName, documentName);
 									}
 									continue;
 								}
@@ -156,28 +157,28 @@ public class ContentGarbageCollectionJob implements Job {
 									query.putParameter(Bean.DOCUMENT_ID, bizId, false);
 								}
 								
-								if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.finest("ContentGarbageCollectionJob: TEST REMOVAL with " + sql.toString());
+								if (UtilImpl.CONTENT_TRACE) CONTENT_LOGGER.trace("ContentGarbageCollectionJob: TEST REMOVAL with {}", sql);
 								if (query.scalarResults(Integer.class).isEmpty()) {
 									if (result.isAttachment()) {
 										String bogusContentReference = contentChecker.bogusContentReference(contentId, customer);
 										if (bogusContentReference == null) {
 											orphanedAttachmentContentIds.add(contentId);
-											UtilImpl.LOGGER.info("ContentGarbageCollectionJob: Remove attachment content with bizid/contentId " + contentId + "/" + bizId);
+											LOGGER.info("ContentGarbageCollectionJob: Remove attachment content with bizid/contentId {}/{}", contentId, bizId);
 										}
 										else {
-											UtilImpl.LOGGER.severe("ContentGarbageCollectionJob: Cannot remove unreferenced attachment content with bizId/contentId " + contentId + "/" + bizId + " and owning document of " + moduleName + "." + documentName + " as it is actually referenced by Table#BizId " + bogusContentReference);
+											LOGGER.error("ContentGarbageCollectionJob: Cannot remove unreferenced attachment content with bizId/contentId {}/{} and owning document of {}.{} as it is actually referenced by Table#BizId {}", contentId, bizId, moduleName, documentName, bogusContentReference);
 										}
 									}
 									else {
 										orphanedBeanBizIds.add(bizId);
-										UtilImpl.LOGGER.info("ContentGarbageCollectionJob: Remove bean content with bizId " + bizId);
+										LOGGER.info("ContentGarbageCollectionJob: Remove bean content with bizId {}", bizId);
 									}
 								}
 							}
 						}
 						catch (Exception e) {
-							Util.LOGGER.warning("ContentGarbageCollectionJob retrieve problem..." + e.getLocalizedMessage());
-							if (UtilImpl.CONTENT_TRACE) Util.LOGGER.log(Level.WARNING, "ContentGarbageCollectionJob.execute() problem...", e);
+							LOGGER.warn("ContentGarbageCollectionJob retrieve problem...{}", e.getLocalizedMessage());
+							if (UtilImpl.CONTENT_TRACE) CONTENT_LOGGER.warn(EXECUTE_PROBLEM_MESSAGE, e);
 						}
 					}
 					
@@ -186,8 +187,8 @@ public class ContentGarbageCollectionJob implements Job {
 							cm.removeAttachment(contentId);
 						}
 						catch (Exception e) {
-							Util.LOGGER.warning("ContentGarbageCollectionJob remove problem..." + e.getLocalizedMessage());
-							if (UtilImpl.CONTENT_TRACE) Util.LOGGER.log(Level.WARNING, "ContentGarbageCollectionJob.execute() problem...", e);
+							LOGGER.warn("ContentGarbageCollectionJob remove problem...{}", e.getLocalizedMessage());
+							if (UtilImpl.CONTENT_TRACE) CONTENT_LOGGER.warn(EXECUTE_PROBLEM_MESSAGE, e);
 						}
 					}
 					orphanedAttachmentContentIds.clear();
@@ -197,8 +198,8 @@ public class ContentGarbageCollectionJob implements Job {
 							cm.removeBean(bizId);
 						}
 						catch (Exception e) {
-							Util.LOGGER.warning("ContentGarbageCollectionJob remove problem..." + e.getLocalizedMessage());
-							if (UtilImpl.CONTENT_TRACE) Util.LOGGER.log(Level.WARNING, "ContentGarbageCollectionJob.execute() problem...", e);
+							LOGGER.warn("ContentGarbageCollectionJob remove problem...{}", e.getLocalizedMessage());
+							if (UtilImpl.CONTENT_TRACE) CONTENT_LOGGER.warn(EXECUTE_PROBLEM_MESSAGE, e);
 						}
 					}
 					orphanedBeanBizIds.clear();
@@ -207,7 +208,7 @@ public class ContentGarbageCollectionJob implements Job {
 			finally {
 				p.commit(true);
 			}
-			Util.LOGGER.info("Successfully performed Content Garbage Collection");
+			LOGGER.info("Successfully performed Content Garbage Collection");
 		}
 		catch (Exception e) {
 			throw new JobExecutionException("Error encountered whilst performing CMS garbage collection", e);

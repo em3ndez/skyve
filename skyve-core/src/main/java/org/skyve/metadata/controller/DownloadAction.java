@@ -4,9 +4,29 @@ import org.skyve.domain.Bean;
 import org.skyve.metadata.MetaData;
 import org.skyve.web.WebContext;
 
+import jakarta.annotation.Nonnull;
+
 /**
- * 
- * @param <T>
+ * A two-phase action contract that streams a generated file to the browser.
+ *
+ * <p>The download lifecycle is split across two HTTP requests to allow graceful
+ * validation before committing to a potentially expensive file generation:
+ * <ol>
+ *   <li>{@link #prepare} — called in the first request. Validates the bean and primes
+ *       any state needed by the download. If preparation fails, throw an exception to
+ *       abort before the download request is made.</li>
+ *   <li>{@link #download} — called in the second request. Generates and returns the
+ *       {@link Download} transfer object. This method must not fail gracefully; use
+ *       {@code prepare} for all validation.</li>
+ * </ol>
+ *
+ * <p>Implementations must be stateless or request-scoped; Skyve creates a new instance
+ * per invocation. State needed between the two phases must be stored in the bean or the
+ * {@link org.skyve.web.WebContext}.
+ *
+ * @param <T>  the document bean type the action operates on
+ * @see Download
+ * @see ImplicitActionName#Download
  */
 public abstract class DownloadAction<T extends Bean> implements MetaData {
 	/**
@@ -18,7 +38,7 @@ public abstract class DownloadAction<T extends Bean> implements MetaData {
 	 * @param webContext	The context to manipulate.
 	 * @throws Exception
 	 */
-	public abstract void prepare(T bean, WebContext webContext) throws Exception;
+	public abstract void prepare(@Nonnull T bean, @Nonnull WebContext webContext) throws Exception;
 	
 	/**
 	 * Called to get the download stream/file.
@@ -30,5 +50,5 @@ public abstract class DownloadAction<T extends Bean> implements MetaData {
 	 * @return file	The file to process.
 	 * @throws Exception
 	 */
-	public abstract Download download(T bean, WebContext webContext) throws Exception;
+	public abstract @Nonnull Download download(@Nonnull T bean, @Nonnull WebContext webContext) throws Exception;
 }

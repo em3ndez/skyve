@@ -3,6 +3,7 @@
 			xmlns="http://www.skyve.org/xml/document"
 			xsi:schemaLocation="http://www.skyve.org/xml/document ../../../schemas/document.xsd"
 			xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<documentation>Manages system-wide configuration settings including password policies, email configuration, two-factor authentication, user registration settings, and security parameters for the entire application.</documentation>
 	<persistent name="ADM_Configuration">
 		<cache>eternal</cache>
 	</persistent>
@@ -257,10 +258,10 @@
 				<![CDATA[getStartup().getCaptchaType() != null && modules.admin.domain.Startup.CaptchaType.googleRecaptcha == getStartup().getCaptchaType()]]>
 			</expression>
 		</condition>
-		<condition name="hasIpInfoToken" usage="view">
-			<description>True when an IPinfo token has been set</description>
+		<condition name="hasGeoIPKey" usage="view">
+			<description>True when an Geo IP key/token has been set</description>
 			<expression>
-				<![CDATA[getStartup().getApiIpInfoToken() != null]]>
+				<![CDATA[getStartup().getGeoIPKey() != null]]>
 			</expression>
 		</condition>
 		<condition name="cloudflareTurnstile" usage="both">
@@ -274,6 +275,10 @@
 			<expression>
 				<![CDATA[getStartup().getCaptchaType() == null]]>
 			</expression>
+		</condition>
+		<condition name="ipAddressChecksEnabled" usage="view">
+			<description>True when IP address checks are enabled in startup.</description>
+			<expression>getStartup().isIpAddressChecksEnabled()</expression>
 		</condition>
 	</conditions>
 </document>

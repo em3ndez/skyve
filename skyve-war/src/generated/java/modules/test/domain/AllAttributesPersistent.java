@@ -141,7 +141,7 @@ public class AllAttributesPersistent extends AbstractPersistentBean {
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum Enum3 implements Enumeration {
+	public enum Enum3 implements Enumeration {
 		one("one", "one"),
 		two("two", "two"),
 		three("three", "three");
@@ -355,12 +355,6 @@ public class AllAttributesPersistent extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof AllAttributesPersistent) && 
-					this.getBizId().equals(((AllAttributesPersistent) o).getBizId()));
 	}
 
 	/**

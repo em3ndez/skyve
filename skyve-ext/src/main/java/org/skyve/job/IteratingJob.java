@@ -3,8 +3,6 @@ package org.skyve.job;
 import java.util.Collection;
 
 import org.skyve.persistence.Persistence;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import jakarta.inject.Inject;
 
@@ -12,9 +10,9 @@ import jakarta.inject.Inject;
  * A job that performs an operation over a collection of elements.
  */
 public abstract class IteratingJob<T> extends CancellableJob {
-	private static final Logger LOGGER = LoggerFactory.getLogger(IteratingJob.class);
 
 	@Inject
+	@SuppressWarnings("java:S6813") // allow member injection
 	private transient Persistence persistence;
 
 	private int numProcessedElements;
@@ -24,7 +22,7 @@ public abstract class IteratingJob<T> extends CancellableJob {
 	private int numRolledBackElements;
 
 	@Override
-	@SuppressWarnings("boxing")
+	@SuppressWarnings({"boxing", "java:S3776"}) // Complexity OK
 	public void execute() throws Exception {
 		getLog().add(String.format("Commencing job %s.", getDisplayName()));
 

@@ -6,15 +6,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.lang3.tuple.MutablePair;
-import org.apache.commons.lang3.tuple.Pair;
 import org.skyve.domain.Bean;
 import org.skyve.domain.ChildBean;
 import org.skyve.domain.HierarchicalBean;
 import org.skyve.domain.PersistentBean;
 import org.skyve.impl.metadata.model.document.field.Field;
 import org.skyve.impl.metadata.model.document.field.Field.IndexType;
+import org.skyve.impl.metadata.model.document.field.LengthField;
 import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.metadata.customer.Customer;
@@ -28,32 +26,85 @@ import org.skyve.metadata.model.document.Association.AssociationType;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
 import org.skyve.util.JSON;
+import org.skyve.util.logging.Category;
+import org.slf4j.Logger;
 
+/**
+ * Represents backup table metadata derived from Skyve documents, including
+ * persistent identifiers, fields, and indexes used for backup/restore.
+ *
+ * <p>Instances are populated from document metadata (including associations and
+ * embedded structures) and can be serialized to or reconstructed from JSON for
+ * portability.</p>
+ */
 class Table {
-	static final ImmutablePair<AttributeType, Sensitivity> TEXT = ImmutablePair.of(AttributeType.text, Sensitivity.none);
-	static final ImmutablePair<AttributeType, Sensitivity> ASSOCIATION = ImmutablePair.of(AttributeType.association, Sensitivity.none);
-	static final ImmutablePair<AttributeType, Sensitivity> INTEGER = ImmutablePair.of(AttributeType.integer, Sensitivity.none);
+	/** Shared field definition for text columns with no sensitivity. */
+	static final BackupField TEXT = new BackupField(AttributeType.text, Sensitivity.none);
+	/** Shared field definition for association columns with no sensitivity. */
+	static final BackupField ASSOCIATION = new BackupField(AttributeType.association, Sensitivity.none);
+	/** Shared field definition for integer columns with no sensitivity. */
+	static final BackupField INTEGER = new BackupField(AttributeType.integer, Sensitivity.none);
 
+    private static final Logger COMMAND_LOGGER = Category.COMMAND.logger();
+
+	/**
+	 * Schema-agnostic table identifier used for equality and JSON payloads.
+	 */
 	String agnosticIdentifier;
+	
+	/**
+	 * Fully qualified persistent identifier (includes catalog/schema when set).
+	 */
 	String persistentIdentifier;
-	LinkedHashMap<String, Pair<AttributeType, Sensitivity>> fields = new LinkedHashMap<>();
+	
+	/**
+	 * Ordered field definitions keyed by column name.
+	 */
+	LinkedHashMap<String, BackupField> fields = new LinkedHashMap<>();
+	
+	/**
+	 * Index definitions keyed by column name.
+	 */
 	TreeMap<String, IndexType> indexes = new TreeMap<>();
 	
+	/**
+	 * Create a table metadata holder for backup/restore.
+	 *
+	 * @param agnosticIdentifier schema-agnostic table identifier
+	 * @param persistentIdentifier fully qualified persistent identifier
+	 */
 	Table(String agnosticIdentifier, String persistentIdentifier) {
 		this.agnosticIdentifier = agnosticIdentifier;
 		this.persistentIdentifier = persistentIdentifier;
 	}
 
+	/**
+	 * Equality is based on the schema-agnostic identifier.
+	 */
 	@Override
 	public boolean equals(Object obj) {
-		return ((obj instanceof Table) && (agnosticIdentifier != null) && agnosticIdentifier.equals(((Table) obj).agnosticIdentifier));
+		return ((obj instanceof Table table) && (agnosticIdentifier != null) && agnosticIdentifier.equals(table.agnosticIdentifier));
 	}
 
+	/**
+	 * Hash code is derived from the schema-agnostic identifier.
+	 */
 	@Override
 	public int hashCode() {
 		return agnosticIdentifier.hashCode();
 	}
 
+	/**
+	 * Populate backup fields and indexes from a document's metadata.
+	 *
+	 * <p>This captures Skyve system columns, discriminator/type markers for
+	 * inheritance and arc associations, and embedded attributes, while skipping
+	 * dynamic attributes and non-persistent collections.</p>
+	 *
+	 * @param customer the owning customer used to resolve modules/documents
+	 * @param document the document whose metadata drives the backup schema
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	void addFieldsFromDocument(Customer customer, Document document) {
 		boolean joinedExtension = false;
 		Persistent persistent = document.getPersistent();
@@ -61,7 +112,7 @@ class Table {
 			ExtensionStrategy strategy = persistent.getStrategy();
 			// Check there is actually a Document with a persistent name extended somewhere in the document hierarchy
 			Module module = customer.getModule(document.getOwningModuleName());
-			if (ProvidedRepositoryFactory.get().findNearestPersistentUnmappedSuperDocument(customer, module, document) != null) {
+			if (ProvidedRepositoryFactory.get().findNearestPersistentSingleOrJoinedSuperDocument(customer, module, document) != null) {
 				if (ExtensionStrategy.single.equals(strategy)) {
 					fields.put(PersistentBean.DISCRIMINATOR_NAME, TEXT);
 				}
@@ -82,7 +133,7 @@ class Table {
 				fields.put(Bean.BIZ_KEY, TEXT);
 			}
 			else {
-				fields.put(Bean.BIZ_KEY, ImmutablePair.of(AttributeType.text, sensitivity));
+				fields.put(Bean.BIZ_KEY, new BackupField(AttributeType.text, sensitivity));
 			}
 			fields.put(Bean.CUSTOMER_NAME, TEXT);
 			fields.put(PersistentBean.FLAG_COMMENT_NAME, TEXT);
@@ -106,6 +157,16 @@ class Table {
 		processAttributes(joinedExtension, null, customer, document);
 	}
 	
+	/**
+	 * Walk attributes (and embedded associations) and register their backup
+	 * fields and indexes.
+	 *
+	 * @param joinedExtension whether this document is a joined extension
+	 * @param embeddedColumnsPrefix prefix for embedded attribute columns, or null
+	 * @param customer the owning customer used to resolve referenced documents
+	 * @param document the document whose attributes are being processed
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void processAttributes(boolean joinedExtension, String embeddedColumnsPrefix, Customer customer, Document document) {
 		for (Attribute attribute : joinedExtension ? document.getAttributes() : document.getAllAttributes(customer)) {
 			if (attribute.isPersistent()) {
@@ -122,12 +183,12 @@ class Table {
 						}
 						else {
 							Persistent referencedPersistent = referencedDocument.getPersistent();
-							if ((referencedPersistent != null) && ExtensionStrategy.mapped.equals(referencedPersistent.getStrategy())) {
+							if ((referencedPersistent != null) && referencedPersistent.isPolymorphicallyMapped()) {
 								fields.put(attributeName + "_type", TEXT);
 							}
 							
-							fields.put(attributeName + "_id", ImmutablePair.of(attributeType, Sensitivity.none));
-							if (UtilImpl.COMMAND_TRACE) UtilImpl.LOGGER.info(agnosticIdentifier + " - Put " + attributeName + "_id -> " + attributeType);
+							fields.put(attributeName + "_id", new BackupField(attributeType, Sensitivity.none));
+							if (UtilImpl.COMMAND_TRACE) COMMAND_LOGGER.info("{} - Put {}_id -> {}", agnosticIdentifier, attributeName, attributeType);
 						}
 					}
 				}
@@ -135,8 +196,7 @@ class Table {
 							(! AttributeType.inverseOne.equals(attributeType)) &&
 							(! AttributeType.inverseMany.equals(attributeType))) {
 					boolean dynamic = false;
-					if (attribute instanceof Field) {
-						Field field = (Field) attribute;
+					if (attribute instanceof Field field) {
 						dynamic = field.isDynamic();
 						IndexType indexType = field.getIndex();
 						if (indexType != null) {
@@ -151,15 +211,22 @@ class Table {
 						}
 
 						// Either add the field, or upgrade its sensitivity value as appropriate
-						Pair<AttributeType, Sensitivity> pair = fields.get(fieldName);
-						if (pair == null) {
-							fields.put(fieldName, MutablePair.of(attributeType, sensitivity));
-							if (UtilImpl.COMMAND_TRACE) UtilImpl.LOGGER.info(agnosticIdentifier + " - Put " + fieldName + " -> " + attributeType);
+						BackupField field = fields.get(fieldName);
+						if (field == null) {
+							// If a length field, record the maximum length
+							if (attribute instanceof LengthField lengthField) {
+								Integer maxLength = Integer.valueOf(lengthField.getLength());
+								fields.put(fieldName, new BackupLengthField(attributeType, sensitivity, maxLength));
+							} else {
+								fields.put(fieldName, new BackupField(attributeType, sensitivity));
+							}
+
+							if (UtilImpl.COMMAND_TRACE) COMMAND_LOGGER.info("{} - Put {} -> {}", agnosticIdentifier, fieldName, attributeType);
 						}
 						else {
-							Sensitivity existing = pair.getRight();
+							Sensitivity existing = field.getSensitivity();
 							if (sensitivity.ordinal() > existing.ordinal()) {
-								pair.setValue(sensitivity);
+								field.setSensitivity(sensitivity);
 							}
 						}
 					}
@@ -168,29 +235,46 @@ class Table {
 		}
 	}
 	
+	/**
+	 * Serialize this table definition to JSON for backup/restore portability.
+	 *
+	 * <p>The JSON includes the table name, fields (attribute type only), and for
+	 * join tables the owner table name and ordering flag.</p>
+	 *
+	 * @return JSON representation of this table definition
+	 * @throws Exception if JSON marshalling fails
+	 */
 	public String toJSON() throws Exception {
 		Map<String, Object> result = new TreeMap<>();
 		result.put("name", agnosticIdentifier);
 		List<Map<String, Object>> fieldList = new ArrayList<>(fields.size());
 		for (String key : fields.keySet()) {
-			Pair<AttributeType, Sensitivity> pair = fields.get(key);
+			BackupField backupField = fields.get(key);
 			Map<String, Object> field = new TreeMap<>();
 			// Ignore data sensitivity in fields as this is just for restore
-			field.put(key, pair.getLeft());
+			field.put(key, backupField.getAttributeType());
 			fieldList.add(field);
 		}
 		result.put("fields", fieldList);
-		if (this instanceof JoinTable) {
-			JoinTable join = (JoinTable) this;
+		if (this instanceof JoinTable join) {
 			result.put("ownerTableName", join.ownerAgnosticIdentifier);
 			result.put("ordered", Boolean.valueOf(join.ordered));
 		}
 		return JSON.marshall(result);
 	}
 	
-	@SuppressWarnings("unchecked")
+	/**
+	 * Reconstruct a table definition from its JSON representation.
+	 *
+	 * <p>Schema/catalog qualifiers are applied when configured, and join-table
+	 * metadata is restored when present.</p>
+	 *
+	 * @param json the JSON representation previously produced by {@link #toJSON()}
+	 * @return the reconstructed table definition
+	 * @throws Exception if JSON parsing or conversion fails
+	 */
 	public static Table fromJSON(String json) throws Exception {
-		Map<String, Object> map = (Map<String, Object>) JSON.unmarshall(null, json);
+		Map<String, Object> map = (Map<String, Object>) JSON.unmarshall(json);
 
 		String agnosticIdentifier = (String) map.get("name");
 		String persistentIdentifier = agnosticIdentifier;
@@ -215,7 +299,7 @@ class Table {
 		for (Map<String, Object> field : fieldList) {
 			for (String key : field.keySet()) {
 				// Ignore data sensitivity in fields as this is just for restore
-				result.fields.put(key, ImmutablePair.of(AttributeType.valueOf((String) field.get(key)), Sensitivity.none));
+				result.fields.put(key, new BackupField(AttributeType.valueOf((String) field.get(key)), Sensitivity.none));
 			}
 		}
 		

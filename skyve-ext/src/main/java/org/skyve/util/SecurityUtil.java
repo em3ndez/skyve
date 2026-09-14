@@ -1,30 +1,62 @@
 package org.skyve.util;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.apache.commons.text.StringTokenizer;
 import org.skyve.CORE;
 import org.skyve.EXT;
 import org.skyve.domain.app.admin.SecurityLog;
+import org.skyve.domain.messages.DomainException;
 import org.skyve.domain.types.Timestamp;
+import org.skyve.impl.metadata.user.SuperUser;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.persistence.hibernate.AbstractHibernatePersistence;
+import org.skyve.impl.security.LegacyBCryptPasswordEncoder;
+import org.skyve.impl.security.SkyveLegacyPasswordEncoder;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.HttpServletRequestResponse;
 import org.skyve.impl.web.WebContainer;
 import org.skyve.metadata.user.User;
-import org.skyve.persistence.Persistence;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
+import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
+import org.springframework.security.crypto.password.DelegatingPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.crypto.password.Pbkdf2PasswordEncoder;
+import org.springframework.security.crypto.scrypt.SCryptPasswordEncoder;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 import jakarta.servlet.http.HttpServletRequest;
 
+/**
+ * Utility class for handling security-related operations.
+ * Provides functionality for security logging, password hashing, and IP address handling.
+ */
+@SuppressWarnings("java:S2068") // Suppress "Hardcoded password" false positives
 public class SecurityUtil {
 
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(SecurityUtil.class);
+
+	private static final String ANONYMOUS_SECURITY_USER = "securityUser";
+	private static final String ARGON2_ALGORITHM = "argon2";
+	private static final String HTML_LINE_BREAK = "<br/>";
+	private static final PasswordEncoder BCRYPT_PASSWORD_ENCODER = new LegacyBCryptPasswordEncoder();
+
 	/**
-	 * Creates a {@link SecurityLog} entry and emails its contents to the defined support user.
-	 * 
-	 * @param exception The exception raised for this security event
+	 * Creates a security log entry and optionally sends an email notification for the specified exception.
+	 * The event type is derived from the exception class name, and the message is taken from the exception.
+	 *
+	 * @param exception The exception that triggered the security event
+	 * @param email Whether to attempt sending an email notification
+	 * @throws IllegalArgumentException if exception is null
 	 */
-	public static void log(@Nonnull Exception exception) {
+	public static void log(@Nonnull Exception exception, boolean email) {
 		// Get human-readable exception name
 		String eventType = exception.getClass()
 				.getSimpleName()
@@ -33,180 +65,264 @@ public class SecurityUtil {
 		String eventMessage = exception.getMessage();
 		String provenance = getProvenance(exception);
 
-		log(eventType, eventMessage, provenance, null);
+		log(eventType, eventMessage, provenance, null, email);
 	}
 
 	/**
-	 * Creates a {@link SecurityLog} entry and emails its contents to the defined support user.
-	 * 
-	 * @param eventType The type of security event
-	 * @param eventMessage What is this security event
+	 * Creates a security log entry and optionally sends an email notification for a security event.
+	 * Uses the current user from the persistence context.
+	 *
+	 * @param eventType The type of security event (e.g., "Password Change")
+	 * @param eventMessage A detailed description of the security event
+	 * @param email Whether to attempt sending an email notification
+	 * @throws IllegalArgumentException if eventType or eventMessage is null
 	 */
-	public static void log(@Nonnull String eventType, @Nonnull String eventMessage) {
-		log(eventType, eventMessage, null, null);
+	public static void log(@Nonnull String eventType, @Nonnull String eventMessage, boolean email) {
+		log(eventType, eventMessage, null, null, email);
 	}
 
 	/**
-	 * Creates a {@link SecurityLog} entry and emails its contents to the defined support user.
-	 * <br/>
-	 * Use this method when the user for the security event is not attainable by <code>CORE.getPersistence.getUser</code>.
-	 * 
-	 * @param eventType The type of security event
-	 * @param eventMessage What is this security event
-	 * @param user The user for this security event
+	 * Creates a security log entry and optionally sends an email notification for a security event with a specific user.
+	 * Use this method when the user for the security event is not available in the current persistence context.
+	 *
+	 * @param eventType The type of security event (e.g., "Password Change")
+	 * @param eventMessage A detailed description of the security event
+	 * @param user The user associated with this security event
+	 * @param email Whether to attempt sending an email notification
+	 * @throws IllegalArgumentException if eventType, eventMessage, or user is null
 	 */
-	public static void log(@Nonnull String eventType, @Nonnull String eventMessage, @Nonnull User user) {
-		log(eventType, eventMessage, null, user);
+	public static void log(@Nonnull String eventType, @Nonnull String eventMessage, @Nonnull User user, boolean email) {
+		log(eventType, eventMessage, null, user, email);
 	}
 
 	/**
-	 * Creates a {@link SecurityLog} entry and emails its contents to the defined support user.
+	 * Creates a security log entry and optionally sends an email notification.
+	 * Creates a new persistence instance to handle the logging operation.
 	 *
 	 * @param eventType The type of security event
-	 * @param eventMessage What is this security event
-	 * @param provenance The first line of the stack trace
-	 * @param user The user for this security event (if not supplied, fetched from current persistence)
-	 * 
-	 * @author Simeon Solomou
+	 * @param eventMessage A detailed description of the security event
+	 * @param provenance The stack trace information for the event
+	 * @param user The user associated with this security event (if null, uses current persistence user)
+	 * @param email Whether to attempt sending an email notification
+	 * @throws IllegalArgumentException if eventType or eventMessage is null
 	 */
-	private static void log(@Nonnull String eventType, @Nonnull String eventMessage, @Nullable String provenance, @Nullable User user) {
-		// Get current persistence
-		User currentUser = user;
-		if (currentUser == null) {
-			Persistence p = CORE.getPersistence();
-			currentUser = p.getUser();
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private static void log(@Nonnull String eventType, @Nonnull String eventMessage, @Nullable String provenance, @Nullable User user, boolean email) {
+		// If no user is specified, attempt to retrieve from current persistence
+		User associatedUser = user;
+		if (associatedUser == null) {
+			associatedUser = CORE.getPersistence().getUser();
 		}
 
 		// Create a new, temporary persistence
 		AbstractHibernatePersistence tempP = (AbstractHibernatePersistence) AbstractPersistence.newInstance();
 		try {
-			// Setting user and beginning transaction
-			tempP.setUser(currentUser);
+			SuperUser superUser;
+			if (associatedUser != null) {
+				superUser = new SuperUser(associatedUser);
+			} else {
+				superUser = new SuperUser();
+				superUser.setName(ANONYMOUS_SECURITY_USER);
+				superUser.setId(ANONYMOUS_SECURITY_USER);
+
+				// Attempt to determine the customer
+				String defaultCustomerName = UtilImpl.CUSTOMER;
+				if (defaultCustomerName != null) {
+					superUser.setCustomerName(defaultCustomerName);
+				} else {
+					LOGGER.warn("Cannot log as customer is indeterminate");
+					return;
+				}
+			}
+
+			tempP.setUser(superUser);
 			tempP.begin();
 
 			try {
-				SecurityLog sl = SecurityLog.newInstance(currentUser);
+				SecurityLog sl = SecurityLog.newInstance(superUser);
 
-				// Timestamp
 				sl.setTimestamp(new Timestamp());
 
+				// Attempt to retrieve thread data
 				Thread currentThread = Thread.currentThread();
 				if (currentThread != null) {
-					// Thread ID
 					sl.setThreadId(Long.valueOf(currentThread.getId()));
-
-					// Thread Name
 					sl.setThreadName(currentThread.getName());
 				}
 
-				// Source IP
+				// Attempt to retrieve source IP
 				HttpServletRequestResponse requestResponse = WebContainer.getHttpServletRequestResponse();
-				if (requestResponse == null) {
-					Util.LOGGER.severe("Failed to get HTTP request/response");
-				} else {
+				if (requestResponse != null) {
 					HttpServletRequest request = requestResponse.getRequest();
-					if (request == null) {
-						Util.LOGGER.severe("Failed to get HTTP request");
-					} else {
-						sl.setSourceIP(SecurityUtil.getSourceIpAddress(request));
-					}
+					sl.setSourceIP(SecurityUtil.getSourceIpAddress(request));
+				} else {
+					LOGGER.error("Failed to get HTTP request/response");
 				}
 
-				// Username
-				sl.setUsername(currentUser.getName());
+				// If we have an associated user, reference
+				if (associatedUser != null) {
+					sl.setUsername(associatedUser.getName());
+					sl.setLoggedInUserId(associatedUser.getId());
+				}
 
-				// Logged in user (ID)
-				sl.setLoggedInUserId(currentUser.getId());
-
-				// Event type
+				// Store event information
 				sl.setEventType(eventType);
-
-				// Event message
 				sl.setEventMessage(eventMessage);
-
-				// Provenance
 				sl.setProvenance(provenance);
 
 				try {
-					// Upsert
 					tempP.upsertBeanTuple(sl);
 				} catch (Exception e) {
-					Util.LOGGER.severe("Failed to save security log entry");
-					e.printStackTrace();
+					LOGGER.error("Failed to save security log entry", e);
 				}
 
-				try {
-					// Email
-					email(sl);
-				} catch (Exception e) {
-					Util.LOGGER.severe("Failed to email security log entry");
-					e.printStackTrace();
+				if (email) {
+					try {
+						email(sl);
+					} catch (Exception e) {
+						LOGGER.error("Failed to email security log entry", e);
+					}
 				}
 			} catch (Exception e) {
-				Util.LOGGER.severe("Failed to create security log entry");
-				e.printStackTrace();
+				LOGGER.error("Failed to create security log entry", e);
 			} finally {
 				try {
 					tempP.commit(false);
 				} catch (Exception e) {
-					Util.LOGGER.severe("Failed to commit temporary persistence");
-					e.printStackTrace();
+					LOGGER.error("Failed to commit temporary persistence", e);
 				}
 			}
 		} finally {
 			try {
 				tempP.close();
 			} catch (Exception e) {
-				Util.LOGGER.severe("Failed to close temporary persistence");
-				e.printStackTrace();
+				LOGGER.error("Failed to close temporary persistence", e);
 			}
 		}
 	}
 	
 	/**
-	 * Sends an email to the support email address notifying of the new {@link SecurityLog} entry.
-	 * <br/>
-	 * If either support email is not specified, or email is not configured, a warning is logged.
-	 * 
-	 * @param sl The newly created security log
-	 * @author Simeon Solomou
+	 * Sends an email notification about a security log entry to the configured security notifications or support email address.
+	 * The email includes detailed information about the security event.
+	 *
+	 * @param sl The security log entry to be notified about
+	 * @throws IllegalArgumentException if sl is null
 	 */
 	private static void email(@Nonnull SecurityLog sl) {
-		String supportEmail = UtilImpl.SUPPORT_EMAIL_ADDRESS;
-		if (supportEmail == null) {
-			Util.LOGGER.warning("Cannot send security log notification as no support email address is specified");
-			return;
+		// Retrieve email address
+		String sendTo = UtilImpl.SECURITY_NOTIFICATIONS_EMAIL_ADDRESS;
+		if (sendTo == null) {
+			sendTo = UtilImpl.SUPPORT_EMAIL_ADDRESS;
+			if (sendTo == null) {
+				LOGGER.warn("Cannot send security log notification as no email address is specified");
+				return;
+			}
 		}
+
+		// Check email configuration
 		if ("localhost".equals(UtilImpl.SMTP)) {
-			Util.LOGGER.warning("Cannot send security log notification as email is not configured");
+			LOGGER.warn("Cannot send security log notification as email is not configured");
 			return;
 		}
+
+		// Extract event information
+		String timestamp = formatTimestampWithServerAndUTCZone(sl.getTimestamp());
+		Long threadId = sl.getThreadId();
+		String threadName = sl.getThreadName();
+		String sourceIP = sl.getSourceIP();
+		String username = sl.getUsername();
+		String loggedInUserId = sl.getLoggedInUserId();
+		String eventType = sl.getEventType();
+		String eventMessage = sl.getEventMessage();
+		String provenance = sl.getProvenance();
 
 		// Format email content
+		// nameEnv is the application name and environment identifier.
+		StringBuilder nameEnv = new StringBuilder();
+		nameEnv.append("[").append(UtilImpl.ARCHIVE_NAME);
+		if (UtilImpl.ENVIRONMENT_IDENTIFIER != null) {
+			nameEnv.append(" - ").append(UtilImpl.ENVIRONMENT_IDENTIFIER);
+		}
+		nameEnv.append("]");
 		StringBuilder body = new StringBuilder();
-		body.append("A new security event has been logged:<br/><br/>");
-		body.append("Timestamp: ").append(sl.getTimestamp()).append("<br/>");
-		body.append("Thread ID: ").append(sl.getThreadId()).append("<br/>");
-		body.append("Thread Name: ").append(sl.getThreadName()).append("<br/>");
-		body.append("Source IP: ").append(sl.getSourceIP()).append("<br/>");
-		body.append("Username: ").append(sl.getUsername()).append("<br/>");
-		body.append("Logged in User ID: ").append(sl.getLoggedInUserId()).append("<br/>");
-		body.append("Event Type: ").append(sl.getEventType()).append("<br/>");
-		body.append("Event Message: ").append(sl.getEventMessage()).append("<br/>");
-		body.append("Provenance: ").append(sl.getProvenance()).append("<br/>");
+		body.append("A new security event has been logged for application: ")
+				.append(nameEnv);
+		body.append("<br/><br/>");
+		if (timestamp != null) {
+			body.append("Timestamp: ").append(timestamp).append(HTML_LINE_BREAK);
+		}
+		if (threadId != null) {
+			body.append("Thread ID: ").append(threadId).append(HTML_LINE_BREAK);
+		}
+		if (threadName != null) {
+			body.append("Thread Name: ").append(threadName).append(HTML_LINE_BREAK);
+		}
+		if (sourceIP != null) {
+			body.append("Source IP: ").append(sourceIP).append(HTML_LINE_BREAK);
+		}
+		if (username != null) {
+			body.append("Username: ").append(username).append(HTML_LINE_BREAK);
+		}
+		if (loggedInUserId != null) {
+			body.append("Logged in User ID: ").append(loggedInUserId).append(HTML_LINE_BREAK);
+		}
+		if (eventType != null) {
+			body.append("Event Type: ").append(eventType).append(HTML_LINE_BREAK);
+		}
+		if (eventMessage != null) {
+			body.append("Event Message: ").append(eventMessage).append(HTML_LINE_BREAK);
+		}
+		if (provenance != null) {
+			body.append("Provenance: ").append(provenance).append(HTML_LINE_BREAK);
+		}
 
 		// Send
-		EXT.sendMail(new Mail().from(UtilImpl.SMTP_SENDER)
-				.addTo(supportEmail)
-				.subject("New security log entry")
+		StringBuilder subjectBuilder = new StringBuilder(nameEnv);
+		subjectBuilder.append(" Security Log Entry - ")
+				.append(eventType != null ? eventType : "Unknown");
+		EXT.getMailService()
+				.sendMail(new Mail().from(UtilImpl.SMTP_SENDER)
+				.addTo(sendTo)
+				.subject(subjectBuilder.toString())
 				.body(body.toString()));
 	}
 
 	/**
-	 * Returns the source IP for the parsed {@link HttpServletRequest}
-	 * 
-	 * @param request
-	 * @return source IP
+	 * Formats a {@link Timestamp} including both the server-local time and UTC time to ensure
+	 * clarity in security notification, as recipients may be in different timezones.
+	 *
+	 * @param timestamp the {@link Timestamp} to format, may be null
+	 * @return a string in the format "yyyy-MM-dd HH:mm:ss (UTC: yyyy-MM-dd HH:mm:ss)"
+	 */
+	private static @Nullable String formatTimestampWithServerAndUTCZone(@Nullable Timestamp timestamp) {
+		if (timestamp == null) {
+			return null;
+		}
+
+		Instant instant = timestamp.toInstant();
+
+		// Server timezone
+		ZoneId serverZone = ZoneId.systemDefault();
+		ZonedDateTime serverTime = instant.atZone(serverZone);
+
+		// UTC timezone
+		ZoneId utcZone = ZoneId.of("UTC");
+		ZonedDateTime utcTime = instant.atZone(utcZone);
+
+		DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+		return String.format("%s (UTC: %s)", serverTime.format(formatter), utcTime.format(formatter));
+	}
+
+	/**
+	 * Extracts the source IP address from an HTTP request, checking various headers in order:
+	 * 1. "Forwarded" header
+	 * 2. "X-Forwarded-For" header
+	 * 3. Remote address
+	 *
+	 * @param request The HTTP request to extract the IP address from
+	 * @return The source IP address as a string
+	 * @throws IllegalArgumentException if request is null
 	 */
 	public static @Nonnull String getSourceIpAddress(@Nonnull HttpServletRequest request) {
 		// Check "Forwarded" header
@@ -234,10 +350,11 @@ public class SecurityUtil {
 	}
 
 	/**
-	 * Returns the first line of the stack trace for the parsed {@link Exception}
-	 * 
-	 * @param e
-	 * @return provenance
+	 * Extracts the first line of the stack trace from an exception to use as provenance information.
+	 *
+	 * @param e The exception to extract provenance from
+	 * @return The first line of the stack trace, or null if no stack trace is available
+	 * @throws IllegalArgumentException if e is null
 	 */
 	public static @Nullable String getProvenance(@Nonnull Exception e) {
 		StackTraceElement[] stackTrace = e.getStackTrace();
@@ -246,5 +363,57 @@ public class SecurityUtil {
 			return firstElement.toString();
 		}
 		return null;
+	}
+
+	/**
+	 * Create Skyve's version of Spring Security's DelegatingPasswordEncoder (from their PasswordEncoderFactories class)
+	 * @return	Skyve's delegating password encoder
+	 */
+	public static @Nonnull PasswordEncoder createDelegatingPasswordEncoder() {
+		String encodingId = ARGON2_ALGORITHM;
+		Map<String, PasswordEncoder> encoders = new HashMap<>();
+		encoders.put(ARGON2_ALGORITHM, Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8());
+		encoders.put("bcrypt", BCRYPT_PASSWORD_ENCODER);
+		encoders.put("pbkdf2", Pbkdf2PasswordEncoder.defaultsForSpringSecurity_v5_8());
+		encoders.put("scrypt", SCryptPasswordEncoder.defaultsForSpringSecurity_v5_8());
+		DelegatingPasswordEncoder result = new DelegatingPasswordEncoder(encodingId, encoders);
+
+		// TODO Legacy hashing with no SALT - REMOVE when RevSA password time period expires 
+		result.setDefaultPasswordEncoderForMatches(new SkyveLegacyPasswordEncoder());
+
+		return result;
+	}
+	
+	/**
+	 * Provide a hash of a clear text password.
+	 * 
+	 * @param clearText
+	 * @return	The encoded password.
+	 */
+	public static @Nonnull String hashPassword(@Nonnull String clearText) {
+		String result = null;
+
+		String passwordHashingAlgorithm = Util.getPasswordHashingAlgorithm();
+		if (ARGON2_ALGORITHM.equals(passwordHashingAlgorithm)) {
+			result = "{argon2}" + Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8().encode(clearText);
+		}
+		else if ("bcrypt".equals(passwordHashingAlgorithm)) {
+			result = "{bcrypt}" + BCRYPT_PASSWORD_ENCODER.encode(clearText);
+		}
+		else if ("pbkdf2".equals(passwordHashingAlgorithm)) {
+			result = "{pbkdf2}" + Pbkdf2PasswordEncoder.defaultsForSpringSecurity_v5_8().encode(clearText);
+		}
+		else if ("scrypt".equals(passwordHashingAlgorithm)) {
+			result = "{scrypt}" + SCryptPasswordEncoder.defaultsForSpringSecurity_v5_8().encode(clearText);
+		}
+		// TODO Legacy hashing with no SALT - REMOVE when RevSA password time period expires 
+		else if ("SHA1".equals(passwordHashingAlgorithm)) {
+			result = SkyveLegacyPasswordEncoder.encode(clearText, passwordHashingAlgorithm);
+		}
+		else {
+			throw new DomainException(passwordHashingAlgorithm + " not supported");
+		}
+		
+		return result;
 	}
 }

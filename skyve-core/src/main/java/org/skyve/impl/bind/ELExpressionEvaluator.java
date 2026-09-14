@@ -22,24 +22,44 @@ import org.skyve.domain.types.Decimal2;
 import org.skyve.domain.types.Decimal5;
 import org.skyve.impl.metadata.model.document.DocumentImpl;
 import org.skyve.impl.metadata.user.UserImpl;
-import org.skyve.impl.util.UtilImpl;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
 import org.skyve.util.ExpressionEvaluator;
 import org.skyve.util.Util;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 import jakarta.el.ELManager;
 import jakarta.el.ELProcessor;
 
+/**
+ * Evaluates Skyve EL expressions against bean, user, and stash contexts.
+ *
+ * <p>The evaluator supports runtime evaluation, validation-time type checking,
+ * and completion hints for expression authoring.
+ *
+ * <p>Complexity: completion is linear in the number of known expression prefixes
+ * and candidate members on the resolved type.
+ */
 public class ELExpressionEvaluator extends ExpressionEvaluator {
+	/**
+	 * Expression prefix used for validation-time EL evaluation.
+	 */
 	public static final String EL_PREFIX = "el";
+
+	/**
+	 * Expression prefix used for runtime EL evaluation.
+	 */
 	public static final String RTEL_PREFIX = "rtel";
-	
+
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(ELExpressionEvaluator.class); 
+	private static final String BEAN_VARIABLE = "bean";
+
 	// Regex expressions to find the start of an EL expression
-	private static final String[] COMMENCING_REGEX_TOKENS = new String[] {"bean\\s*\\.",
+	private static final String[] COMMENCING_REGEX_TOKENS = new String[] {BEAN_VARIABLE + "\\s*\\.",
 																		"user\\s*\\.",
 																		"stash\\s*\\[",
 																		"stash\\s*\\.",
@@ -87,7 +107,7 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 	// Completes used when we know we are not continuing an expression (with '.' or '[')
 	private static final String[] COMMENCING_COMPLETES = new String[] {"empty",
 																		"concat(",
-																		"bean",
+																		BEAN_VARIABLE,
 																		"user",
 																		"stash",
 																		"newDateOnly()",
@@ -133,22 +153,53 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 
 	private boolean typesafe = false;
 	
+	/**
+	 * Creates an EL evaluator.
+	 *
+	 * @param typesafe {@code true} to enable validation against the supplied metadata context
+	 */
 	public ELExpressionEvaluator(boolean typesafe) {
 		this.typesafe = typesafe;
 	}
 
+	/**
+	 * Evaluates the expression against the current EL context.
+	 *
+	 * @param expression the EL expression without prefix or suffix
+	 * @param bean the bean used as the EL {@code bean} variable; may be {@code null}
+	 * @return the evaluated value, or {@code null} when the expression resolves to null
+	 */
 	@Override
 	public Object evaluateWithoutPrefixOrSuffix(String expression, Bean bean) {
 		ELProcessor elp = newSkyveEvaluationProcessor(bean);
 		return elp.eval(expression);
 	}
 
+	/**
+	 * Formats the evaluated expression for display.
+	 *
+	 * @param expression the EL expression without prefix or suffix
+	 * @param bean the bean used as the EL {@code bean} variable; may be {@code null}
+	 * @return the display text derived from the evaluated value
+	 */
 	@Override
 	public String formatWithoutPrefixOrSuffix(String expression, Bean bean) {
-		return BindUtil.toDisplay(CORE.getCustomer(), null, null, evaluateWithoutPrefixOrSuffix(expression, bean));
+		return BindUtil.toDisplay(CORE.getCustomer(), evaluateWithoutPrefixOrSuffix(expression, bean));
 	}
 	
+	/**
+	 * Validates a type-safe EL expression against the supplied metadata context.
+	 *
+	 * @param expression the EL expression without prefix or suffix
+	 * @param returnType the required result type, or {@code null} when unconstrained
+	 * @param customer the customer metadata context
+	 * @param module the module metadata context
+	 * @param document the document metadata context
+	 * @return a validation message when the expression is malformed or the result type is incompatible;
+	 *         otherwise {@code null}
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public String validateWithoutPrefixOrSuffix(String expression,
 													Class<?> returnType,
 													Customer customer,
@@ -163,11 +214,11 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 				Object evaluation = elp.eval(expression);
 				if (returnType != null) {
 					Class<?> type = null;
-					if (evaluation instanceof DocumentImpl) {
-						type = ((DocumentImpl) evaluation).getBeanClass(customer);
+					if (evaluation instanceof DocumentImpl evaluationDocument) {
+						type = evaluationDocument.getBeanClass(customer);
 					}
-					else if (evaluation instanceof Class<?>) {
-						type = (Class<?>) evaluation;
+					else if (evaluation instanceof Class<?> evaluationClass) {
+						type = evaluationClass;
 					}
 					else if (evaluation != null) {
 						type = evaluation.getClass();
@@ -179,7 +230,7 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 				}
 			}
 			catch (Exception e) {
-				e.printStackTrace();
+				LOGGER.error(e.getMessage(), e);
 				result = e.getMessage();
 				if (result == null) {
 					result = expression + " is malformed and caused an exception " + e.getClass();
@@ -190,7 +241,17 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 		return result;
 	}
 	
+	/**
+	 * Completes the expression fragment using the current EL context.
+	 *
+	 * @param fragment the partial expression being authored
+	 * @param customer the customer metadata context
+	 * @param module the module metadata context
+	 * @param document the document metadata context
+	 * @return matching completion candidates in the order they were discovered
+	 */
 	@Override
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	public List<String> completeWithoutPrefixOrSuffix(String fragment,
 														Customer customer,
 														Module module,
@@ -238,16 +299,16 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 								// Set below to determine methods and bean properties
 								Class<?> lastEvaluationClass = null;
 								// Add document attributes and conditions if applicable
-								if (lastEvaluation instanceof Document) {
+								if (lastEvaluation instanceof DocumentImpl lastEvaluationDocument) {
 									MetaDataExpressionEvaluator.addAttributesAndConditions(baseExpression,
 																							simpleBindingFragment,
 																							customer,
-																							(Document) lastEvaluation,
+																							document,
 																							result);
-									lastEvaluationClass = ((DocumentImpl) lastEvaluation).getBeanClass(customer);
+									lastEvaluationClass = lastEvaluationDocument.getBeanClass(customer);
 								}
-								else if (lastEvaluation instanceof Class<?>) {
-									lastEvaluationClass = (Class<?>) lastEvaluation;
+								else if (lastEvaluation instanceof Class<?> lastEvaluationType) {
+									lastEvaluationClass = lastEvaluationType;
 								}
 								else {
 									lastEvaluationClass = lastEvaluation.getClass();
@@ -308,8 +369,8 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 								result.add(baseExpression + "[9]");
 							}
 							// if a map, start EL map key notation
-							else if (lastEvaluation instanceof Class<?>) {
-								if (Map.class.isAssignableFrom((Class<?>) lastEvaluation)) {
+							else if (lastEvaluation instanceof Class<?> lastEvaluationType) {
+								if (Map.class.isAssignableFrom(lastEvaluationType)) {
 									result.add(baseExpression + "['");
 								}
 							}
@@ -321,7 +382,7 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 					}
 				}
 				catch (Exception e) {
-					UtilImpl.LOGGER.warning(input + "is malformed and caused exception " + e.getClass() + ":-" + e.getMessage());
+				    LOGGER.warn("{} is malformed and caused exception {} :- {}", input, e.getClass(), e.getMessage());
 				}
 			}
 			else { // ending an expression chain
@@ -359,6 +420,12 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 		}
 	}
 	
+	/**
+	 * Prefixes {@code bean} bindings in the expression with the supplied binding path.
+	 *
+	 * @param expression the expression buffer to mutate
+	 * @param binding the binding path to insert before each {@code bean} reference
+	 */
 	@Override
 	public void prefixBindingWithoutPrefixOrSuffix(StringBuilder expression, String binding) {
 		// Append binding to "bean."
@@ -376,12 +443,25 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 		}
 	}
 	
+	/**
+	 * Creates an EL processor configured for validation against metadata.
+	 *
+	 * @param customer the customer metadata context
+	 * @param document the document metadata context; may be {@code null}
+	 * @return a configured processor with Skyve EL functions and validation resolvers
+	 */
 	public static ELProcessor newSkyveValidationProcessor(@Nonnull Customer customer, @Nullable Document document) {
 		ELProcessor result = setupProcessor(customer, document, UserImpl.class, Map.class);
 		result.getELManager().addELResolver(new ValidationELResolver(customer));
 		return result;
 	}
 	
+	/**
+	 * Creates an EL processor configured for runtime evaluation.
+	 *
+	 * @param bean the bean to expose as {@code bean}; may be {@code null}
+	 * @return a configured processor with Skyve EL functions and runtime binding resolvers
+	 */
 	public static ELProcessor newSkyveEvaluationProcessor(@Nullable Bean bean) {
 		ELProcessor result = setupProcessor(null, bean, CORE.getUser(), CORE.getStash());
 		result.getELManager().addELResolver(new BindingELResolver());
@@ -391,7 +471,7 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 	private static ELProcessor setupProcessor(@SuppressWarnings("unused") Customer customer, Object bean, Object user, Object stash) {
 		ELProcessor result = new ELProcessor();
 		if (bean != null) {
-			result.defineBean("bean", bean);
+		result.defineBean(BEAN_VARIABLE, bean);
 		}
 		result.defineBean("user", user);
 		result.defineBean("stash", stash);
@@ -462,14 +542,13 @@ public class ELExpressionEvaluator extends ExpressionEvaluator {
 
 		Class<?> classToImport = null;
 		
-		if (bean instanceof Document) { // could be a Document in validation mode
-			DocumentImpl d = (DocumentImpl) bean;
+		if (bean instanceof DocumentImpl d) { // could be a Document in validation mode
 			if (! d.isDynamic()) {
 				try {
 					classToImport = d.getBeanClass(customer);
 				} catch (ClassNotFoundException e) {
 					// TODO Auto-generated catch block
-					e.printStackTrace();
+					LOGGER.error(e.getMessage(), e);
 				}
 			}
 		}

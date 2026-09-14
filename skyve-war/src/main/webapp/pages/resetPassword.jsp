@@ -14,13 +14,17 @@
 <%@ page import="org.skyve.util.OWASP"%>
 <%@ page import="org.skyve.util.Util"%>
 <%@ page import="org.skyve.web.WebContext"%>
+<%@page import="org.slf4j.LoggerFactory"%>
+<%@page import="org.slf4j.Logger"%>
+
+<%! static final Logger logger = LoggerFactory.getLogger("org.skyve.jsp.resetPassword"); %>
 
 <%
 	final String newPasswordFieldName = "newPassword";
 	final String confirmPasswordFieldName = "confirmPassword";
 	
 	String basePath = Util.getSkyveContextUrl() + "/";
-	boolean mobile = UserAgent.getType(request).isMobile();
+	boolean mobile = UserAgent.detectType(request).isMobile();
 	Locale locale = request.getLocale();
 	
 	// Captcha checking
@@ -69,8 +73,18 @@
     else if (passwordResetToken == null) {
 		passwordChangeErrorMessage = Util.i18n("page.resetPassword.link.error", locale);
 	}
+	// Check if this is a form submission with missing captcha
+	else if ((newPasswordValue != null) && 
+				(confirmPasswordValue != null) && 
+				(siteKey != null) && 
+				(captcha == null)) {
+		passwordChangeErrorMessage = Util.i18n("page.resetPassword.captcha.error", locale);
+	}
 	// This is a postback, process it and move on
-	else if ((newPasswordValue != null) && (confirmPasswordValue != null) && (captcha != null)) {
+	else if ((newPasswordValue != null) && 
+				(confirmPasswordValue != null) && 
+				// Either no captcha used or the captcha has been completed
+				((siteKey == null) || (captcha != null))) {
 		// Remove warning flag after processing (if existing)
 		session.removeAttribute("breachedPasswordWarningShown");
 		session.removeAttribute("hashedPreviousPasswordPrefix");
@@ -78,7 +92,7 @@
 		if (WebUtil.validateRecaptcha(captcha)) {
 			passwordChangeErrorMessage = WebUtil.resetPassword(passwordResetToken, newPasswordValue, confirmPasswordValue);
 			if (passwordChangeErrorMessage == null) {
-				String redirectURL = response.encodeRedirectURL(Util.getHomeUrl() + "home.jsp");
+				String redirectURL = response.encodeRedirectURL(Util.getBaseUrl() + "home.jsp");
 	
 				String customerName = request.getParameter(AbstractWebContext.CUSTOMER_COOKIE_NAME);
 				if (customerName != null && !customerName.isBlank()) {
@@ -90,12 +104,13 @@
 			}
 		}
 		else {
-			UtilImpl.LOGGER.severe("Recaptcha failed validation");
+		    logger.error("Recaptcha failed validation");
+		    passwordChangeErrorMessage = Util.i18n("page.resetPassword.captcha.error", locale);
 		}
 	}
 %>
 <!DOCTYPE html>
-<html dir="<%=Util.isRTL(locale) ? "rtl" : "ltr"%>">
+<html dir="<%=Util.isRTL(locale) ? "rtl" : "ltr"%>" lang="<%=locale.getLanguage()%>" xml:lang="<%=locale.getLanguage()%>">
 	<head>
 		<!-- Standard Meta -->
 	    <meta charset="utf-8" />
@@ -124,7 +139,7 @@
 		<script type="text/javascript" src="semantic24/jquery.slim.min.js"></script>
 		<script type="text/javascript" src="semantic24/components/form.min.js"></script>
 		<script type="text/javascript" src="semantic24/components/transition.min.js"></script>
-		<script type="text/javascript" src="skyve/prime/skyve-min.js"></script>
+		<script type="text/javascript" src="skyve/prime/skyve-min.js?v=<%=UtilImpl.WEB_RESOURCE_FILE_VERSION%>"></script>
 		
 		<!-- Password strength estimator -->
 		<script type="text/javascript" src="zxcvbn/zxcvbn-4.4.2-min.js"></script>
@@ -257,10 +272,25 @@
 		                        <input type="password" name="<%=confirmPasswordFieldName%>" spellcheck="false" autocapitalize="none" autocomplete="off" autocorrect="none" placeholder="<%=Util.i18n("page.changePassword.confirmPassword.label", locale)%>" />
 		                    </div>
 		                </div>
-		                <div class="field">
-							<div class="g-recaptcha" data-sitekey="<%=siteKey%>"></div>
-		                </div>
+						<% if (siteKey != null) { %>
+							<div class="field">
+								<!-- A table to brute force the captcha to centre as it is an iframe -->
+								<table>
+									<tr>
+										<td style="width:50%" />
+										<td>
+											<div class="g-recaptcha" data-sitekey="<%=siteKey%>"></div>
+										</td>
+										<td style="width:50%" />
+									</tr>
+								</table>
+							</div>
+			            <% } %>
 	                	<input type="submit" value="<%=Util.i18n("page.changePassword.submit.label", locale)%>" class="ui fluid large blue submit button" />
+
+		                <div style="margin-top: 5px;">
+		                	<a href="<%=Util.getBaseUrl()%>" class="ui fluid basic large button"><%=Util.i18n("page.login.submit.label", locale)%></a>
+		                </div>
 	                </div>
 	                
 	                <div class="ui error message">

@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.owasp.encoder.Encode;
 import org.primefaces.behavior.ajax.AjaxBehavior;
 import org.primefaces.behavior.confirm.ConfirmBehavior;
 import org.primefaces.component.accordionpanel.AccordionPanel;
@@ -68,20 +69,51 @@ import jakarta.faces.component.html.HtmlPanelGrid;
 import jakarta.faces.component.html.HtmlPanelGroup;
 import jakarta.faces.convert.Converter;
 
+/**
+ * Renders a JSF component tree into a compact Facelets-like representation for
+ * generated-output and component-shape assertions.
+ *
+ * <p>Threading: instances are not thread-safe; each renderer owns a mutable
+ * {@link StringBuilder} for one render pass.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate JSF component attribute names.
 public class ComponentRenderer {
 	private static final char INDENT = '\t';
 	StringBuilder out = new StringBuilder(1024);
 	String indentation = "";
 	
+	/**
+	 * Renders {@code root} and its descendants immediately.
+	 *
+	 * <p>Side effects: walks the supplied component tree and appends generated output
+	 * to this instance's internal buffer. Component state is read but not mutated.
+	 *
+	 * @param root root component to render; must be a {@link UIComponentBase}
+	 */
 	public ComponentRenderer(UIComponent root) {
 		renderComponent((UIComponentBase) root);
 	}
 	
+	/**
+	 * Returns the rendered component representation.
+	 *
+	 * @return generated component markup; never {@code null}
+	 */
 	@Override
 	public String toString() {
 		return out.toString();
 	}
 
+	/**
+	 * Renders one component, its attributes, facets, behaviours, tag attributes, and children.
+	 *
+	 * <p>Side effects: appends generated component output to {@link #out} and mutates
+	 * {@link #indentation} while descending into nested output. Component state is read
+	 * but not mutated.
+	 *
+	 * @param component component to render; must not be {@code null}
+	 */
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	private void renderComponent(UIComponentBase component) {
 		String tagName = null;
 		Map<String, Object> attributes = new LinkedHashMap<>();
@@ -90,17 +122,15 @@ public class ComponentRenderer {
 		
 		boolean hasNoChildTags = true;
 		
-		if (component instanceof AccordionPanel) {
+		if (component instanceof AccordionPanel accordionPanel) {
 			tagName = "p:accordionPanel";
 			
-			AccordionPanel accordionPanel = (AccordionPanel) component;
 			putValue(attributes, "style", accordionPanel.getStyle());
 			putValue(attributes, "styleClass", accordionPanel.getStyleClass());
 		}
-		else if (component instanceof AutoComplete) {
+		else if (component instanceof AutoComplete complete) {
 			tagName = "p:autoComplete";
 			
-			AutoComplete complete = (AutoComplete) component;
 			putValue(attributes, "var", complete.getVar());
 			putValueExpression(attributes, "itemLabel", component);
 			putValueExpression(attributes, "itemValue", component);
@@ -116,10 +146,9 @@ public class ComponentRenderer {
 	    	tagAttributeNames.add("query");
 	    	tagAttributeNames.add("display");
 		}
-		else if (component instanceof Button) {
+		else if (component instanceof Button button) {
 			tagName = "p:button";
 			
-			Button button = (Button) component;
 			putValue(attributes, "href", button.getHref());
 			putValue(attributes, "title", button.getTitle());
 			if (button.isDisabled()) {
@@ -128,10 +157,9 @@ public class ComponentRenderer {
 			putValue(attributes, "style", button.getStyle());
 			putValue(attributes, "styleClass", button.getStyleClass());
 		}
-		else if (component instanceof DatePicker) {
+		else if (component instanceof DatePicker picker) {
 			tagName = "p:datePicker";
 			
-			DatePicker picker = (DatePicker) component;
 			putValue(attributes, "showIcon", Boolean.valueOf(picker.isShowIcon()));
 			putValue(attributes, "showOnFocus", Boolean.valueOf(picker.isShowOnFocus()));
 			putValue(attributes, "showButtonBar", Boolean.valueOf(picker.isShowButtonBar()));
@@ -148,15 +176,14 @@ public class ComponentRenderer {
 		else if (component instanceof CellEditor) {
 			tagName = "p:cellEditor";
 		}
-		else if (component instanceof ColorPicker) {
+		else if (component instanceof ColorPicker picker) {
 			tagName = "p:colorPicker";
 			
-			putValue(attributes, "var", ((ColorPicker) component).getStyle());
+			putValue(attributes, "var", picker.getStyle());
 		}
-		else if (component instanceof Column) {
+		else if (component instanceof Column column) {
 			tagName = "p:column";
 
-			Column column = (Column) component;
 			putValue(attributes, "headerText", column.getHeaderText());
 			putValueExpression(attributes, "sortBy", component);
 			putValue(attributes, "style", column.getStyle());
@@ -170,10 +197,9 @@ public class ComponentRenderer {
 				putValue(attributes, "sortable", Boolean.FALSE);
 			}
 		}
-		else if (component instanceof CommandButton) {
+		else if (component instanceof CommandButton button) {
 			tagName = "p:commandButton";
 			
-			CommandButton button = (CommandButton) component;
 			putValue(attributes, "immediate", Boolean.valueOf(button.isImmediate()));
 			putValue(attributes, "ajax", Boolean.valueOf(button.isAjax()));
 			putValue(attributes, "process", button.getProcess());
@@ -188,10 +214,9 @@ public class ComponentRenderer {
 			putValue(attributes, "style", button.getStyle());
 			putValue(attributes, "styleClass", button.getStyleClass());
 		}
-		else if (component instanceof CommandLink) {
+		else if (component instanceof CommandLink link) {
 			tagName = "p:commandLink";
 
-			CommandLink link = (CommandLink) component;
 			putValue(attributes, "immediate", Boolean.valueOf(link.isImmediate()));
 			putValue(attributes, "ajax", Boolean.valueOf(link.isAjax()));
 			putValue(attributes, "process", link.getProcess());
@@ -203,18 +228,16 @@ public class ComponentRenderer {
 			putValue(attributes, "style", link.getStyle());
 			putValue(attributes, "styleClass", link.getStyleClass());
 		}
-		else if (component instanceof DataList) {
+		else if (component instanceof DataList list) {
 			tagName = "p:dataList";
 			
-			DataList list = (DataList) component;
 			putValue(attributes, "var", list.getVar());
 			putValue(attributes, "style", list.getStyle());
 			putValue(attributes, "styleClass", list.getStyleClass());
 		}
-		else if (component instanceof DataTable) {
+		else if (component instanceof DataTable table) {
 			tagName = "p:dataTable";
 
-			DataTable table = (DataTable) component;
 			putValueExpression(attributes, "value", component);
 			putValue(attributes, "var", table.getVar());
 			if (table.isPaginator()) {
@@ -229,6 +252,7 @@ public class ComponentRenderer {
 			putValue(attributes, "emptyMessage", table.getEmptyMessage());
 			if (table.isStickyHeader()) {
 				putValue(attributes, "stickyHeader", Boolean.TRUE);
+				putValue(attributes, "stickyTopAt", table.getStickyTopAt());
 			}
 			if ("multiple".equals(table.getSortMode())) {
 				putValue(attributes, "sortMode", "multiple");
@@ -239,37 +263,33 @@ public class ComponentRenderer {
 			putValue(attributes, "style", table.getStyle());
 			putValue(attributes, "styleClass", table.getStyleClass());
 		}
-		else if (component instanceof TextEditor) {
+		else if (component instanceof TextEditor editor) {
 			tagName = "p:editor";
 			
-			TextEditor editor = (TextEditor) component;
 			putValue(attributes, "style", editor.getStyle());
 			putValue(attributes, "styleClass", editor.getStyleClass());
 		}
-		else if (component instanceof Fieldset) {
+		else if (component instanceof Fieldset field) {
 			tagName = "p:fieldset";
 			
-			Fieldset fs = (Fieldset) component;
-			putValue(attributes, "legend", fs.getLegend());
-			putValue(attributes, "style", fs.getStyle());
-			putValue(attributes, "styleClass", fs.getStyleClass());
+			putValue(attributes, "legend", field.getLegend());
+			putValue(attributes, "style", field.getStyle());
+			putValue(attributes, "styleClass", field.getStyleClass());
 		}
-		else if (component instanceof FileUpload) {
+		else if (component instanceof FileUpload upload) {
 			tagName = "p:fileUpload";
 			
-			FileUpload fu = (FileUpload) component;
-			putValue(attributes, "style", fu.getStyle());
-			putValue(attributes, "styleClass", fu.getStyleClass());
-			putValue(attributes, "onStart", fu.getOnstart());
-			putValue(attributes, "update", fu.getUpdate());
-			putValue(attributes, "fileLimit", Integer.valueOf(fu.getFileLimit()));
-			putValue(attributes, "fileLimitMessage", fu.getFileLimitMessage());
-			putMethodExpression(attributes, "fileUploadListener", fu.getListener());
+			putValue(attributes, "style", upload.getStyle());
+			putValue(attributes, "styleClass", upload.getStyleClass());
+			putValue(attributes, "onStart", upload.getOnstart());
+			putValue(attributes, "update", upload.getUpdate());
+			putValue(attributes, "fileLimit", Integer.valueOf(upload.getFileLimit()));
+			putValue(attributes, "fileLimitMessage", upload.getFileLimitMessage());
+			putMethodExpression(attributes, "fileUploadListener", upload.getListener());
 		}
-		else if (component instanceof GraphicImage) {
+		else if (component instanceof GraphicImage image) {
 			tagName = "p:graphicImage";
 			
-			GraphicImage image = (GraphicImage) component;
 			// URL is populated from the value if present, so check the value first
 			putValue(attributes, "value", image.getValue());
 			putValueExpression(attributes, "value", component);
@@ -279,14 +299,13 @@ public class ComponentRenderer {
 			putValue(attributes, "style", image.getStyle());
 			putValue(attributes, "styleClass", image.getStyleClass());
 		}
-		else if (component instanceof HtmlForm) {
+		else if (component instanceof HtmlForm form) {
 			tagName = "h:form";
 			
-			HtmlForm form = (HtmlForm) component;
 			putValue(attributes, "style", form.getStyle());
 			putValue(attributes, "styleClass", form.getStyleClass());
 		}
-		else if (component instanceof HtmlOutputLabel) {
+		else if (component instanceof HtmlOutputLabel label) {
 			if (component instanceof OutputLabel) {
 				tagName = "p:outputLabel";
 			}
@@ -294,31 +313,28 @@ public class ComponentRenderer {
 				tagName = "h:outputLabel";
 			}
 			
-			HtmlOutputLabel label = (HtmlOutputLabel) component;
 			putValue(attributes, "for", label.getFor());
+			putValue(attributes, "escape", Boolean.valueOf(label.isEscape()));
 			putValue(attributes, "style", label.getStyle());
 			putValue(attributes, "styleClass", label.getStyleClass());
 		}
-		else if (component instanceof HtmlOutputLink) {
+		else if (component instanceof HtmlOutputLink link) {
 			tagName = "h:outputLink";
 			
-			HtmlOutputLink link = (HtmlOutputLink) component;
 			putValue(attributes, "target", link.getTarget());
 			putValue(attributes, "style", link.getStyle());
 			putValue(attributes, "styleClass", link.getStyleClass());
 		}
-		else if (component instanceof HtmlOutputText) {
+		else if (component instanceof HtmlOutputText text) {
 			tagName = "h:outputText";
 			
-			HtmlOutputText text = (HtmlOutputText) component;
 			putValue(attributes, "escape", Boolean.valueOf(text.isEscape()));
 			putValue(attributes, "style", text.getStyle());
 			putValue(attributes, "styleClass", text.getStyleClass());
 		}
-		else if (component instanceof HtmlPanelGroup) {
+		else if (component instanceof HtmlPanelGroup panel) {
 			tagName = "h:panelGroup";
 			
-			HtmlPanelGroup panel = (HtmlPanelGroup) component;
 			putValue(attributes, "layout", panel.getLayout());
 			putValue(attributes, "style", panel.getStyle());
 			putValue(attributes, "styleClass", panel.getStyleClass());
@@ -326,74 +342,66 @@ public class ComponentRenderer {
 			excludedAttributeNames.add("type");
 			excludedAttributeNames.add("managedBean");
 		}
-		else if (component instanceof InputMask) {
+		else if (component instanceof InputMask mask) {
 			tagName = "p:inputMask";
 			
-			InputMask mask = (InputMask) component;
 			putValue(attributes, "mask", mask.getMask());
 			putValue(attributes, "style", mask.getStyle());
 			putValue(attributes, "styleClass", mask.getStyleClass());
 		}
-		else if (component instanceof InputText) {
+		else if (component instanceof InputText text) {
 			tagName = "p:inputText";
 			
-			InputText text = (InputText) component;
 			putValue(attributes, "style", text.getStyle());
 			putValue(attributes, "styleClass", text.getStyleClass());
 		}
-		else if (component instanceof InputTextarea) {
+		else if (component instanceof InputTextarea text) {
 			tagName = "p:inputTextarea";
 			
-			InputTextarea text = (InputTextarea) component;
 			putValue(attributes, "style", text.getStyle());
 			putValue(attributes, "styleClass", text.getStyleClass());
 		}
-		else if (component instanceof Message) {
+		else if (component instanceof Message message) {
 			tagName = "p:message";
 			
-			Message message = (Message) component;
 			putValue(attributes, "for", message.getFor());
 			putValue(attributes, "showDetail", Boolean.valueOf(message.isShowDetail()));
 			putValue(attributes, "showSummary", Boolean.valueOf(message.isShowSummary()));
 			putValue(attributes, "display", message.getDisplay());
+			putValue(attributes, "escape", Boolean.valueOf(message.isEscape()));
 			putValue(attributes, "style", message.getStyle());
 			putValue(attributes, "styleClass", message.getStyleClass());
 		}
-		else if (component instanceof OutputPanel) {
+		else if (component instanceof OutputPanel panel) {
 			tagName = "p:outputPanel";
 			
-			OutputPanel panel = (OutputPanel) component;
 			putValue(attributes, "style", panel.getStyle());
 			putValue(attributes, "styleClass", panel.getStyleClass());
 		}
-		else if (component instanceof Panel) {
+		else if (component instanceof Panel panel) {
 			tagName = "p:panel";
 			
-			Panel panel = (Panel) component;
 			putValue(attributes, "header", panel.getHeader());
 			putValue(attributes, "style", panel.getStyle());
 			putValue(attributes, "styleClass", panel.getStyleClass());
 		}
-		else if (component instanceof HtmlPanelGrid) {
+		else if (component instanceof HtmlPanelGrid grid) {
 			tagName = "h:panelGrid";
 
-			HtmlPanelGrid grid = (HtmlPanelGrid) component;
 			putValue(attributes, "columns", Integer.valueOf(grid.getColumns()));
 			putValue(attributes, "style", grid.getStyle());
 			putValue(attributes, "styleClass", grid.getStyleClass());
 		}
-		else if (component instanceof PanelGrid) {
+		else if (component instanceof PanelGrid grid) {
 			tagName = "p:panelGrid";
 			
-			PanelGrid grid = (PanelGrid) component;
 			putValue(attributes, "columns", Integer.valueOf(grid.getColumns()));
 			putValue(attributes, "style", grid.getStyle());
 			putValue(attributes, "styleClass", grid.getStyleClass());
 		}
-		else if (component instanceof OverlayPanel) {
+		else if (component instanceof OverlayPanel overlay) {
 			tagName = "p:overlayPanel";
 			
-			OverlayPanel overlay = (OverlayPanel) component;
 			putValue(attributes, "widgetVar", overlay.getWidgetVar());
 			putValue(attributes, "for", overlay.getFor());
 			putValue(attributes, "dynamic", String.valueOf(overlay.isDynamic()));
@@ -403,17 +411,14 @@ public class ComponentRenderer {
 			putValue(attributes, "onHide", overlay.getOnHide());
 			putValueExpression(attributes, "onShow", component);
 		}
-		else if (component instanceof Password) {
+		else if (component instanceof Password password) {
 			tagName = "p:password";
 			
-			Password password = (Password) component;
 			putValue(attributes, "style", password.getStyle());
 			putValue(attributes, "styleClass", password.getStyleClass());
 		}
-		else if (component instanceof PickList) {
+		else if (component instanceof PickList pickList) {
 			tagName = "p:pickList";
-			
-			PickList pickList = (PickList) component;
 			
 			putValue(attributes, "var", pickList.getVar());
 			putValue(attributes, "showSourceControls", Boolean.valueOf(pickList.isShowSourceControls()));
@@ -421,107 +426,101 @@ public class ComponentRenderer {
 			putValue(attributes, "showSourceFilter", Boolean.valueOf(pickList.isShowSourceFilter()));
 			putValue(attributes, "showTargetFilter", Boolean.valueOf(pickList.isShowTargetFilter()));
 			putValue(attributes, "responsive", Boolean.valueOf(pickList.isResponsive()));
+			putValue(attributes, "escape", Boolean.valueOf(pickList.isEscape()));
+			putValue(attributes, "escapeValue", Boolean.valueOf(pickList.isEscapeValue()));
 			putValueExpression(attributes, "itemValue", component);
 			putValueExpression(attributes, "itemLabel", component);
 			putValue(attributes, "style", pickList.getStyle());
 			putValue(attributes, "styleClass", pickList.getStyleClass());
 		}
-		else if (component instanceof ProgressBar) {
+		else if (component instanceof ProgressBar progress) {
 			tagName = "p:progressBar";
 			
-			ProgressBar progress = (ProgressBar) component;
 			putValue(attributes, "style", progress.getStyle());
 			putValue(attributes, "styleClass", progress.getStyleClass());
 		}
 		else if (component instanceof Row) {
 			tagName = "p:row";
 		}
-		else if (component instanceof SelectBooleanCheckbox) {
+		else if (component instanceof SelectBooleanCheckbox check) {
 			tagName = "p:selectBooleanCheckbox";
 			
-			SelectBooleanCheckbox check = (SelectBooleanCheckbox) component;
 			putValue(attributes, "itemLabel", check.getItemLabel());
 			putValue(attributes, "style", check.getStyle());
 			putValue(attributes, "styleClass", check.getStyleClass());
 		}
-		else if (component instanceof SelectManyCheckbox) {
+		else if (component instanceof SelectManyCheckbox checks) {
 			tagName = "p:selectManyCheckbox";
 			
-			SelectManyCheckbox checks = (SelectManyCheckbox) component;
 			putValue(attributes, "style", checks.getStyle());
 			putValue(attributes, "styleClass", checks.getStyleClass());
 		}
-		else if (component instanceof SelectOneMenu) {
+		else if (component instanceof SelectOneMenu pick) {
 			tagName = "p:selectOneMenu";
 			
-			SelectOneMenu pick = (SelectOneMenu) component;
+			if (pick.isFilter()) {
+				putValue(attributes, "filter", Boolean.TRUE);
+				putValue(attributes, "filterMatchMode", pick.getFilterMatchMode());
+				putValue(attributes, "filterPlaceholder", pick.getFilterPlaceholder());
+			}
 			putValue(attributes, "style", pick.getStyle());
 			putValue(attributes, "styleClass", pick.getStyleClass());
 		}
-		else if (component instanceof SelectOneRadio) {
+		else if (component instanceof SelectOneRadio radio) {
 			tagName = "p:selectOneRadio";
 
-			SelectOneRadio radio = (SelectOneRadio) component;
 			putValue(attributes, "style", radio.getStyle());
 			putValue(attributes, "styleClass", radio.getStyleClass());
 		}
-		else if (component instanceof Signature) {
+		else if (component instanceof Signature signature) {
 			tagName = "p:signature";
 			
-			Signature signature = (Signature) component;
 			putValue(attributes, "style", signature.getStyle());
 			putValue(attributes, "styleClass", signature.getStyleClass());
 			putValue(attributes, "guideline", Boolean.valueOf(signature.isGuideline()));
 		}
-		else if (component instanceof Spacer) {
+		else if (component instanceof Spacer spacer) {
 			tagName = "p:spacer";
 			
-			Spacer spacer = (Spacer) component;
 			putValue(attributes, "style", spacer.getStyle());
 			putValue(attributes, "styleClass", spacer.getStyleClass());
 		}
-		else if (component instanceof Spinner) {
+		else if (component instanceof Spinner spinner) {
 			tagName = "p:spinner";
 			
-			Spinner spinner = (Spinner) component;
 			putValue(attributes, "style", spinner.getStyle());
 			putValue(attributes, "styleClass", spinner.getStyleClass());
 		}
-		else if (component instanceof Tab) {
+		else if (component instanceof Tab tab) {
 			tagName = "p:tab";
 			
-			Tab tab = (Tab) component;
 			putValue(attributes, "title", tab.getTitle());
 			putValue(attributes, "titleStyleClass", tab.getTitleStyleClass());
 		}
-		else if (component instanceof TabView) {
+		else if (component instanceof TabView tabs) {
 			tagName = "p:tabView";
 			
-			TabView tabs = (TabView) component;
 			putValue(attributes, "style", tabs.getStyle());
 			putValue(attributes, "styleClass", tabs.getStyleClass());
 		}
-		else if (component instanceof Toolbar) {
+		else if (component instanceof Toolbar tools) {
 			tagName = "p:toolbar";
 			
-			Toolbar tools = (Toolbar) component;
 			putValue(attributes, "style", tools.getStyle());
 			putValue(attributes, "styleClass", tools.getStyleClass());
 		}
-		else if (component instanceof TriStateCheckbox) {
+		else if (component instanceof TriStateCheckbox check) {
 			tagName = "p:triStateCheckbox";
 			
-			TriStateCheckbox check = (TriStateCheckbox) component;
 			putValue(attributes, "style", check.getStyle());
 			putValue(attributes, "styleClass", check.getStyleClass());
 		}
 		else if (component instanceof UIOutput) {
 			// do nothing - the value is what we want - notice there is no tagName assigned
 		}
-		else if (component instanceof UIParameter) {
+		else if (component instanceof UIParameter param) {
 			tagName = "f:parameter";
 			
-			UIParameter param = (UIParameter) component;
 			putValue(attributes, "name", param.getName());
 			putValueExpression(attributes, "value", component);
 		}
@@ -536,22 +535,14 @@ public class ComponentRenderer {
 		
 		if (tagName != null) {
 			out.append(indentation).append('<').append(tagName);
-			out.append(" id=\"").append(component.getId()).append('"');
-//			String clientId = component.getClientId();
-//			if (clientId != null) {
-//				out.append(" clientId=\"").append(clientId).append('"');
-//			}
+			appendAttribute("id", component.getId());
 		}
 		
-		if (component instanceof UICommand) {
-			UICommand command = (UICommand) component;
-			
+		if (component instanceof UICommand command) {
 			putValue(attributes, "value", command.getValue());
 			putMethodExpression(attributes, "action", command.getActionExpression());
 		}
-		else if (component instanceof UIOutput) {
-			UIOutput output = (UIOutput) component;
-
+		else if (component instanceof UIOutput output) {
 			putValueExpression(attributes, "value", component);
 			if (! attributes.containsKey("value")) {
 				putValue(attributes, "value", output.getValue());
@@ -571,9 +562,8 @@ public class ComponentRenderer {
 				putValue(attributes, "converter", converterName);
 			}
 			
-			if (component instanceof UIInput) {
-				if (component instanceof HtmlInputText) {
-					HtmlInputText text = (HtmlInputText) component;
+			if (component instanceof UIInput input) {
+				if (input instanceof HtmlInputText text) {
 					if (text.isDisabled()) {
 						putValue(attributes, "disabled", "true");
 					}
@@ -582,8 +572,7 @@ public class ComponentRenderer {
 					}
 					putValue(attributes, "title", text.getTitle());
 				}
-				else if (component instanceof HtmlInputTextarea) {
-					HtmlInputTextarea text = (HtmlInputTextarea) component;
+				else if (input instanceof HtmlInputTextarea text) {
 					if (text.isDisabled()) {
 						putValue(attributes, "disabled", "true");
 					}
@@ -593,7 +582,7 @@ public class ComponentRenderer {
 					putValue(attributes, "title", text.getTitle());
 				}
 
-				putValue(attributes, "requiredMessage", ((UIInput) component).getRequiredMessage());
+				putValue(attributes, "requiredMessage", input.getRequiredMessage());
 			}
 		}
 		
@@ -604,7 +593,7 @@ public class ComponentRenderer {
 
 		// Add specific attributes detected above
 		for (String attributeName : attributes.keySet()) {
-			out.append(' ').append(attributeName).append("=\"").append(attributes.get(attributeName)).append('"');
+			appendAttribute(attributeName, attributes.get(attributeName));
 		}
 
 		// Add general attributes
@@ -613,7 +602,7 @@ public class ComponentRenderer {
 			if ((! attributeName.startsWith("com.sun")) && 
 					(! excludedAttributeNames.contains(attributeName)) &&
 					(! tagAttributeNames.contains(attributeName))) {
-				out.append(' ').append(attributeName).append("=\"").append(attributes.get(attributeName)).append('"');
+				appendAttribute(attributeName, attributes.get(attributeName));
 			}
 		}
 
@@ -622,7 +611,7 @@ public class ComponentRenderer {
 		for (String attributeName : attributes.keySet()) {
 			if ((! excludedAttributeNames.contains(attributeName)) &&
 					(! tagAttributeNames.contains(attributeName))) {
-				out.append(" pt:").append(attributeName).append("=\"").append(attributes.get(attributeName)).append('"');
+				appendAttribute("pt:" + attributeName, attributes.get(attributeName));
 			}
 		}
 
@@ -644,11 +633,11 @@ public class ComponentRenderer {
 				hasNoChildTags = false;
 			}
 			for (ClientBehavior behaviour : behaviours.get(eventName)) {
-				if (behaviour instanceof AjaxBehavior) {
-					renderAjaxBehaviour(eventName, (AjaxBehavior) behaviour);
+				if (behaviour instanceof AjaxBehavior ajax) {
+					renderAjaxBehaviour(eventName, ajax);
 				}
-				else if (behaviour instanceof ConfirmBehavior) {
-					renderConfirmBehaviour((ConfirmBehavior) behaviour);
+				else if (behaviour instanceof ConfirmBehavior confirm) {
+					renderConfirmBehaviour(confirm);
 				}
 			}
 		}
@@ -680,59 +669,150 @@ public class ComponentRenderer {
 		}
 	}
 	
+	/**
+	 * Adds an unevaluated value-expression string to the rendered attributes.
+	 *
+	 * @param attributes target attribute map; must not be {@code null}
+	 * @param name attribute name; must not be {@code null}
+	 * @param component component that may hold the value expression; must not be {@code null}
+	 */
 	private static void putValueExpression(Map<String, Object> attributes, String name, UIComponentBase component) {
 		ValueExpression ve = component.getValueExpression(name);
 		if (ve != null) {
 			Object value = ve.getExpressionString();
-// We cannot evaluate the value here as it could cause NPEs in the domain objects (think conditions).
-/*
-			if (value == null) {
-				value = ve.getValue(FacesContext.getCurrentInstance().getELContext());
-			}
-*/
+			// NB We cannot evaluate the value here as it could cause NPEs in the domain objects (think conditions).
+			// No ve.getValue() call
+
 			attributes.put(name, value);
 		}
 	}
 	
+	/**
+	 * Adds an unevaluated method-expression string to the rendered attributes.
+	 *
+	 * @param attributes target attribute map; must not be {@code null}
+	 * @param name attribute name; must not be {@code null}
+	 * @param me method expression to render; may be {@code null}
+	 */
 	private static void putMethodExpression(Map<String, Object> attributes, String name, MethodExpression me) {
 		if (me != null) {
 			attributes.put(name, me.getExpressionString());
 		}
 	}
 
+	/**
+	 * Adds a concrete attribute value when it is meaningful to render.
+	 *
+	 * @param attributes target attribute map; must not be {@code null}
+	 * @param name attribute name; must not be {@code null}
+	 * @param value attribute value; {@code null} and empty strings are omitted
+	 */
 	private static void putValue(Map<String, Object> attributes, String name, Object value) {
 		if ((value != null) && (! "".equals(value))) {
 			attributes.put(name, value);
 		}
 	}
 	
+	/**
+	 * Appends one syntax-safe XML attribute.
+	 *
+	 * <p>Side effects: appends to {@link #out}. Attribute values are escaped for the
+	 * generated Facelets/XML attribute context and are independent of any PrimeFaces
+	 * runtime escape decision represented by a separate component attribute.
+	 *
+	 * @param name attribute name; must not be {@code null}
+	 * @param value attribute value; may be {@code null}
+	 */
+	private void appendAttribute(String name, Object value) {
+		out.append(' ').append(name).append("=\"").append(toAttributeValue(value)).append('"');
+	}
+
+	/**
+	 * Converts an attribute value into generated Facelets/XML attribute content.
+	 *
+	 * @param value attribute value; may be {@code null}
+	 * @return escaped attribute content; never {@code null}
+	 */
+	private static String toAttributeValue(Object value) {
+		return (value == null) ? "" : Encode.forHtmlAttribute(String.valueOf(value));
+	}
+
+	/**
+	 * Renders a named facet and its component tree.
+	 *
+	 * <p>Side effects: appends generated facet output to {@link #out} and mutates
+	 * {@link #indentation} while rendering the facet body. Component state is read but
+	 * not mutated.
+	 *
+	 * @param facetName facet key; must not be {@code null}
+	 * @param facet facet component to render; must not be {@code null}
+	 */
 	private void renderFacet(String facetName, UIComponentBase facet) {
-		out.append(indentation).append("<f:facet name=\"").append(facetName).append("\">\n");
+		out.append(indentation).append("<f:facet");
+		appendAttribute("name", facetName);
+		out.append(">\n");
 		indentation += INDENT;
 		renderComponent(facet);
 		indentation = indentation.substring(1);
 		out.append(indentation).append("</f:facet>\n");
 	}
 	
+	/**
+	 * Renders a Facelets attribute tag for component metadata stored as general attributes.
+	 *
+	 * <p>Side effects: appends generated attribute output to {@link #out}.
+	 *
+	 * @param name attribute name; must not be {@code null}
+	 * @param value attribute value; may be {@code null}
+	 */
 	private void renderAttribute(String name, Object value) {
-		out.append(indentation).append("<f:attribute name=\"").append(name).append("\" value=\"").append(value).append("\" />\n");
+		out.append(indentation).append("<f:attribute");
+		appendAttribute("name", name);
+		appendAttribute("value", value);
+		out.append(" />\n");
 	}
 	
+	/**
+	 * Renders a PrimeFaces AJAX behaviour for the owning client-behaviour event.
+	 *
+	 * <p>Side effects: appends generated behaviour output to {@link #out}. Listener
+	 * details are intentionally represented by a placeholder because PrimeFaces does
+	 * not expose the listener list through this public behaviour API.
+	 *
+	 * @param eventName client event name; must not be {@code null}
+	 * @param behaviour behaviour to render; must not be {@code null}
+	 */
 	private void renderAjaxBehaviour(String eventName, AjaxBehavior behaviour) {
-		out.append(indentation).append("<p:ajax event=\"").append(eventName).append("\" listener=\"<cant obtain AjaxBehaviourListener(s) from primefaces>\"");
+		out.append(indentation).append("<p:ajax");
+		appendAttribute("event", eventName);
+		appendAttribute("listener", "<cant obtain AjaxBehaviourListener(s) from primefaces>");
 
 		String value = behaviour.getProcess();
 		if (value != null) {
-			out.append(" process=\"").append(value).append('"');
+			appendAttribute("process", value);
 		}
 		value = behaviour.getUpdate();
 		if (value != null) {
-			out.append(" update=\"").append(value).append('"');
+			appendAttribute("update", value);
 		}
 		out.append(" />\n");
 	}
 
+	/**
+	 * Renders a PrimeFaces confirmation behaviour with its output-boundary escape decision.
+	 *
+	 * <p>Side effects: appends generated behaviour output to {@link #out}. The message
+	 * attribute is escaped for generated markup syntax; the optional {@code escape}
+	 * attribute records the PrimeFaces runtime decision.
+	 *
+	 * @param behaviour confirmation behaviour to render; must not be {@code null}
+	 */
 	private void renderConfirmBehaviour(ConfirmBehavior behaviour) {
-		out.append(indentation).append("<p:confirm message=\"").append(behaviour.getMessage()).append("\" />\n");
+		out.append(indentation).append("<p:confirm");
+		appendAttribute("message", behaviour.getMessage());
+		if (! behaviour.isEscape()) {
+			appendAttribute("escape", Boolean.FALSE);
+		}
+		out.append(" />\n");
 	}
 }

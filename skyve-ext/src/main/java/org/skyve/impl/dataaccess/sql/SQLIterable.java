@@ -27,6 +27,9 @@ import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.user.User;
 import org.skyve.persistence.AutoClosingIterable;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
+
 class SQLIterable<T> implements AutoClosingIterable<T> {
 	private Document document;
 	private SQLDataAccessImpl dataAccess;
@@ -34,10 +37,10 @@ class SQLIterable<T> implements AutoClosingIterable<T> {
 	private NamedParameterPreparedStatement ps = null;
 	private ResultSet rs = null;
 	
-	SQLIterable(Document document,
-					SQLDataAccessImpl dataAccess,
-					SQLDataAccessSQL sql,
-					Class<T> scalarType) {
+	SQLIterable(@Nullable Document document,
+					@Nonnull SQLDataAccessImpl dataAccess,
+					@Nonnull SQLDataAccessSQL sql,
+					@Nullable Class<T> scalarType) {
 		this.document = document;
 		this.dataAccess = dataAccess;
 		this.scalarType = scalarType;
@@ -48,9 +51,6 @@ class SQLIterable<T> implements AutoClosingIterable<T> {
 			sql.prepareStatement(ps, dataAccess.dataStore, dataAccess.getDialect());
 			rs = ps.executeQuery();
 		}
-		catch (TimeoutException e) {
-			throw e;
-		}
 		catch (SkyveException e) {
 			throw e;
 		}
@@ -60,7 +60,7 @@ class SQLIterable<T> implements AutoClosingIterable<T> {
 	}
 	
 	@Override
-	public Iterator<T> iterator() {
+	public @Nonnull Iterator<T> iterator() {
 		return new LoggingIteratorAdapter<>(new SQLIterator<>());
 	}
 
@@ -113,7 +113,7 @@ class SQLIterable<T> implements AutoClosingIterable<T> {
 		}
 
 		@Override
-		public Z next() {
+		public @Nullable Z next() {
 			if (document != null) { // bean select
 				return nextBean();
 			}
@@ -128,7 +128,8 @@ class SQLIterable<T> implements AutoClosingIterable<T> {
 			throw new IllegalStateException("Cannot remove from SQLIterator");
 		}
 
-		private Z nextBean() {
+		@SuppressWarnings("java:S3776") // Complexity OK
+		private @Nonnull Z nextBean() {
 			try {
 				User u = CORE.getUser();
 				Z result = document.newInstance(u);
@@ -218,7 +219,7 @@ class SQLIterable<T> implements AutoClosingIterable<T> {
 		}
 		
 		@SuppressWarnings("unchecked")
-		Z nextScalar() {
+		@Nullable Z nextScalar() {
 			try {
 				return (Z) BindUtil.convert(scalarType, rs.getObject(1));
 			}
@@ -228,7 +229,7 @@ class SQLIterable<T> implements AutoClosingIterable<T> {
 		}
 		
 		@SuppressWarnings("unchecked")
-		Z nextTuple() {
+		@Nonnull Z nextTuple() {
 			try {
 				int columnCount = rs.getMetaData().getColumnCount();
 				Object[] result = new Object[columnCount];

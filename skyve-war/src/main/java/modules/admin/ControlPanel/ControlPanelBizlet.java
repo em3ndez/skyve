@@ -9,6 +9,7 @@ import java.util.List;
 import org.skyve.CORE;
 import org.skyve.cache.CacheConfig;
 import org.skyve.cache.HibernateCacheConfig;
+import org.skyve.domain.types.Enumeration.DomainValueSortByDescription;
 import org.skyve.impl.cache.StateUtil;
 import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.impl.metadata.repository.router.Router;
@@ -22,35 +23,55 @@ import org.skyve.metadata.repository.ProvidedRepository;
 import org.skyve.util.Util;
 import org.skyve.web.WebContext;
 
-import modules.admin.ModulesUtil;
+import jakarta.inject.Inject;
+import modules.admin.User.UserService;
 import modules.admin.UserProxy.UserProxyExtension;
 import modules.admin.domain.ControlPanel;
 import modules.admin.domain.ControlPanel.SailTestStrategy;
 import modules.admin.domain.ModuleDocument;
 import modules.admin.domain.Tag;
 
+/**
+ * Applies validation and lifecycle rules for Control Panel operations.
+ */
 public class ControlPanelBizlet extends Bizlet<ControlPanelExtension> {
+	@Inject
+	@SuppressWarnings("java:S6813") // allow member injection
+	private transient UserService userService;
+
+	/**
+	 * Performs the newInstance operation.
+	 * @param bean the bean value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public ControlPanelExtension newInstance(ControlPanelExtension bean) throws Exception {
 		// Set the user name to the logged in user
-		UserProxyExtension user = ModulesUtil.currentAdminUserProxy();
+		UserProxyExtension user = userService.currentAdminUserProxy();
 		bean.setSailUser(user);
-		bean.setSailBaseUrl(Util.getSkyveContextUrl() + '/');
+		bean.setSailBaseUrl(Util.getBaseUrl());
 		bean.setSailTestStrategy(SailTestStrategy.None);
 
 		// Set module name to the first non-admin module found
 		ProvidedRepository r = ProvidedRepositoryFactory.get();
 		for (String moduleName : r.getAllVanillaModuleNames()) {
-			if (! ControlPanel.MODULE_NAME.equals(moduleName)) {
+			if (!ControlPanel.MODULE_NAME.equals(moduleName)) {
 				bean.setSailModuleName(moduleName);
 			}
 		}
 
 		bean.setSessionCount(Integer.valueOf(StateUtil.getSessionCount()));
-		
+
 		return bean;
 	}
 
+	/**
+	 * Performs the getConstantDomainValues operation.
+	 * @param attributeName the attributeName value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public List<DomainValue> getConstantDomainValues(String attributeName) throws Exception {
 		if (ControlPanel.selectedCachePropertyName.equals(attributeName)) {
@@ -58,6 +79,12 @@ public class ControlPanelBizlet extends Bizlet<ControlPanelExtension> {
 
 			String cacheName = UtilImpl.CONVERSATION_CACHE.getName();
 			result.add(new DomainValue(cacheName, "Conversations"));
+			cacheName = UtilImpl.CSRF_TOKEN_CACHE.getName();
+			result.add(new DomainValue(cacheName, "CSRF Tokens"));
+			cacheName = UtilImpl.SESSION_CACHE.getName();
+			result.add(new DomainValue(cacheName, "Sessions"));
+			cacheName = UtilImpl.GEO_IP_CACHE.getName();
+			result.add(new DomainValue(cacheName, "GeoIPs"));
 			for (HibernateCacheConfig c : UtilImpl.HIBERNATE_CACHES) {
 				cacheName = c.getName();
 				result.add(new DomainValue(cacheName, cacheName + " (Hibernate)"));
@@ -66,10 +93,10 @@ public class ControlPanelBizlet extends Bizlet<ControlPanelExtension> {
 				cacheName = c.getName();
 				result.add(new DomainValue(cacheName, cacheName + " (Application)"));
 			}
-			
+
 			return result;
 		}
-		
+
 		else if (ControlPanel.testModuleNamePropertyName.equals(attributeName)) {
 			Customer customer = CORE.getUser().getCustomer();
 			List<DomainValue> result = new ArrayList<>();
@@ -78,11 +105,19 @@ public class ControlPanelBizlet extends Bizlet<ControlPanelExtension> {
 			}
 			return result;
 		}
-		
+
 		return null;
 	}
-	
+
+	/**
+	 * Performs the getDynamicDomainValues operation.
+	 * @param attributeName the attributeName value
+	 * @param bean the bean value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public List<DomainValue> getDynamicDomainValues(String attributeName, ControlPanelExtension bean) throws Exception {
 
 		// list documents within modules that have not already been selected
@@ -94,17 +129,17 @@ public class ControlPanelBizlet extends Bizlet<ControlPanelExtension> {
 				for (String documentName : module.getDocumentRefs().keySet()) {
 					Document document = module.getDocument(customer, documentName);
 					if (document.isPersistable()) {
-						
+
 						// check this is not already selected
 						boolean alreadySelected = false;
 						for (ModuleDocument n : bean.getTestDocumentNames()) {
-							if(documentName.equals(n.getDocumentName())){
+							if (documentName.equals(n.getDocumentName())) {
 								alreadySelected = true;
 								break;
 							}
 						}
-						
-						if(!alreadySelected) {
+
+						if (!alreadySelected) {
 							// only add persistent documents
 							results.add(new DomainValue(document.getName(), document.getLocalisedSingularAlias()));
 						}
@@ -118,7 +153,13 @@ public class ControlPanelBizlet extends Bizlet<ControlPanelExtension> {
 		}
 		return super.getDynamicDomainValues(attributeName, bean);
 	}
-	
+
+	/**
+	 * Performs the getVariantDomainValues operation.
+	 * @param attributeName the attributeName value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public List<DomainValue> getVariantDomainValues(String attributeName) throws Exception {
 		if (ControlPanel.customerNameToSwapToPropertyName.equals(attributeName)) {
@@ -127,18 +168,16 @@ public class ControlPanelBizlet extends Bizlet<ControlPanelExtension> {
 			for (String cus : rep.getAllCustomerNames()) {
 				result.add(new DomainValue(cus));
 			}
-			Collections.sort(result, new ModulesUtil.DomainValueSortByDescription());
+			Collections.sort(result, new DomainValueSortByDescription());
 			return result;
-		}
-		else if (ControlPanel.sailModuleNamePropertyName.equals(attributeName)) {
+		} else if (ControlPanel.sailModuleNamePropertyName.equals(attributeName)) {
 			List<DomainValue> result = new ArrayList<>();
 			ProvidedRepository r = ProvidedRepositoryFactory.get();
 			for (String moduleName : r.getAllVanillaModuleNames()) {
-					result.add(new DomainValue(moduleName));
+				result.add(new DomainValue(moduleName));
 			}
 			return result;
-		}
-		else if (ControlPanel.sailUxUiPropertyName.equals(attributeName)) {
+		} else if (ControlPanel.sailUxUiPropertyName.equals(attributeName)) {
 			List<DomainValue> result = new ArrayList<>();
 			Router r = CORE.getRepository().getRouter();
 			for (UxUiMetadata uxui : r.getUxUis()) {
@@ -150,16 +189,31 @@ public class ControlPanelBizlet extends Bizlet<ControlPanelExtension> {
 		return null;
 	}
 
+	/**
+	 * Performs the complete operation.
+	 * @param attributeName the attributeName value
+	 * @param value the value value
+	 * @param bean the bean value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public List<String> complete(String attributeName, String value, ControlPanelExtension bean) throws Exception {
-		
-		if(ControlPanel.testTagNamePropertyName.equals(attributeName)) {
-			return ModulesUtil.getCompleteSuggestions(Tag.MODULE_NAME, Tag.DOCUMENT_NAME, Tag.namePropertyName,value);
+
+		if (ControlPanel.testTagNamePropertyName.equals(attributeName)) {
+			return Util.getCompleteSuggestions(Tag.MODULE_NAME, Tag.DOCUMENT_NAME, Tag.namePropertyName, value);
 		}
-		
+
 		return super.complete(attributeName, value, bean);
 	}
-	
+
+	/**
+	 * Performs the preRerender operation.
+	 * @param source the source value
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public void preRerender(String source, ControlPanelExtension bean, WebContext webContext) throws Exception {
 		if ("push".equals(source)) {

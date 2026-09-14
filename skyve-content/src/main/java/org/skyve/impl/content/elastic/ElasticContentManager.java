@@ -1,65 +1,81 @@
 package org.skyve.impl.content.elastic;
 
-//import java.io.File;
-//import java.io.FileOutputStream;
-//import java.io.FileWriter;
 import java.io.IOException;
-//import java.nio.file.Files;
-//import java.nio.file.StandardCopyOption;
-//import java.util.ArrayList;
-//import java.util.Date;
-//import java.util.List;
-//import java.util.Map;
-//import java.util.TreeMap;
-//import java.util.UUID;
-//import java.util.logging.Level;
 
-//import org.apache.commons.codec.binary.Base64;
-//import org.apache.tika.Tika;
-//import org.apache.tika.exception.TikaException;
-//import org.apache.tika.metadata.HttpHeaders;
-//import org.apache.tika.metadata.MSOffice;
-//import org.apache.tika.metadata.Metadata;
-//import org.apache.tika.metadata.TikaCoreProperties;
-//import org.elasticsearch.action.admin.indices.flush.FlushResponse;
-//import org.elasticsearch.action.get.GetRequestBuilder;
-//import org.elasticsearch.action.get.GetResponse;
-//import org.elasticsearch.action.index.IndexResponse;
-//import org.elasticsearch.action.search.SearchResponse;
-//import org.elasticsearch.action.search.SearchType;
-//import org.elasticsearch.client.Client;
-//import org.elasticsearch.common.Strings;
-//import org.elasticsearch.common.io.stream.BytesStreamInput;
-//import org.elasticsearch.common.text.Text;
-//import org.elasticsearch.common.xcontent.XContentBuilder;
-//import org.elasticsearch.common.xcontent.XContentFactory;
-//import org.elasticsearch.index.get.GetField;
-//import org.elasticsearch.index.query.FilterBuilder;
-//import org.elasticsearch.index.query.FilterBuilders;
-//import org.elasticsearch.index.query.QueryBuilder;
-//import org.elasticsearch.index.query.QueryBuilders;
-//import org.elasticsearch.node.Node;
-//import org.elasticsearch.search.SearchHit;
-//import org.elasticsearch.search.SearchHitField;
-//import org.elasticsearch.search.facet.FacetBuilders;
-//import org.elasticsearch.search.facet.terms.TermsFacet;
-//import org.elasticsearch.search.facet.terms.TermsFacet.Entry;
-//import org.elasticsearch.search.highlight.HighlightField;
 import org.skyve.content.AttachmentContent;
 import org.skyve.content.BeanContent;
 import org.skyve.content.ContentIterable;
-//import org.skyve.content.MimeType;
-//import org.skyve.content.SearchResult;
 import org.skyve.content.SearchResults;
 import org.skyve.domain.Bean;
-//import org.skyve.domain.messages.DomainException;
 import org.skyve.impl.content.AbstractContentManager;
-//import org.skyve.impl.util.TimeUtil;
 import org.skyve.impl.util.UtilImpl;
-//import org.skyve.util.FileUtil;
-//import org.skyve.util.JSON;
 
+/**
+ * Implements the Elasticsearch-backed content manager integration.
+ *
+ * <p>This implementation currently operates as a compatibility stub while the legacy
+ * Elasticsearch-specific indexing logic remains commented out.
+ *
+ * <p>Threading: not thread-safe; lifecycle and usage are expected to be container-managed.
+ */
+@SuppressWarnings("all")
 public class ElasticContentManager extends AbstractContentManager {
+	//import java.io.File;
+	//import java.io.FileOutputStream;
+	//import java.io.FileWriter;
+
+	//import java.nio.file.Files;
+	//import java.nio.file.StandardCopyOption;
+	//import java.util.ArrayList;
+	//import java.util.Date;
+	//import java.util.List;
+	//import java.util.Map;
+	//import java.util.TreeMap;
+	//import java.util.UUID;
+	//import java.util.logging.Level;
+
+	//import org.apache.commons.codec.binary.Base64;
+	//import org.apache.tika.Tika;
+	//import org.apache.tika.exception.TikaException;
+	//import org.apache.tika.metadata.HttpHeaders;
+	//import org.apache.tika.metadata.MSOffice;
+	//import org.apache.tika.metadata.Metadata;
+	//import org.apache.tika.metadata.TikaCoreProperties;
+	//import org.elasticsearch.action.admin.indices.flush.FlushResponse;
+	//import org.elasticsearch.action.get.GetRequestBuilder;
+	//import org.elasticsearch.action.get.GetResponse;
+	//import org.elasticsearch.action.index.IndexResponse;
+	//import org.elasticsearch.action.search.SearchResponse;
+	//import org.elasticsearch.action.search.SearchType;
+	//import org.elasticsearch.client.Client;
+	//import org.elasticsearch.common.Strings;
+	//import org.elasticsearch.common.io.stream.BytesStreamInput;
+	//import org.elasticsearch.common.text.Text;
+	//import org.elasticsearch.common.xcontent.XContentBuilder;
+	//import org.elasticsearch.common.xcontent.XContentFactory;
+	//import org.elasticsearch.index.get.GetField;
+	//import org.elasticsearch.index.query.FilterBuilder;
+	//import org.elasticsearch.index.query.FilterBuilders;
+	//import org.elasticsearch.index.query.QueryBuilder;
+	//import org.elasticsearch.index.query.QueryBuilders;
+	//import org.elasticsearch.node.Node;
+	//import org.elasticsearch.search.SearchHit;
+	//import org.elasticsearch.search.SearchHitField;
+	//import org.elasticsearch.search.facet.FacetBuilders;
+	//import org.elasticsearch.search.facet.terms.TermsFacet;
+	//import org.elasticsearch.search.facet.terms.TermsFacet.Entry;
+	//import org.elasticsearch.search.highlight.HighlightField;
+
+	//import org.skyve.content.MimeType;
+	//import org.skyve.content.SearchResult;
+
+	//import org.skyve.domain.messages.DomainException;
+
+	//import org.skyve.impl.util.TimeUtil;
+
+	//import org.skyve.util.FileUtil;
+	//import org.skyve.util.JSON;
+
 	static final String ATTACHMENT_INDEX_NAME = "attachments";
 	static final String ATTACHMENT_INDEX_TYPE = "attachment";
 	static final String BEAN_INDEX_NAME = "beans";
@@ -83,34 +99,47 @@ public class ElasticContentManager extends AbstractContentManager {
 //    private static final String KEYWORDS = "keywords";
 //
 //    private static final String BEAN = "bean";
-    static final String BEAN_CUSTOMER_NAME = "bean." + Bean.CUSTOMER_NAME;
-    static final String BEAN_MODULE_KEY = "bean." + Bean.MODULE_KEY;
-    static final String BEAN_DOCUMENT_KEY = "bean." + Bean.DOCUMENT_KEY;
-    static final String BEAN_DATA_GROUP_ID = "bean." + Bean.DATA_GROUP_ID;
-    static final String BEAN_USER_ID = "bean." + Bean.USER_ID;
-    static final String BEAN_DOCUMENT_ID = "bean." + Bean.DOCUMENT_ID;
-    static final String BEAN_ATTRIBUTE_NAME = "bean.attribute";
+	private static final String BEAN_PREFIX = "bean.";
+    static final String BEAN_CUSTOMER_NAME = BEAN_PREFIX + Bean.CUSTOMER_NAME;
+    static final String BEAN_MODULE_KEY = BEAN_PREFIX + Bean.MODULE_KEY;
+    static final String BEAN_DOCUMENT_KEY = BEAN_PREFIX + Bean.DOCUMENT_KEY;
+    static final String BEAN_DATA_GROUP_ID = BEAN_PREFIX + Bean.DATA_GROUP_ID;
+    static final String BEAN_USER_ID = BEAN_PREFIX + Bean.USER_ID;
+    static final String BEAN_DOCUMENT_ID = BEAN_PREFIX + Bean.DOCUMENT_ID;
+    static final String BEAN_ATTRIBUTE_NAME = BEAN_PREFIX + "attribute";
 	
 //	private static Node node = ElasticUtil.localNode();
 //	private static final Tika TIKA = new Tika();
 
 //	private Client client = null;
 	
+	/**
+	 * Creates the manager instance.
+	 */
 	public ElasticContentManager() {
 //		client = ElasticUtil.localClient(node);
 	}
 	
+	/**
+	 * Starts the content manager lifecycle.
+	 */
 	@Override
 	public void startup() {
 //		ElasticUtil.prepareIndex(client, ElasticContentManager.ATTACHMENT_INDEX_NAME, ElasticContentManager.ATTACHMENT_INDEX_TYPE);
 //		ElasticUtil.prepareIndex(client, ElasticContentManager.BEAN_INDEX_NAME, ElasticContentManager.BEAN_INDEX_TYPE);
 	}
 
+	/**
+	 * Stops the content manager lifecycle.
+	 */
 	@Override
 	public void shutdown() {
 //		ElasticUtil.close(node);
 	}
 
+	/**
+	 * Flushes index state and releases manager resources.
+	 */
 	@Override
 	public void close() {
 /*
@@ -123,6 +152,12 @@ public class ElasticContentManager extends AbstractContentManager {
 */
 	}
 	
+	/**
+	 * Indexes bean-scoped text content.
+	 *
+	 * @param content the bean content payload
+	 * @throws Exception if indexing fails
+	 */
 	@Override
 	public void put(BeanContent content)
 	throws Exception {
@@ -156,7 +191,7 @@ public class ElasticContentManager extends AbstractContentManager {
 			// Last modified
 			source.field(LAST_MODIFIED, new Date());
 			
-			if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.put(): " + source.string());
+			if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.put(): {}", source.string());
 			client.prepareIndex(BEAN_INDEX_NAME, 
 									BEAN_INDEX_TYPE,
 									content.getBizId()).setSource(source).execute().actionGet();
@@ -164,23 +199,51 @@ public class ElasticContentManager extends AbstractContentManager {
 */
 	}
 	
+	/**
+	 * Stores or indexes attachment content.
+	 *
+	 * @param attachment the attachment payload
+	 * @param index whether textual indexing is enabled
+	 * @throws Exception if storage or indexing fails
+	 */
 	@Override
 	public void put(AttachmentContent attachment, boolean index)
 	throws Exception {
 		put(attachment, index, true);
 	}
 	
+	/**
+	 * Updates an existing attachment record.
+	 *
+	 * @param content the attachment update payload
+	 * @throws Exception if update processing fails
+	 */
 	@Override
 	public void update(AttachmentContent content) throws Exception {
 		// needs implementation
 	}
 	
+	/**
+	 * Reindexes attachment metadata and optional text.
+	 *
+	 * @param attachment the attachment to reindex
+	 * @param index whether textual indexing is enabled
+	 * @throws Exception if indexing fails
+	 */
 	@Override
 	public void reindex(AttachmentContent attachment, boolean index) 
 	throws Exception {
 		put(attachment, index, false);
 	}
 
+	/**
+	 * Writes attachment content to the index and optional storage location.
+	 *
+	 * @param attachment the attachment to persist
+	 * @param index whether textual indexing is enabled
+	 * @param store whether binary content should be stored
+	 * @throws Exception if writing fails
+	 */
 	@SuppressWarnings("unused")
 	private void put(AttachmentContent attachment, boolean index, boolean store)
 	throws Exception {
@@ -305,7 +368,7 @@ public class ElasticContentManager extends AbstractContentManager {
 				// End of our document
 				source.endObject();
 			}
-			if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.put(): " + source.string());
+			if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.put(): {}", source.string());
 			String contentId = attachment.getContentId();
 			IndexResponse indexResponse = client.prepareIndex(ATTACHMENT_INDEX_NAME, 
 																ATTACHMENT_INDEX_TYPE,
@@ -325,16 +388,30 @@ public class ElasticContentManager extends AbstractContentManager {
 */
 	}
 
+	/**
+	 * Retrieves attachment content by identifier.
+	 *
+	 * @param contentId the content identifier
+	 * @return the attachment, or {@code null} when not found
+	 * @throws Exception if retrieval fails
+	 */
 	@Override
 	public AttachmentContent getAttachment(String contentId) throws Exception {
 		if (UtilImpl.CONTENT_FILE_STORAGE) {
 			StringBuilder absoluteContentStoreFolderPath = new StringBuilder(128);
 			absoluteContentStoreFolderPath.append(UtilImpl.CONTENT_DIRECTORY).append(FILE_STORE_NAME).append('/');
-			return getFromFileSystem(absoluteContentStoreFolderPath, contentId);
+			return getFromFileSystem(absoluteContentStoreFolderPath, contentId, false);
 		}
 		return getFromElastic(contentId);
 	}
 
+	/**
+	 * Reads attachment content directly from Elasticsearch storage.
+	 *
+	 * @param contentId the content identifier
+	 * @return the attachment, or {@code null} when not found
+	 * @throws Exception if retrieval fails
+	 */
 	@SuppressWarnings("static-method")
 	private AttachmentContent getFromElastic(@SuppressWarnings("unused") String contentId) throws Exception {
 /*
@@ -352,7 +429,7 @@ public class ElasticContentManager extends AbstractContentManager {
 							BEAN_ATTRIBUTE_NAME);
 		GetResponse response = builder.get();
 		if (! response.isExists()) {
-			if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.get(" + contentId + "): DNE");
+			if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.get({}): DNE", contentId);
 			return null;
 		}
 
@@ -369,7 +446,7 @@ public class ElasticContentManager extends AbstractContentManager {
 		// NB This can occur when a content repository is changed from file storage to index
 		// stored and is not properly cleaned up with backup/restore.
 		if (field == null) {
-			if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.get(" + contentId + ") - Attachment: DNE");
+			if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.get({}) - Attachment: DNE", contentId);
 			return null;
 		}
 		String content = (String) field.getValue();
@@ -406,27 +483,38 @@ public class ElasticContentManager extends AbstractContentManager {
 		result.setLastModified(lastModified);
 		result.setContentType(contentType);
 		result.setContentId(response.getId());
-		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.get(" + contentId + "): exists");
+		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.get({}): exists", contentId);
 
 		return result;
 */
 return null;
 	}
 
+	/**
+	 * Removes indexed bean content by business identifier.
+	 *
+	 * @param bizId the business document identifier
+	 */
 	@Override
 	public void removeBean(String bizId) {
 /*
-		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.remove(" + content.getBizId() + ")");
+		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.remove({})", content.getBizId());
 		client.prepareDelete(BEAN_INDEX_NAME,
 								BEAN_INDEX_TYPE,
 								content.getBizId()).execute().actionGet();
 */
 	}
 
+	/**
+	 * Removes indexed attachment content by content identifier.
+	 *
+	 * @param contentId the content identifier
+	 * @throws IOException if removal fails
+	 */
 	@Override
 	public void removeAttachment(String contentId) throws IOException {
 /*
-		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.remove(" + contentId + ")");
+		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.remove({})", contentId);
 		client.prepareDelete(ATTACHMENT_INDEX_NAME,
 								ATTACHMENT_INDEX_TYPE,
 								contentId).execute().actionGet();
@@ -460,10 +548,26 @@ return null;
 */
 	}
 
+	/**
+	 * Drops all indexing structures.
+	 *
+	 * @throws Exception if index dropping fails
+	 */
 	@Override
-	public void truncate(String customerName) throws Exception {
+	public void dropIndexing() throws Exception {
+		// TODO
+	}
+	
+	/**
+	 * Truncates all indexed content for a customer.
+	 *
+	 * @param customerName the customer tenant name
+	 * @throws Exception if truncation fails
+	 */
+	@Override
+	public void truncateIndexing(String customerName) throws Exception {
 /*
-		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.truncate(" + customerName + ")");
+		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.truncate({})", customerName);
 		client.prepareDeleteByQuery()
 			.setIndices(ATTACHMENT_INDEX_NAME, BEAN_INDEX_NAME)
 			.setTypes(ATTACHMENT_INDEX_TYPE, BEAN_INDEX_TYPE)
@@ -476,10 +580,16 @@ return null;
 */
 	}
 
+	/**
+	 * Truncates indexed attachments for a customer.
+	 *
+	 * @param customerName the customer tenant name
+	 * @throws Exception if truncation fails
+	 */
 	@Override
-	public void truncateAttachments(String customerName) throws Exception {
+	public void truncateAttachmentIndexing(String customerName) throws Exception {
 /*
-		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.truncateAttachments(" + customerName + ")");
+		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.truncateAttachments({})", customerName);
 		client.prepareDeleteByQuery()
 			.setIndices(ATTACHMENT_INDEX_NAME)
 			.setTypes(ATTACHMENT_INDEX_TYPE)
@@ -492,10 +602,16 @@ return null;
 */
 	}
 	
+	/**
+	 * Truncates indexed bean content for a customer.
+	 *
+	 * @param customerName the customer tenant name
+	 * @throws Exception if truncation fails
+	 */
 	@Override
-	public void truncateBeans(String customerName) throws Exception {
+	public void truncateBeanIndexing(String customerName) throws Exception {
 /*
-		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.truncateBeans(" + customerName + ")");
+		if (UtilImpl.CONTENT_TRACE) UtilImpl.LOGGER.info("ElasticContentManager.truncateBeans({})", customerName);
 		client.prepareDeleteByQuery()
 			.setIndices(BEAN_INDEX_NAME)
 			.setTypes(BEAN_INDEX_TYPE)
@@ -508,6 +624,14 @@ return null;
 */
 	}
 
+	/**
+	 * Executes full-text search across indexed content.
+	 *
+	 * @param search the search expression
+	 * @param maxResults maximum number of results to return
+	 * @return search results; currently an empty result set in stub mode
+	 * @throws Exception if querying fails
+	 */
 	@Override
 	public SearchResults google(String search, int maxResults)
 	throws Exception {
@@ -630,6 +754,12 @@ return new SearchResults();
 		return null;
 	}
 */	
+	/**
+	 * Returns an iterable over all indexed records.
+	 *
+	 * @return iterable over legacy Elasticsearch-backed content
+	 * @throws Exception if iteration cannot be initialized
+	 */
 	@Override
 	public ContentIterable all() throws Exception {
 //		return new ElasticContentIterable(client);

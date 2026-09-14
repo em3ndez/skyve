@@ -3,7 +3,6 @@ package org.skyve.impl.web.faces.actions;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.logging.Level;
 
 import org.skyve.EXT;
 import org.skyve.domain.Bean;
@@ -15,6 +14,7 @@ import org.skyve.impl.metadata.model.document.DocumentImpl;
 import org.skyve.impl.metadata.view.widget.bound.input.CompleteType;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.UtilImpl;
+import org.skyve.impl.web.UserAgent;
 import org.skyve.impl.web.faces.FacesAction;
 import org.skyve.impl.web.faces.views.FacesView;
 import org.skyve.metadata.customer.Customer;
@@ -27,13 +27,34 @@ import org.skyve.metadata.user.UserAccess;
 import org.skyve.persistence.DocumentQuery;
 import org.skyve.util.Binder.TargetMetaData;
 import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
+import org.slf4j.Logger;
 
+import jakarta.faces.context.FacesContext;
+import jakarta.servlet.http.HttpServletRequest;
+
+/**
+ * Executes a Faces callback action within the current Skyve web context.
+ */
 public class CompleteAction extends FacesAction<List<String>> {
+    private static final Logger FACES_LOGGER = Category.FACES.logger();
+    private static final Logger BIZLET_LOGGER = Category.BIZLET.logger();
+
 	private FacesView facesView;
 	private String query;
 	private String binding;
 	private CompleteType complete;
 	
+	/**
+	 * Creates a completion action for the specified query fragment and binding.
+	 *
+	 * @param facesView the active Faces view state
+	 * @param query the user-entered completion query text
+	 * @param binding the target binding to complete against
+	 * @param complete the completion strategy to execute
+	 */
 	public CompleteAction(FacesView facesView,
 							String query,
 							String binding,
@@ -44,9 +65,16 @@ public class CompleteAction extends FacesAction<List<String>> {
 		this.complete = complete;
 	}
 
+	/**
+	 * Executes completion for the configured binding using either previous values or bizlet completion logic.
+	 *
+	 * @return completion candidates suitable for UI suggestion rendering
+	 * @throws Exception when completion processing fails unexpectedly
+	 */
 	@Override
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // Complexity OK
 	public List<String> callback() throws Exception {
-		if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.info("CompleteAction - EXECUTE complete " + query + " for binding " + binding);
+		if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("CompleteAction - EXECUTE complete {} for binding {}", query, binding);
 		AbstractPersistence persistence = AbstractPersistence.get();
 		Bean bean = ActionUtil.getTargetBeanForView(facesView);
 		final String formModuleName = bean.getBizModule();
@@ -95,29 +123,30 @@ public class CompleteAction extends FacesAction<List<String>> {
 		List<String> result = Collections.emptyList();
 
 		if (complete == CompleteType.previous) {
-			EXT.checkAccess(user, UserAccess.previousComplete(formModuleName, formDocumentName, binding), facesView.getUxUi().getName());
+			HttpServletRequest request = (HttpServletRequest) FacesContext.getCurrentInstance().getExternalContext().getRequest();
+			String uxuiName = UserAgent.getSelection(request).getUxUi().getName();
+			EXT.checkAccess(user, UserAccess.previousComplete(formModuleName, formDocumentName, binding), uxuiName);
 	    	if (! user.canReadDocument(document)) {
 				throw new SecurityException("read this data", user.getName());
 			}
 
-			if (document.isPersistable()) { // persistent document
-				if ((attribute == null) || // implicit attribute or
-						attribute.isPersistent()) { // explicit and persistent attribute
-					final String moduleName = document.getOwningModuleName();
-					final String documentName = document.getName();
-					DocumentQuery q = persistence.newDocumentQuery(moduleName, documentName);
-					q.addBoundProjection(attributeName, attributeName);
-					q.setDistinct(true);
-					if (query != null) {
-						q.getFilter().addLike(attributeName, new StringBuilder(query.length() + 2).append("%").append(query).append("%").toString());
-					}
-					// NB return Object as the type could be anything
-					List<Object> results = q.setMaxResults(100).scalarResults(Object.class);
-					result = new ArrayList<>(results.size());
-					for (Object value : results) {
-						if (value != null) {
-							result.add(value.toString());
-						}
+			if (document.isPersistable() &&
+					((attribute == null) || // implicit attribute or
+						attribute.isPersistent())) { // explicit and persistent attribute
+				final String moduleName = document.getOwningModuleName();
+				final String documentName = document.getName();
+				DocumentQuery q = persistence.newDocumentQuery(moduleName, documentName);
+				q.addBoundProjection(attributeName, attributeName);
+				q.setDistinct(true);
+				if (query != null) {
+					q.getFilter().addLike(attributeName, new StringBuilder(query.length() + 2).append("%").append(query).append("%").toString());
+				}
+				// NB return Object as the type could be anything
+				List<Object> results = q.setMaxResults(100).scalarResults(Object.class);
+				result = new ArrayList<>(results.size());
+				for (Object value : results) {
+					if (value != null) {
+						result.add(value.toString());
 					}
 				}
 			}
@@ -128,14 +157,16 @@ public class CompleteAction extends FacesAction<List<String>> {
 			if (! vetoed) {
 				Bizlet<Bean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 				if (bizlet != null) {
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "complete", "Entering " + bizlet.getClass().getName() + ".complete: " + attributeName + ", " + query + ", " + bean);
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Entering {}.complete: {}, {}, {}", bizlet.getClass().getName(), attributeName, query, bean);
 					result = bizlet.complete(attributeName, query, bean);
-					if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "complete", "Exiting " + bizlet.getClass().getName() + ".complete: " + attributeName + ", " + query + ", " + bean);
+					if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.complete: {}, {}, {}", bizlet.getClass().getName(), attributeName, query, bean);
 				}
 				internalCustomer.interceptAfterComplete(attributeName, query, bean, result);
 			}
 		}
 
-	    return result;
+		Monitoring.measure(RequestKey.complete(document, attributeName));
+
+		return result;
 	}
 }

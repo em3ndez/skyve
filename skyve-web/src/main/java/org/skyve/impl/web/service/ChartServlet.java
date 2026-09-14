@@ -3,6 +3,7 @@ package org.skyve.impl.web.service;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.List;
 import java.util.Map;
@@ -20,7 +21,6 @@ import org.skyve.impl.metadata.view.widget.Chart.ChartType;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.snapshot.CompoundFilterOperator;
 import org.skyve.impl.snapshot.SmartClientFilterOperator;
-import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.AbstractWebContext;
 import org.skyve.impl.web.UserAgent;
 import org.skyve.impl.web.WebUtil;
@@ -54,7 +54,13 @@ import org.skyve.persistence.DocumentQuery.AggregateFunction;
 import org.skyve.util.JSON;
 import org.skyve.util.OWASP;
 import org.skyve.util.Util;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -80,16 +86,31 @@ import jakarta.servlet.http.HttpServletResponse;
  */
 public class ChartServlet extends HttpServlet {
 	private static final long serialVersionUID = 1L;
-	
+
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(ChartServlet.class);
+
 	private static final String CHART_TYPE_NAME = "t";
 	private static final String DATA_SOURCE_NAME = "ds";
 	private static final String BUILDER_NAME = "b";
 	
+	/**
+	 * Produces chart configuration JSON for the requested chart model.
+	 *
+	 * <p>Response semantics: always returns JSON with no-cache headers. When model resolution or
+	 * aggregation fails, the servlet returns an empty JSON response body rather than propagating raw
+	 * stack traces to the client.
+	 *
+	 * @param request inbound servlet request containing chart model parameters
+	 * @param response outbound servlet response receiving chart configuration JSON
+	 * @throws ServletException when the servlet container reports a request-processing failure
+	 * @throws IOException when writing to the response stream fails
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doGet(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		response.setContentType(MimeType.json.toString());
-		response.setCharacterEncoding(Util.UTF8);
+		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 		response.addHeader("Cache-control", "private,no-cache,no-store"); // never
 		response.addDateHeader("Expires", 0); // never
 
@@ -110,7 +131,7 @@ public class ChartServlet extends HttpServlet {
 										processChartModel(request) :
 										processListModel(request);
 					if (result != null) {
-						pw.print(result);
+						Util.chunkCharsToWriter(result, pw);
 					}
 					else {
 						pw.print(emptyResponse());
@@ -121,40 +142,50 @@ public class ChartServlet extends HttpServlet {
 				}
 			}
 			catch (Throwable t) {
-				t.printStackTrace();
+				LOGGER.error(t.getMessage(), t);
 				persistence.rollback();
 				pw.print(emptyResponse());
 			}
 			finally {
-				if (persistence != null) {
-					persistence.commit(true);
-				}
+				persistence.commit(true);
 			}
 		}
 	}
 	
+	/**
+	 * Delegates POST chart requests to {@link #doGet(HttpServletRequest, HttpServletResponse)}.
+	 *
+	 * @param request inbound servlet request
+	 * @param response outbound servlet response
+	 * @throws ServletException when servlet processing fails
+	 * @throws IOException when writing to the response stream fails
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doPost(HttpServletRequest request, HttpServletResponse response)
 	throws ServletException, IOException {
 		doGet(request, response);
 	}
 	
-	private static String processChartModel(HttpServletRequest request)
+	private static @Nullable String processChartModel(@Nonnull HttpServletRequest request)
 	throws Exception {
 		String contextKey = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.CONTEXT_NAME)));
 		AbstractWebContext webContext = StateUtil.getCachedConversation(contextKey, request);
 		Bean bean = WebUtil.getConversationBeanFromRequest(webContext, request);
+		if (bean == null) {
+			return null;
+		}
 
 		User user = CORE.getUser();
 		String moduleName = bean.getBizModule();
 		String documentName = bean.getBizDocument();
-		UxUi uxui = UserAgent.getUxUi(request);
+		UxUi uxui = UserAgent.getSelection(request).getUxUi();
 		String uxuiName = uxui.getName();
 
 		Customer customer = CORE.getCustomer();
 		Module module = customer.getModule(moduleName);
 		Document document = module.getDocument(customer, documentName);
-		UtilImpl.LOGGER.info("UX/UI = " + uxuiName);
+		LOGGER.info("UX/UI = {}", uxuiName);
 
 		View view = document.getView(uxuiName,
 										customer,
@@ -163,6 +194,7 @@ public class ChartServlet extends HttpServlet {
 											ViewType.create.toString());
 
 		ChartData data = null;
+		RequestKey key = null;
 		// Check for an inline model builder
 		String modelName = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.MODEL_NAME)));
 		ChartBuilderMetaData builder = (ChartBuilderMetaData) view.getInlineModel(modelName);
@@ -172,19 +204,24 @@ public class ChartServlet extends HttpServlet {
 			ChartModel<Bean> model = document.getChartModel(customer, modelName, true);
 			model.setBean(bean);
 			data = model.getChartData();
+			key = RequestKey.model(document, modelName);
 		}
 		else {
 			MetaDataChartModel model = new MetaDataChartModel(builder);
 			model.setBean(bean);
 			data = model.getChartData();
+			key = RequestKey.chart(builder);
 		}
 		
 		ChartType type = ChartType.valueOf(request.getParameter(CHART_TYPE_NAME));
 		org.primefaces.model.charts.ChartModel model = ChartAction.pfChartModel(type, data);
 		
-		return ChartConfigRenderer.config(type, model);
+		String result = ChartConfigRenderer.config(type, model);
+		Monitoring.measure(key);
+		return result;
 	}
 
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private static String processListModel(HttpServletRequest request)
 	throws Exception {
 		User user = CORE.getUser();
@@ -200,7 +237,7 @@ public class ChartServlet extends HttpServlet {
 			return emptyResponse();
 		}
 
-		UxUi uxui = UserAgent.getUxUi(request);
+		UxUi uxui = UserAgent.getSelection(request).getUxUi();
 
 		MetaDataQueryDefinition query = module.getMetaDataQuery(documentOrQueryOrModelName);
 		// not a query, must be a document
@@ -211,9 +248,6 @@ public class ChartServlet extends HttpServlet {
 		// a query
 		else {
 			EXT.checkAccess(user, UserAccess.queryAggregate(moduleName, documentOrQueryOrModelName), uxui.getName());
-		}
-		if (query == null) {
-			throw new ServletException("DataSource does not reference a valid query " + documentOrQueryOrModelName);
 		}
 
 		// Check read permission
@@ -231,7 +265,7 @@ public class ChartServlet extends HttpServlet {
 		// add filter criteria
 		String criteriaString = request.getParameter("criteria");
 		@SuppressWarnings("unchecked")
-		Map<String, Object> criteria = (Map<String, Object>) JSON.unmarshall(null, criteriaString);
+		Map<String, Object> criteria = (Map<String, Object>) JSON.unmarshall(criteriaString);
 		if (criteria != null) {
 			String operator = (String) criteria.get("operator");
 			if (operator != null) { // advanced criteria
@@ -257,7 +291,7 @@ public class ChartServlet extends HttpServlet {
 		}
 
 		@SuppressWarnings("unchecked")
-		Map<String, Object> json = (Map<String, Object>) JSON.unmarshall(null, request.getParameter(BUILDER_NAME));
+		Map<String, Object> json = (Map<String, Object>) JSON.unmarshall(request.getParameter(BUILDER_NAME));
 
 		String categoryBinding = (String) json.get("categoryBinding");
 		String categoryBucketSimpleName = (String) json.get("categoryBucket");

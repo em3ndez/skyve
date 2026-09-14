@@ -20,24 +20,38 @@ import org.skyve.util.Binder;
 import org.skyve.util.Binder.TargetMetaData;
 import org.skyve.web.WebContext;
 
+import modules.admin.ImportExport.ImportExportUtil;
 import modules.admin.domain.ImportExport.Mode;
 import modules.admin.domain.ImportExportColumn;
 
+/**
+ * Provides binding/domain validation logic for import/export column configuration rows.
+ */
 public class ImportExportColumnBizlet extends Bizlet<ImportExportColumn> {
-
-	public static final String EXPRESSION = "expression...";
-
 	private List<DomainValue> bindings = null;
 
+	/**
+	 * Returns dynamic binding choices for the selected parent document.
+	 *
+	 * @param attributeName
+	 *        the attribute requesting dynamic values
+	 * @param bean
+	 *        the current import/export column bean
+	 * @return available binding domain values for {@link ImportExportColumn#bindingNamePropertyName}, otherwise superclass values
+	 * @throws Exception
+	 *         if metadata inspection fails
+	 */
 	@Override
 	public List<DomainValue> getDynamicDomainValues(String attributeName, ImportExportColumn bean) throws Exception {
 
+		// The dynamic domain logic for bindingName can be used when inline datagrids are fixed for both PF and SC
 		if (ImportExportColumn.bindingNamePropertyName.equals(attributeName)) {
 			if (bindings == null) {
 				bindings = new ArrayList<>();
 			}
 
-			if (bean.getParent() != null && bean.getParent().getModuleName() != null && bean.getParent().getDocumentName() != null && bindings.isEmpty()) {
+			if (bean.getParent() != null && bean.getParent().getModuleName() != null && bean.getParent().getDocumentName() != null
+					&& bindings.isEmpty()) {
 
 				Persistence pers = CORE.getPersistence();
 				User user = pers.getUser();
@@ -53,21 +67,14 @@ public class ImportExportColumnBizlet extends Bizlet<ImportExportColumn> {
 							&& !AttributeType.image.equals(a.getAttributeType())
 							&& !AttributeType.geometry.equals(a.getAttributeType())
 							&& !AttributeType.inverseMany.equals(a.getAttributeType())
-							&& !AttributeType.inverseOne.equals(a.getAttributeType())) {
-
-						// also exclude non persistent fields
-						if (a.isPersistent()) {
-							if(AttributeType.association.equals(a.getAttributeType())) {
-//								bindings.add(new DomainValue(a.getName() + Bean.BIZ_KEY, a.getDisplayName()));
-								bindings.add(new DomainValue(a.getName(), a.getLocalisedDisplayName()));
-							} else {
-								bindings.add(new DomainValue(a.getName(), a.getLocalisedDisplayName()));
-							}
-						}
+							&& !AttributeType.inverseOne.equals(a.getAttributeType())
+							// also exclude non persistent fields
+							&& a.isPersistent()) {
+						bindings.add(new DomainValue(a.getName(), a.getLocalisedDisplayName()));
 					}
 				}
 
-				bindings.add(new DomainValue(EXPRESSION));
+				bindings.add(new DomainValue(ImportExportUtil.EXPRESSION));
 			}
 
 			return bindings;
@@ -75,10 +82,76 @@ public class ImportExportColumnBizlet extends Bizlet<ImportExportColumn> {
 		return super.getDynamicDomainValues(attributeName, bean);
 	}
 
+	/**
+	 * Returns completion candidates for binding names.
+	 *
+	 * @param attributeName
+	 *        the attribute requesting completions
+	 * @param value
+	 *        current user-entered text
+	 * @param bean
+	 *        the current import/export column bean
+	 * @return available binding completions for {@link ImportExportColumn#bindingNamePropertyName}, otherwise superclass values
+	 * @throws Exception
+	 *         if metadata inspection fails
+	 */
 	@Override
-	public ImportExportColumn preExecute(ImplicitActionName actionName, ImportExportColumn bean, Bean parentBean, WebContext webContext) throws Exception {
+	public List<String> complete(String attributeName, String value, ImportExportColumn bean) throws Exception {
+		if (ImportExportColumn.bindingNamePropertyName.equals(attributeName)) {
+			List<String> bindingsList = new ArrayList<>();
 
-		if (ImplicitActionName.OK.equals(actionName) || ImplicitActionName.Save.equals(actionName) || ImplicitActionName.ZoomOut.equals(actionName)) {
+			if (bean.getParent() != null && bean.getParent().getModuleName() != null && bean.getParent().getDocumentName() != null
+					&& bindingsList.isEmpty()) {
+
+				Customer customer = CORE.getCustomer();
+				Module module = customer.getModule(bean.getParent().getModuleName());
+				Document document = module.getDocument(customer, bean.getParent().getDocumentName());
+
+				for (Attribute a : document.getAllAttributes(customer)) {
+
+					// exclude unimplemented types - some of these can be handled later
+					if (!AttributeType.collection.equals(a.getAttributeType())
+							&& !AttributeType.content.equals(a.getAttributeType())
+							&& !AttributeType.image.equals(a.getAttributeType())
+							&& !AttributeType.geometry.equals(a.getAttributeType())
+							&& !AttributeType.inverseMany.equals(a.getAttributeType())
+							&& !AttributeType.inverseOne.equals(a.getAttributeType())
+							// also exclude non persistent fields
+							&& a.isPersistent()) {
+						bindingsList.add(a.getName());
+					}
+				}
+
+				bindingsList.add(ImportExportUtil.EXPRESSION);
+			}
+
+			return bindingsList;
+		}
+		return super.complete(attributeName, value, bean);
+	}
+
+	/**
+	 * Validates binding or expression syntax before saving the inline row.
+	 *
+	 * @param actionName
+	 *        the pending implicit action
+	 * @param bean
+	 *        the import/export column being validated
+	 * @param parentBean
+	 *        the parent bean from the conversation
+	 * @param webContext
+	 *        the current web context
+	 * @return the bean passed to the superclass pre-execute pipeline
+	 * @throws Exception
+	 *         if validation fails
+	 */
+	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
+	public ImportExportColumn preExecute(ImplicitActionName actionName, ImportExportColumn bean, Bean parentBean,
+			WebContext webContext) throws Exception {
+
+		if (ImplicitActionName.OK.equals(actionName) || ImplicitActionName.Save.equals(actionName)
+				|| ImplicitActionName.ZoomOut.equals(actionName)) {
 
 			Persistence pers = CORE.getPersistence();
 			Customer customer = pers.getUser().getCustomer();
@@ -123,7 +196,9 @@ public class ImportExportColumnBizlet extends Bizlet<ImportExportColumn> {
 
 					} catch (@SuppressWarnings("unused") Exception e2) {
 						StringBuilder sb = new StringBuilder(64);
-						sb.append("The expression '").append(bean.getBindingExpression()).append("' is invalid or can't be processed");
+						sb.append("The expression '")
+								.append(bean.getBindingExpression())
+								.append("' is invalid or can't be processed");
 
 						throw new ValidationException(new Message(sb.toString()));
 					}
@@ -135,5 +210,4 @@ public class ImportExportColumnBizlet extends Bizlet<ImportExportColumn> {
 
 		return super.preExecute(actionName, bean, parentBean, webContext);
 	}
-
 }

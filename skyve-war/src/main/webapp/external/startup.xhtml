@@ -5,18 +5,20 @@
 		xmlns:f="http://java.sun.com/jsf/core"
 		xmlns:p="http://primefaces.org/ui"
 		xmlns:s="http://skyve.org/xml/ui"
+		lang="#{skyveStartup.languageTag}" xml:lang="#{skyveStartup.languageTag}"
 		dir="#{skyveStartup.dir}">
 	<f:view contentType="text/html" encoding="UTF-8">
 		<f:metadata>
 			<f:event type="preRenderView" listener="#{skyveStartup.preRender}"/>
 		</f:metadata>
 		<p:importEnum type="org.skyve.web.WebAction" var="WebAction" allSuffix="ALL_ENUM_VALUES" />  
-		<ui:composition template="#{'/WEB-INF/pages/templates/'.concat(skyveStartup.templateName).concat('/view.xhtml')}">
+		<ui:composition template="#{'/WEB-INF/pages/templates/'.concat(_skyveTheme.templateName).concat('/view.xhtml')}">
 			<ui:param name="bean" value="#{skyveStartup}" />
 			<ui:param name="showMenu" value="false" />
 			<ui:param name="resetMenu" value="false" />
-			<ui:param name="showSwitchMode" value="#{'phone' ne skyve.userAgentType and skyve.canSwitchMode}" />
+			<ui:param name="showSwitchMode" value="false" />
 			<ui:param name="showLogout" value="true" />
+			<ui:param name="vue" value="false" />
 			<ui:define name="body">
 				<s:conversation managedBean="skyveStartup" />
 				<s:csrfForm managedBean="skyveStartup">
@@ -31,7 +33,7 @@
 								update="@form" />
 				
 					<div class="ui-g">
-						<h:panelGroup layout="block" styleClass="ui-g-11 rightFormLabel">
+						<h:panelGroup layout="block" styleClass="ui-g-11 rightForm">
 							<p:outputLabel for="inputDontShow" value="Don't show this again:" />
 						</h:panelGroup>
 						<h:panelGroup layout="block" styleClass="ui-g-1 left">

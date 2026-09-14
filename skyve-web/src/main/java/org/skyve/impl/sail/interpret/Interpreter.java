@@ -4,13 +4,13 @@ import org.jboss.weld.environment.se.Weld;
 import org.skyve.impl.cdi.SkyveCDIProducer;
 import org.skyve.impl.content.AbstractContentManager;
 import org.skyve.impl.content.NoOpContentManager;
-import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.impl.metadata.repository.LocalDesignRepository;
+import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.impl.metadata.user.SuperUser;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.persistence.RDBMSDynamicPersistence;
 import org.skyve.impl.persistence.hibernate.HibernateContentPersistence;
-import org.skyve.impl.sail.execution.PrimeFacesInlineSeleneseExecutor;
+import org.skyve.impl.sail.execution.pf.PrimeFacesSeleneseExecutor;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.util.XMLMetaData;
 import org.skyve.impl.web.faces.pipeline.component.SkyveComponentBuilderChain;
@@ -18,6 +18,9 @@ import org.skyve.impl.web.faces.pipeline.layout.ResponsiveLayoutBuilder;
 import org.skyve.metadata.sail.language.Automation;
 import org.skyve.persistence.DataStore;
 
+/**
+ * Implements internal web-module behavior for this Skyve runtime concern.
+ */
 public class Interpreter {
 	protected static final String USER = "TestUser";
 	protected static final String CUSTOMER = "bizhub";
@@ -29,8 +32,14 @@ public class Interpreter {
 	private static final String DB_PWD = "password";
 	private static final String CONTENT_DIRECTORY = "content/";
 
+	/**
+	 * Runs a standalone SAIL interpretation workflow against the configured local metadata repository.
+	 *
+	 * @param args ignored command-line arguments
+	 * @throws Exception if repository/bootstrap/execution setup fails
+	 */
 	@SuppressWarnings("resource")
-	public static void main(String[] args) throws Exception {
+	public static void main(String[] args) {
 		AbstractPersistence.IMPLEMENTATION_CLASS = HibernateContentPersistence.class;
 		AbstractPersistence.DYNAMIC_IMPLEMENTATION_CLASS = RDBMSDynamicPersistence.class;
 		AbstractContentManager.IMPLEMENTATION_CLASS = NoOpContentManager.class;
@@ -65,8 +74,8 @@ public class Interpreter {
 			}
 */
 			Automation automation = XMLMetaData.unmarshalSAILString("/Users/mike/dtf/skyve/skyve-tools/test.xml");
-			PrimeFacesInlineSeleneseExecutor executor = new PrimeFacesInlineSeleneseExecutor(new SkyveComponentBuilderChain(),
-																								new ResponsiveLayoutBuilder());
+			PrimeFacesSeleneseExecutor executor = new PrimeFacesSeleneseExecutor(new SkyveComponentBuilderChain(),
+																					new ResponsiveLayoutBuilder());
 			automation.execute(executor);
 			System.out.println(executor);
 /*

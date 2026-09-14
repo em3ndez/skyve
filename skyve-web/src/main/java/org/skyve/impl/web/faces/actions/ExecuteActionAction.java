@@ -6,6 +6,7 @@ import org.skyve.domain.messages.SecurityException;
 import org.skyve.impl.metadata.customer.CustomerImpl;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.UtilImpl;
+import org.skyve.impl.web.UserAgent;
 import org.skyve.impl.web.faces.FacesAction;
 import org.skyve.impl.web.faces.views.FacesView;
 import org.skyve.metadata.controller.ServerSideAction;
@@ -17,15 +18,35 @@ import org.skyve.metadata.user.User;
 import org.skyve.metadata.view.Action;
 import org.skyve.metadata.view.View;
 import org.skyve.metadata.view.View.ViewType;
+import org.skyve.util.logging.Category;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
 import org.skyve.web.WebContext;
+import org.slf4j.Logger;
 
+import jakarta.faces.context.FacesContext;
+import jakarta.servlet.http.HttpServletRequest;
+
+/**
+ * Executes a Faces callback action within the current Skyve web context.
+ */
 public class ExecuteActionAction extends FacesAction<Void> {
+    private static final Logger FACES_LOGGER = Category.FACES.logger();
+
 	private FacesView facesView;
 	private String actionName;
 	
 	private String collectionName;
 	private String elementBizId;
 	
+	/**
+	 * Creates an action executor for a named view action and optional collection row context.
+	 *
+	 * @param facesView the active Faces view state
+	 * @param actionName the action name to execute
+	 * @param collectionName optional collection binding when targeting a row action
+	 * @param elementBizId optional row bizId when targeting a collection element
+	 */
 	public ExecuteActionAction(FacesView facesView,
 								String actionName,
 								String collectionName,
@@ -36,10 +57,22 @@ public class ExecuteActionAction extends FacesAction<Void> {
 		this.elementBizId = elementBizId;
 	}
 
+	/**
+	 * Executes the configured server-side action and updates Faces view state with the returned bean.
+	 *
+	 * @return {@code null}; the action applies updates to persistence and the current Faces view by side effect
+	 * @throws Exception when action execution fails
+	 */
 	@Override
-	@SuppressWarnings("unchecked")
+	@SuppressWarnings({"unchecked", "java:S3776"}) // Complexity OK
 	public Void callback() throws Exception {
-		if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.info("ExecuteActionAction - EXECUTE ACTION " + actionName + ((collectionName != null) ? (" for grid " + collectionName + " with selected row " + elementBizId) : ""));
+		if (UtilImpl.FACES_TRACE) {
+			if (collectionName != null) {
+				FACES_LOGGER.info("ExecuteActionAction - EXECUTE ACTION {} for grid {} with selected row {}", actionName, collectionName, elementBizId);
+			} else {
+				FACES_LOGGER.info("ExecuteActionAction - EXECUTE ACTION {}", actionName);
+			}
+		}
 
 		AbstractPersistence persistence = AbstractPersistence.get();
 		Bean targetBean = ActionUtil.getTargetBeanForViewAndReferenceBinding(facesView, collectionName, elementBizId);
@@ -47,12 +80,13 @@ public class ExecuteActionAction extends FacesAction<Void> {
     	Customer customer = user.getCustomer();
     	Module targetModule = customer.getModule(targetBean.getBizModule());
 		Document targetDocument = targetModule.getDocument(customer, targetBean.getBizDocument());
-		View view = targetDocument.getView(facesView.getUxUi().getName(), 
+		HttpServletRequest request = (HttpServletRequest) FacesContext.getCurrentInstance().getExternalContext().getRequest();
+		View view = targetDocument.getView(UserAgent.getSelection(request).getUxUi().getName(),
 											customer, 
 											targetBean.isCreated() ? ViewType.edit.toString() : ViewType.create.toString());
     	Action action = view.getAction(actionName);
     	Boolean clientValidation = action.getClientValidation();
-		if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.info("ExecuteActionAction - client validation = " + (! Boolean.FALSE.equals(clientValidation)));
+		if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("ExecuteActionAction - client validation = {}", clientValidation);
     	String resourceName = action.getResourceName();
     	
 		if (! user.canExecuteAction(targetDocument, resourceName)) {
@@ -61,7 +95,9 @@ public class ExecuteActionAction extends FacesAction<Void> {
 
 		ServerSideAction<Bean> serverSideAction = (ServerSideAction<Bean>) action.getServerSideAction(customer, targetDocument);
 	    if (Boolean.FALSE.equals(clientValidation) || FacesAction.validateRequiredFields()) {
-			CustomerImpl internalCustomer = (CustomerImpl) customer;
+			RequestKey key = RequestKey.action(targetDocument, resourceName);
+
+	    	CustomerImpl internalCustomer = (CustomerImpl) customer;
 			WebContext webContext = facesView.getWebContext();
 			Bean contextBean = facesView.getBean();
 			boolean notPersistedBefore = contextBean.isNotPersisted();
@@ -103,6 +139,8 @@ public class ExecuteActionAction extends FacesAction<Void> {
 				// We want to call post render
 				facesView.setPostRender(targetDocument.getBizlet(customer), resultBean);
 			}
+			
+			Monitoring.measure(key);
 		}
 
 	    return null;

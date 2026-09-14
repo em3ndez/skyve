@@ -7,7 +7,7 @@
 	<parent>
 		<groupId>org.skyve</groupId>
 		<artifactId>skyve-parent</artifactId>
-		<version>9.2.0-SNAPSHOT</version>
+		<version>10.0.0-SNAPSHOT</version>
 	</parent>
 	<artifactId>skyve-war</artifactId>
 
@@ -18,6 +18,117 @@
 		<forkCount>2</forkCount>
 		<maven.javadoc.skip>true</maven.javadoc.skip>
 	</properties>
+	
+	<profiles>
+		<profile>
+			<id>deployed-it</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>build-helper-maven-plugin</artifactId>
+						<version>3.4.0</version>
+						<executions>
+							<execution>
+								<id>add-deployed-it-overlay-source</id>
+								<phase>generate-test-sources</phase>
+								<goals>
+									<goal>add-test-source</goal>
+								</goals>
+								<configuration>
+									<sources>
+										<source>src/deployed-it/java</source>
+									</sources>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-war-plugin</artifactId>
+						<version>3.4.0</version>
+						<executions>
+							<execution>
+								<id>deployed-it-overlay-war</id>
+								<phase>package</phase>
+								<goals>
+									<goal>war</goal>
+								</goals>
+								<configuration>
+									<classifier>deployed-it</classifier>
+									<attachClasses>false</attachClasses>
+									<webappDirectory>${project.build.directory}/deployed-it-webapp</webappDirectory>
+									<webResources combine.children="append">
+										<webResource>
+											<directory>src/deployed-it/webapp</directory>
+										</webResource>
+										<webResource>
+											<directory>${project.build.testOutputDirectory}</directory>
+											<targetPath>WEB-INF/classes</targetPath>
+											<includes>
+												<include>util/deployed/transport/**</include>
+											</includes>
+										</webResource>
+									</webResources>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-failsafe-plugin</artifactId>
+						<configuration>
+							<includes>
+								<include>**/*IT</include>
+							</includes>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+		<profile>
+			<id>spotless-with-download</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-antrun-plugin</artifactId>
+						<version>3.1.0</version>
+						<executions>
+							<execution>
+								<id>download</id>
+								<phase>validate</phase>
+								<goals>
+									<goal>run</goal>
+								</goals>
+								<configuration>
+									<target>
+										<get
+											src="https://raw.githubusercontent.com/bizhubau/public-resources/refs/heads/main/code-style/eclipse-code-format-profile.xml"
+											dest="${project.build.directory}/eclipse-code-format-profile.xml"
+											skipexisting="true" />
+									</target>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+
+					<plugin>
+						<groupId>com.diffplug.spotless</groupId>
+						<artifactId>spotless-maven-plugin</artifactId>
+						<executions>
+							<execution>
+								<phase>validate</phase>
+								<goals>
+									<goal>check</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 
 	<build>
 		<finalName>skyve</finalName>
@@ -54,6 +165,23 @@
 						</lifecycleMappingMetadata>
 					</configuration>
 				</plugin>
+				<plugin>
+					<groupId>com.diffplug.spotless</groupId>
+					<artifactId>spotless-maven-plugin</artifactId>
+					<version>2.46.1</version>
+					<configuration>
+					<lineEndings>PRESERVE</lineEndings>
+					<java>
+						<excludes>
+							<exclude>src/test/java/util/**/*</exclude>
+							<exclude>src/main/java/org/skyve/**/*</exclude>
+						</excludes>
+						<eclipse>
+							<file>${project.build.directory}/eclipse-code-format-profile.xml</file>
+						</eclipse>
+					</java>
+					</configuration>
+				</plugin>
 			</plugins>
 		</pluginManagement>
 
@@ -81,6 +209,7 @@
 					<skyveDir>../../</skyveDir>
 					<customer>bizhub</customer>
 					<generateDomainConfig>
+						<validate>true</validate>
 						<debug>true</debug>
 						<dialect>H2_NO_INDEXES</dialect>
 						<excludedModules>test,whosin,whosinintegrate</excludedModules>
@@ -149,6 +278,7 @@
 							<filtering>true</filtering>
 							<includes>
 								<include>template.xhtml</include>
+								<include>topbar.xhtml</include>
 							</includes>
 						</webResource>
 					</webResources>
@@ -161,6 +291,63 @@
 						</goals>
 					</execution>
 				</executions>
+			</plugin>
+			<plugin>
+			    <groupId>com.diffplug.spotless</groupId>
+			    <artifactId>spotless-maven-plugin</artifactId>
+			    <version>2.46.1</version>
+			    <configuration>
+			        <ratchetFrom>origin/master</ratchetFrom>
+			        <lineEndings>PRESERVE</lineEndings>
+			        <java>
+			            <excludes>
+			                <exclude>src/test/java/util/**/*</exclude>
+			                <exclude>src/main/java/org/skyve/**/*</exclude>
+			            </excludes>
+			            <eclipse>
+			                <file>${project.basedir}/.config/eclipse-code-format-profile.xml</file>
+			            </eclipse>
+			        </java>
+			    </configuration>
+			</plugin>
+			<plugin>
+			    <groupId>org.apache.maven.plugins</groupId>
+			    <artifactId>maven-antrun-plugin</artifactId>
+			    <version>3.1.0</version>
+			    <executions>
+			        <execution>
+			            <id>download-config</id>
+			            <phase>validate</phase>
+			            <goals>
+			                <goal>run</goal>
+			            </goals>
+			            <configuration>
+			                <!-- Download the spotless config XML -->
+			                <target>
+			                    <mkdir dir="${project.basedir}/.config"/>
+			                    <get
+			                        src="https://raw.githubusercontent.com/bizhubau/public-resources/refs/heads/main/code-style/eclipse-code-format-profile.xml"
+			                        dest="${project.basedir}/.config/eclipse-code-format-profile.xml"
+			                        skipexisting="true" />
+			                </target>
+			            </configuration>
+			        </execution>
+			        <execution>
+			            <id>remove-relocated-device-pages</id>
+			            <phase>prepare-package</phase>
+			            <goals>
+			                <goal>run</goal>
+			            </goals>
+			            <configuration>
+			                <target>
+			                    <!-- The exploded deployment directory persists between builds. Remove the old
+			                         WAR-root copies before the pages are resolved from the skyve-web JAR. -->
+			                    <delete file="${basedir}/deployments/skyve.war/device.xhtml" quiet="true" />
+			                    <delete file="${basedir}/deployments/skyve.war/device.jsp" quiet="true" />
+			                </target>
+			            </configuration>
+			        </execution>
+			    </executions>
 			</plugin>
 		</plugins>
 
@@ -207,11 +394,6 @@
 			<artifactId>slf4j-api</artifactId>
 			<scope>compile</scope>
 		</dependency>
-		<dependency>
-			<groupId>org.slf4j</groupId>
-			<artifactId>slf4j-jdk14</artifactId>
-			<scope>runtime</scope>
-		</dependency>
 
 		<dependency>
 			<groupId>org.apache.poi</groupId>
@@ -224,6 +406,12 @@
 		<dependency>
 			<groupId>org.junit.jupiter</groupId>
 			<artifactId>junit-jupiter-engine</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter-api</artifactId>
+			<version>${junit-jupiter.version}</version>
 			<scope>test</scope>
 		</dependency>
 		<!--JUnit Jupiter Vintage Engine to depend on the JUnit4 engine and JUnit 4 API  -->
@@ -243,33 +431,22 @@
 			<scope>test</scope>
 		</dependency>
 		<dependency>
-			<groupId>org.seleniumhq.selenium</groupId>
-			<artifactId>selenium-support</artifactId>
-			<version>3.141.59</version>
+			<groupId>com.codeborne</groupId>
+			<artifactId>selenide</artifactId>
+			<version>7.12.1</version>
 			<scope>test</scope>
 		</dependency>
+		<!-- Jakarta Faces implementation -->
 		<dependency>
-			<groupId>com.google.code.gson</groupId>
-			<artifactId>gson</artifactId>
+			<groupId>org.glassfish</groupId>
+			<artifactId>jakarta.faces</artifactId>
+			<version>${mojarra.version}</version>
 			<scope>test</scope>
 		</dependency>
-		<dependency>
-			<groupId>org.seleniumhq.selenium</groupId>
-			<artifactId>selenium-chrome-driver</artifactId>
-			<version>3.141.59</version>
-			<scope>test</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.seleniumhq.selenium</groupId>
-			<artifactId>selenium-firefox-driver</artifactId>
-			<version>3.141.59</version>
-			<scope>test</scope>
-		</dependency>
-		<!--  Jakarta Mail implementation -->
+		<!-- Jakarta Mail implementation -->
 		<dependency>
 			<groupId>org.eclipse.angus</groupId>
 			<artifactId>jakarta.mail</artifactId>
-			<version>2.0.2</version>
 			<scope>test</scope>
 		</dependency>
 		<!-- Jakarta EL implementation -->
@@ -282,7 +459,7 @@
 		<dependency>
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-test</artifactId>
-			<version>6.1.3</version>
+			<version>${spring.version}</version>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>

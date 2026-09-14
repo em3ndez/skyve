@@ -6,9 +6,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Serializable;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.Locale;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPInputStream;
@@ -25,34 +28,60 @@ import org.skyve.cache.CacheTier;
 import org.skyve.cache.Caching;
 import org.skyve.domain.messages.ConversationEndedException;
 import org.skyve.domain.messages.SessionEndedException;
+import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.AbstractWebContext;
+import org.skyve.util.IPGeolocation;
+import org.skyve.util.logging.Category;
+import org.skyve.web.WebContext;
+import org.slf4j.Logger;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 
+/**
+ * Manages serialised conversation (page-scope) state in the HTTP session,
+ * providing store and retrieve operations for Faces view state and navigation data.
+ */
 public class StateUtil {
+
+    private static final Logger FACES_LOGGER = Category.FACES.logger();
+
 	private StateUtil() {
 		// Disallow instantiation.
 	}
 
-	private static Cache<String, byte[]> getConversations() {
+	private static @Nonnull Cache<String, byte[]> getConversations() {
 		return EXT.getCaching().getEHCache(UtilImpl.CONVERSATION_CACHE.getName(), String.class, byte[].class);
 	}
 
-	public static void cacheConversation(@Nonnull AbstractWebContext webContext)
-	throws Exception {
-		if (webContext != null) {
-			// Note that EHCache puts are thread-safe
-			getConversations().put(webContext.getKey(), SerializationHelper.serialize(webContext));
+	/**
+	 * Commit an active conversation transaction if it exists without closing its persistence
+	 * context and then cache the conversation.
+	 *
+	 * <p>This low-level operation does not begin a replacement transaction. Public
+	 * continuation APIs such as {@link WebContext#cacheConversationAndCycleTransaction()}
+	 * do that after the serialised checkpoint has been written.
+	 *
+	 * @param webContext the conversation to checkpoint and cache
+	 */
+	public static void commitAndCacheConversation(@Nonnull WebContext webContext) {
+		if (webContext instanceof AbstractWebContext context) {
+			AbstractPersistence persistence = context.getConversation();
+			if (persistence != null) {
+				persistence.commit(false);
+			}
 		}
+
+		// Note that EHCache puts are thread-safe
+		getConversations().put(webContext.getKey(), SerializationHelper.serialize(webContext));
 	}
 	
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public static @Nullable AbstractWebContext getCachedConversation(@Nullable String webId,
-																		@Nullable HttpServletRequest request)
-	throws Exception {
+																		@Nullable HttpServletRequest request) {
 		AbstractWebContext result = null;
 
         // Context key here is a UUID with a bizId smashed together
@@ -93,14 +122,23 @@ public class StateUtil {
 	
 	private static final AtomicInteger SESSION_COUNT = new AtomicInteger(0);
 
+	/**
+	 * Returns the sessionCount.
+	 */
 	public static int getSessionCount() {
 		return SESSION_COUNT.get();
 	}
 	
+	/**
+	 * Performs incrementSessionCount.
+	 */
 	public static void incrementSessionCount() {
 		SESSION_COUNT.incrementAndGet();
 	}
 	
+	/**
+	 * Performs decrementSessionCount.
+	 */
 	public static void decrementSessionCount() {
 		int count = SESSION_COUNT.decrementAndGet();
 		if (count < 0) {
@@ -109,16 +147,128 @@ public class StateUtil {
 	}
 
 	@SuppressWarnings("rawtypes")
-	private static Cache<String, TreeSet> getTokens() {
-		return EXT.getCaching().getEHCache(UtilImpl.CSRF_TOKEN_CACHE.getName(), String.class, TreeSet.class);
+	private static @Nonnull Cache<String, TreeSet> getSessions() {
+		return EXT.getCaching().getEHCache(UtilImpl.SESSION_CACHE.getName(), String.class, TreeSet.class);
+	}
+	
+	/**
+	 * Adds a session.
+	 */
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	public static void addSession(@Nonnull String userId, @Nonnull HttpSession session) {
+		Cache<String, TreeSet> sessions = getSessions();
+		TreeSet sessionIds = sessions.get(userId);
+		if (sessionIds == null) {
+			sessionIds = new TreeSet<>();
+		}
+		sessionIds.add(session.getId());
+		// Note that EHCache puts are thread-safe
+		sessions.put(userId, sessionIds);
+	}
+	
+	/**
+	 * Removes the session.
+	 */
+	@SuppressWarnings("rawtypes")
+	public static void removeSession(@Nonnull String userId, @Nonnull HttpSession session) {
+		Cache<String, TreeSet> sessions = getSessions();
+		TreeSet sessionIds = sessions.get(userId);
+		if (sessionIds != null) {
+			sessionIds.remove(session.getId());
+			if (sessionIds.isEmpty()) {
+				sessions.remove(userId);
+			}
+			else {
+				// Note that EHCache puts are thread-safe
+				sessions.put(userId, sessionIds);
+			}
+		}
+	}
+	
+	/**
+	 * Performs checkSession.
+	 */
+	@SuppressWarnings("rawtypes")
+	public static boolean checkSession(@Nonnull String userId, @Nonnull HttpSession session) {
+		Cache<String, TreeSet> sessions = getSessions();
+		TreeSet sessionIds = sessions.get(userId);
+		if (sessionIds != null) {
+			return sessionIds.contains(session.getId());
+		}
+		return false;
 	}
 
-	public static void clearTokens(HttpSession session) {
-		clearTokens(session.getId());
+	/**
+	 * Determines whether the user has at least one different registered session ID.
+	 *
+	 * @param userId The user identifier.
+	 * @param session The current session.
+	 * @return {@code true} if at least one other session ID is already registered for the user.
+	 */
+	@SuppressWarnings("rawtypes")
+	public static boolean hasOtherSession(@Nonnull String userId, @Nonnull HttpSession session) {
+		Cache<String, TreeSet> sessions = getSessions();
+		TreeSet sessionIds = sessions.get(userId);
+		if (sessionIds == null || sessionIds.isEmpty()) {
+			return false;
+		}
+		if (sessionIds.size() > 1) {
+			return true;
+		}
+		return ! sessionIds.contains(session.getId());
+	}
+
+	/**
+	 * Returns the number of currently registered session IDs for a user.
+	 *
+	 * @param userId The user identifier.
+	 * @return The count of session IDs currently tracked for this user.
+	 */
+	@SuppressWarnings("rawtypes")
+	public static int getSessionCount(@Nonnull String userId) {
+		Cache<String, TreeSet> sessions = getSessions();
+		TreeSet sessionIds = sessions.get(userId);
+		return (sessionIds == null) ? 0 : sessionIds.size();
+	}
+	
+	/**
+	 * Removes the sessions.
+	 */
+	public static void removeSessions(@Nonnull String userId) {
+		getSessions().remove(userId);
+	}
+	
+	public static @Nonnull Set<String> getSessions(@Nonnull String userId) {
+		@SuppressWarnings("rawtypes")
+		Cache<String, TreeSet> sessions = getSessions();
+		Set<String> result = sessions.get(userId);
+		if (result == null) {
+			result = Collections.emptySet();
+		}
+		return result;
+	}
+
+	public static @Nonnull Cache<String, IPGeolocation> getGeoIPs() {
+		return EXT.getCaching().getEHCache(UtilImpl.GEO_IP_CACHE.getName(), String.class, IPGeolocation.class);
 	}
 	
 	@SuppressWarnings("rawtypes")
-	public static void clearTokens(String sessionId) {
+	private static @Nonnull Cache<String, TreeSet> getTokens() {
+		return EXT.getCaching().getEHCache(UtilImpl.CSRF_TOKEN_CACHE.getName(), String.class, TreeSet.class);
+	}
+
+	/**
+	 * Performs clearTokens.
+	 */
+	public static void clearTokens(@Nonnull HttpSession session) {
+		clearTokens(session.getId());
+	}
+	
+	/**
+	 * Performs clearTokens.
+	 */
+	@SuppressWarnings("rawtypes")
+	public static void clearTokens(@Nonnull String sessionId) {
 		Cache<String, TreeSet> tokens = getTokens();
 		TreeSet values = tokens.get(sessionId);
 		if (values != null) {
@@ -128,12 +278,18 @@ public class StateUtil {
 		}
 	}
 	
-	public static boolean checkToken(HttpSession session, Integer token) {
+	/**
+	 * Performs checkToken.
+	 */
+	public static boolean checkToken(@Nonnull HttpSession session, @Nullable Integer token) {
 		return checkToken(session.getId(), token);
 	}
 	
+	/**
+	 * Performs checkToken.
+	 */
 	@SuppressWarnings("rawtypes")
-	public static boolean checkToken(String sessionId, Integer token) {
+	public static boolean checkToken(@Nonnull String sessionId, @Nullable Integer token) {
 		if (token == null) {
 			return false;
 		}
@@ -142,13 +298,16 @@ public class StateUtil {
 		return (values != null) && values.contains(token);
 	}
 
-	public static void replaceToken(HttpSession session, Integer oldToken, Integer newToken) {
+	public static void replaceToken(@Nonnull HttpSession session,
+										@Nullable Integer oldToken,
+										@Nonnull Integer newToken) {
 		replaceToken(session.getId(), oldToken, newToken);
 	}
 
 	@SuppressWarnings({"unchecked", "rawtypes"})
-	public static void replaceToken(String sessionId, Integer oldToken, Integer newToken) {
-//System.out.println("replace token o=" + oldToken + ":n=" + newToken);
+	public static void replaceToken(@Nonnull String sessionId,
+										@Nullable Integer oldToken,
+										@Nonnull Integer newToken) {
 		if (newToken.equals(oldToken)) {
 			return;
 		}
@@ -164,7 +323,6 @@ public class StateUtil {
 			}
 		}
 		values.add(newToken);
-//System.out.println("tokens size =" + values.size());
 		// Note that EHCache puts are thread-safe
 		tokens.put(sessionId, values);
 	}
@@ -177,44 +335,51 @@ public class StateUtil {
 	    RANDOM.nextBytes(randomBytes);
 	}
 	
-	public static Integer createToken() {
+	public static @Nonnull Integer createToken() {
 		return Integer.valueOf(RANDOM.nextInt());
 	}
 	
+	/**
+	 * Logs the stateStats.
+	 */
 	public static void logStateStats() {
 		logCacheStats(UtilImpl.CONVERSATION_CACHE.getName(), "Conversation");
-		logCacheStats(UtilImpl.CSRF_TOKEN_CACHE.getName(), "CSRF Session");
-		UtilImpl.LOGGER.info("Session count = " + SESSION_COUNT.get());
-		UtilImpl.LOGGER.info("********************************************************************************");
+		logCacheStats(UtilImpl.CSRF_TOKEN_CACHE.getName(), "CSRF Token");
+		logCacheStats(UtilImpl.GEO_IP_CACHE.getName(), "Geo IP");
+		logCacheStats(UtilImpl.SESSION_CACHE.getName(), "User Session");
+		FACES_LOGGER.info("Session count = {}", SESSION_COUNT);
+		FACES_LOGGER.info("********************************************************************************");
 	}
 	
-	private static void logCacheStats(String cacheName, String cacheDescription) {
+	@SuppressWarnings("java:S2629") // logging with .toString() is good here
+	private static void logCacheStats(@Nonnull String cacheName, @Nonnull String cacheDescription) {
 		Caching caching = EXT.getCaching();
 		CacheStatistics statistics = caching.getEHCacheStatistics(cacheName);
-		if (statistics != null) {
-			StringBuilder log = new StringBuilder(64);
-			TierStatistics tier = caching.getEHTierStatistics(statistics, CacheTier.OnHeap);
-			if (tier != null) {
-				log.append(cacheDescription).append(" Count in heap memory = ").append(tier.getMappings());
-				UtilImpl.LOGGER.info(log.toString());
-				log.setLength(0);
-			}
-			tier = caching.getEHTierStatistics(statistics, CacheTier.OffHeap);
-			if (tier != null) {
-				log.append(cacheDescription).append(" Count/MB in off-heap memory = ").append(tier.getMappings());
-				log.append('/').append((long) (tier.getOccupiedByteSize() / 1024.0 / 1024.0 * 10.0) / 10.0);
-				UtilImpl.LOGGER.info(log.toString());
-				log.setLength(0);
-			}
-			tier = caching.getEHTierStatistics(statistics, CacheTier.Disk);
-			if (tier != null) {
-				log.append(cacheDescription).append(" Count/MB on disk = ").append(tier.getMappings());
-				log.append('/').append((long) (tier.getOccupiedByteSize() / 1024.0 / 1024.0 * 10.0) / 10.0);
-				UtilImpl.LOGGER.info(log.toString());
-			}
+		StringBuilder log = new StringBuilder(64);
+		TierStatistics tier = caching.getEHTierStatistics(statistics, CacheTier.OnHeap);
+		if (tier != null) {
+			log.append(cacheDescription).append(" Count in heap memory = ").append(tier.getMappings());
+			FACES_LOGGER.info(log.toString());
+			log.setLength(0);
+		}
+		tier = caching.getEHTierStatistics(statistics, CacheTier.OffHeap);
+		if (tier != null) {
+			log.append(cacheDescription).append(" Count/MB in off-heap memory = ").append(tier.getMappings());
+			log.append('/').append((long) (tier.getOccupiedByteSize() / 1024.0 / 1024.0 * 10.0) / 10.0);
+			FACES_LOGGER.info(log.toString());
+			log.setLength(0);
+		}
+		tier = caching.getEHTierStatistics(statistics, CacheTier.Disk);
+		if (tier != null) {
+			log.append(cacheDescription).append(" Count/MB on disk = ").append(tier.getMappings());
+			log.append('/').append((long) (tier.getOccupiedByteSize() / 1024.0 / 1024.0 * 10.0) / 10.0);
+			FACES_LOGGER.info(log.toString());
 		}
 	}
 	
+	/**
+	 * Performs evictExpiredConversations.
+	 */
 	public static void evictExpiredConversations() {
 		Cache<String, byte[]> conversations = getConversations();
 		Iterator<Entry<String, byte[]>> i = conversations.iterator();
@@ -228,6 +393,9 @@ public class StateUtil {
 		}
 	}
 	
+	/**
+	 * Performs evictExpiredSessionTokens.
+	 */
 	@SuppressWarnings("rawtypes")
 	public static void evictExpiredSessionTokens() {
 		Cache<String, TreeSet> tokens = getTokens();
@@ -242,17 +410,13 @@ public class StateUtil {
 		}
 	}
 	
-	private static final String ZIP_CHARSET = "ISO-8859-1";
-
-	public static String encode64(Serializable obj) 
+	public static @Nonnull String encode64(@Nonnull Serializable obj) 
 	throws IOException {
 		byte[] result = null;
 		
 		try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
 			try (OutputStream zos = new GZIPOutputStream(baos)) {
-//				ObjectOutputStream oos = new ObjectOutputStream(zos);
-//				oos.writeObject(obj);
-//				oos.close();
+				// Don't use standard Java serialization as it has issues with hibernate
 				SerializationHelper.serialize(obj, zos);
 			}
 			baos.flush();
@@ -260,21 +424,19 @@ public class StateUtil {
 		}
 		Base64 base64Codec = new Base64();
 
-		return new String(base64Codec.encode(result), ZIP_CHARSET);
+		return new String(base64Codec.encode(result), StandardCharsets.ISO_8859_1);
 	}
 
 	@SuppressWarnings("unchecked")
-	public static <T extends Serializable> T decode64(String encoding)
+	public static @Nonnull <T extends Serializable> T decode64(@Nonnull String encoding)
 	throws IOException {
 		T result = null;
 
 		Base64 base64Codec = new Base64();
-		byte[] gzippedoos = base64Codec.decode(encoding.getBytes(ZIP_CHARSET));
+		byte[] gzippedoos = base64Codec.decode(encoding.getBytes(StandardCharsets.ISO_8859_1));
 		try (ByteArrayInputStream bais = new ByteArrayInputStream(gzippedoos)) {
 			try (InputStream zis = new GZIPInputStream(bais)) {
-//    		ObjectInputStream ois = new ObjectInputStream(zis);
-//    		result = ois.readObject();
-//    		ois.close();
+				// Don't use standard Java serialization as it has issues with hibernate
 				result = (T) SerializationHelper.deserialize(zis);
 			}
 		}

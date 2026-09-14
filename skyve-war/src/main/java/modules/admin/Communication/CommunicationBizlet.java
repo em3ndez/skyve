@@ -15,56 +15,91 @@ import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.document.Bizlet;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
-import org.skyve.metadata.user.DocumentPermissionScope;
 import org.skyve.metadata.user.User;
-import org.skyve.persistence.DocumentFilter;
 import org.skyve.persistence.DocumentQuery;
 import org.skyve.persistence.Persistence;
-import org.skyve.util.Util;
 import org.skyve.web.WebContext;
 
+import jakarta.inject.Inject;
 import modules.admin.Jobs.JobsBizlet;
 import modules.admin.domain.Communication;
 import modules.admin.domain.CommunicationTemplate;
 import modules.admin.domain.Tag;
 
+/**
+ * Applies validation and lifecycle rules for communication generation and sending.
+ */
 public class CommunicationBizlet extends Bizlet<Communication> {
 	public static final String SYSTEM_COMMUNICATION_JOB_NOTIFICATION = "SYSTEM Communication Job Notification";
 	public static final String SYSTEM_COMMUNICATION_JOB_DEFAULT_SUBJECT = "Bulk Communication Job for '{description}' - Complete";
-	public static final String SYSTEM_COMMUNICATION_JOB_DEFAULT_BODY = "The bulk communication job '{description}' for Tag '{tag.name}' is complete." + JobsBizlet.SYSTEM_JOB_NOTIFICATION_LINK_TO_JOBS;
-	
+	public static final String SYSTEM_COMMUNICATION_JOB_DEFAULT_BODY = "The bulk communication job '{description}' for Tag '{tag.name}' is complete."
+			+ JobsBizlet.SYSTEM_JOB_NOTIFICATION_LINK_TO_JOBS;
+
+	@Inject
+	@SuppressWarnings("java:S6813") // allow member injection
+	private transient CommunicationService communicationService;
+
+	/**
+	 * Performs the newInstance operation.
+	 * @param communication the communication value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public Communication newInstance(Communication communication) throws Exception {
 
 		// set defaults
 		Communication bean = communication;
 		bean.setFormatType(FormatType.email);
-		bean = setLinks(bean);
+		bean = communicationService.setLinks(bean);
 
 		return super.newInstance(bean);
 	}
 
+	/**
+	 * Performs the preExecute operation.
+	 * @param actionName the actionName value
+	 * @param communication the communication value
+	 * @param parentBean the parentBean value
+	 * @param webContext the webContext value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
-	public Communication preExecute(ImplicitActionName actionName, Communication communication, Bean parentBean, WebContext webContext) throws Exception {
-		Communication bean=  communication;
-		
+	public Communication preExecute(ImplicitActionName actionName, Communication communication, Bean parentBean,
+			WebContext webContext) throws Exception {
+		Communication bean = communication;
+
 		if (ImplicitActionName.Edit.equals(actionName)) {
-			bean = setLinks(bean);
+			bean = communicationService.setLinks(bean);
 		}
 		return super.preExecute(actionName, bean, parentBean, webContext);
 	}
 
+	/**
+	 * Performs the checkForUnsavedData operation.
+	 * @param communication the communication value
+	 * @throws Exception if the operation fails
+	 */
 	public static void checkForUnsavedData(Communication communication) throws Exception {
 		if (!communication.originalValues().isEmpty()) {
 			// find if any field except results
 			for (String s : communication.originalValues().keySet()) {
 				if (!Communication.resultsPropertyName.equals(s)) {
-					throw new ValidationException(new Message("You have unsaved changes. The Job cannot be run until data is saved." + s));
+					throw new ValidationException(
+							new Message("You have unsaved changes. The Job cannot be run until data is saved." + s));
 				}
 			}
 		}
 	}
 
+	/**
+	 * Performs the getDynamicDomainValues operation.
+	 * @param attributeName the attributeName value
+	 * @param bean the bean value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public List<DomainValue> getDynamicDomainValues(String attributeName, Communication bean) throws Exception {
 
@@ -87,6 +122,12 @@ public class CommunicationBizlet extends Bizlet<Communication> {
 		return result;
 	}
 
+	/**
+	 * Performs the getVariantDomainValues operation.
+	 * @param attributeName the attributeName value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public List<DomainValue> getVariantDomainValues(String attributeName) throws Exception {
 
@@ -121,6 +162,11 @@ public class CommunicationBizlet extends Bizlet<Communication> {
 		return result;
 	}
 
+	/**
+	 * Performs the preDelete operation.
+	 * @param bean the bean value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public void preDelete(Communication bean) throws Exception {
 		if (bean.isLocked()) {
@@ -143,6 +189,13 @@ public class CommunicationBizlet extends Bizlet<Communication> {
 		super.preDelete(bean);
 	}
 
+	/**
+	 * Performs the preRerender operation.
+	 * @param source the source value
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public void preRerender(String source, Communication bean, WebContext webContext) throws Exception {
 
@@ -151,44 +204,6 @@ public class CommunicationBizlet extends Bizlet<Communication> {
 		}
 
 		super.preRerender(source, bean, webContext);
-	}
-
-	/**
-	 * anonymously check whether a communication exists for a customer
-	 * 
-	 * Used in UnsubscribeView
-	 * 
-	 * @param p
-	 * @param bizCustomer
-	 * @param communicationId
-	 * @return
-	 */
-	@SuppressWarnings("boxing")
-	public static boolean anonymouslyCommunicationExists(Persistence persistence, String bizCustomer, String communicationId) {
-		// temporarily elevate user to be able to see Communication records in case they don't usually have access
-		return persistence.withDocumentPermissionScopes(DocumentPermissionScope.customer, p -> {
-			DocumentQuery q = p.newDocumentQuery(Communication.MODULE_NAME, Communication.DOCUMENT_NAME);
-			q.addBoundProjection(Bean.DOCUMENT_ID);
-			DocumentFilter f = q.getFilter();
-			f.addEquals(Bean.CUSTOMER_NAME, bizCustomer);
-			f.addEquals(Bean.DOCUMENT_ID, communicationId);
-			return q.scalarResult(String.class) != null;
-		});
-	}
-
-	public static Communication setLinks(Communication communication) {
-		Communication bean = communication;
-
-		// construct the unsubscribe URL
-		StringBuilder url = new StringBuilder(256);
-		url.append(Util.getSkyveContextUrl());
-		url.append("/");
-		url.append("unsubscribe.xhtml?c=").append(bean.getBizCustomer());
-		url.append("&i=").append(bean.getBizId());
-		url.append("&r=").append(bean.getSendTo());
-		bean.setUnsubscribeUrl(url.toString());
-
-		return bean;
 	}
 
 }

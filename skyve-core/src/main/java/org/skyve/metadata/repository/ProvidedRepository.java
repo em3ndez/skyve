@@ -2,12 +2,17 @@ package org.skyve.metadata.repository;
 
 import java.sql.Connection;
 import java.util.List;
+import java.util.Optional;
+import java.util.function.Consumer;
 
 import org.skyve.domain.Bean;
+import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.impl.metadata.repository.behaviour.ActionMetaData;
 import org.skyve.impl.metadata.repository.behaviour.BizletMetaData;
 import org.skyve.impl.metadata.repository.router.Router;
 import org.skyve.impl.metadata.user.UserImpl;
+import org.skyve.impl.util.UtilImpl;
+import org.skyve.job.UserJobSchedule;
 import org.skyve.metadata.MetaDataException;
 import org.skyve.metadata.controller.BizExportAction;
 import org.skyve.metadata.controller.BizImportAction;
@@ -32,7 +37,28 @@ import org.skyve.metadata.view.model.map.MapModel;
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 
+/**
+ * The primary metadata resolution API used throughout the Skyve framework at runtime.
+ *
+ * <p>{@code ProvidedRepository} extends {@link CachedRepository} with the full set of
+ * operations needed to resolve modules, documents, views, bizlets, actions, models,
+ * reports, and user/permission state &mdash; always honouring customer overrides and
+ * UX/UI-specific variants.
+ *
+ * <p>Constant fields define the standard folder namespaces (e.g.
+ * {@link #MODULES_NAMESPACE}, {@link #VIEWS_NAMESPACE}) used throughout the metadata
+ * file system layout.
+ *
+ * <p>The singleton instance is obtained via
+ * {@link org.skyve.CORE#getRepository()}.
+ *
+ * @see Repository
+ * @see CachedRepository
+ * @see MutableRepository
+ */
 public interface ProvidedRepository extends CachedRepository {
+	final String DOCUMENT_PREFIX = "Document ";
+
 	final String ROUTER_NAME = "router";
 	final String ROUTER_NAMESPACE = ROUTER_NAME + '/';
 	final String CUSTOMERS_NAME = "customers";
@@ -58,235 +84,433 @@ public interface ProvidedRepository extends CachedRepository {
 	public final String FREEMARKER_SUFFIX = "Freemarker";
 	final String META_DATA_SUFFIX = "MetaData";
 
+	/**
+	 * Return all configured customer names.
+	 *
+	 * @return non-null list of customer names (may be empty)
+	 */
 	@Nonnull List<String> getAllCustomerNames();
 
 	/**
-	 * Used to return all module names defined in the modules area (not customer overridden definitions).
-	 * 
-	 * @return
+	 * Return all module names defined in the modules area (excluding customer overrides).
+	 *
+	 * @return non-null list of base module names (may be empty)
 	 */
 	@Nonnull List<String> getAllVanillaModuleNames();
 
 	/**
-	 * 
-	 * @param customer Can be null, which means get the un-overridden module.
-	 * @param moduleName
-	 * @return
+	 * Resolve a module by name, optionally using a customer override.
+	 *
+	 * @param customer optional customer; if {@code null}, return the un-overridden module
+	 * @param moduleName module name to resolve
+	 * @return resolved module, or {@code null} when not found
 	 */
-	@Nonnull Module getModule(@Nullable Customer customer, @Nonnull String moduleName);
+	@Nullable Module getModule(@Nullable Customer customer, @Nonnull String moduleName);
 
 	/**
-	 * 
-	 * @param customer Can be null, which means get the un-overridden document.
-	 * @param module
-	 * @param documentName
-	 * @return
+	 * Resolve a document by name, optionally using a customer override.
+	 *
+	 * @param customer optional customer; if {@code null}, return the un-overridden document
+	 * @param module module that owns the document
+	 * @param documentName document name to resolve
+	 * @return resolved document, or {@code null} when not found
 	 */
-	@Nonnull Document getDocument(@Nullable Customer customer, @Nonnull Module module, @Nonnull String documentName);
+	@Nullable Document getDocument(@Nullable Customer customer, @Nonnull Module module, @Nonnull String documentName);
 
 	/**
-	 * 
-	 * @param uxui
-	 * @param customer
-	 * @param document
-	 * @param viewType
-	 * @return
+	 * Resolve a view by name for the given document and UX/UI, optionally using a customer override.
+	 *
+	 * @param uxui optional UX/UI name
+	 * @param customer optional customer override
+	 * @param document document the view belongs to
+	 * @param name view name
+	 * @return view if found; otherwise {@code null}
 	 */
 	@Nullable View getView(@Nullable String uxui, @Nullable Customer customer, @Nonnull Document document, @Nonnull String name);
 
+	/**
+	 * @return {@code true} if scaffolded views should be used; otherwise {@code false}
+	 */
 	boolean getUseScaffoldedViews();
 	
 	/**
-	 * 
-	 * @param customer
-	 * @param document
-	 * @param actionName
-	 * @return
+	 * Resolve an action metadata definition for the given document.
+	 *
+	 * @param customer optional customer override
+	 * @param document document the action belongs to
+	 * @param actionName action name
+	 * @return action metadata if found; otherwise {@code null}
 	 */
 	@Nullable ActionMetaData getMetaDataAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String actionName);
 
+	/**
+	 * Resolve a customer-specific vtable entry.
+	 *
+	 * @param customerName customer name
+	 * @param key vtable key
+	 * @return resolved value; otherwise {@code null}
+	 */
 	@Nullable String vtable(@Nonnull String customerName, @Nonnull String key);
 
-	@Nullable <T extends Bean> Bizlet<T> getBizlet(@Nonnull Customer customer, @Nonnull Document document, boolean runtime);
+	/**
+	 * Resolve a bizlet instance for a document.
+	 *
+	 * @param customer customer
+	 * @param document document
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return bizlet if present; otherwise {@code null}
+	 */
+	@Nullable <T extends Bean> Bizlet<T> getBizlet(@Nullable Customer customer, @Nonnull Document document, boolean runtime);
 
 	/**
-	 * 
-	 * @param customer
-	 * @param document
-	 * @return
+	 * Resolve a bizlet metadata definition for a document.
+	 *
+	 * @param customer optional customer override
+	 * @param document document
+	 * @return bizlet metadata if found; otherwise {@code null}
 	 */
 	@Nullable BizletMetaData getMetaDataBizlet(@Nullable Customer customer, @Nonnull Document document);
 
 	/**
-	 * 
-	 * @param customer
-	 * @param document
-	 * @param imageName
-	 * @param runtime
-	 * @return
+	 * Resolve a dynamic image definition for a document.
+	 *
+	 * @param customer optional customer override
+	 * @param document document
+	 * @param imageName image name
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return dynamic image if found; otherwise {@code null}
 	 */
-	@Nonnull <T extends Bean> DynamicImage<T> getDynamicImage(@Nullable Customer customer,
+	@Nullable <T extends Bean> DynamicImage<T> getDynamicImage(@Nullable Customer customer,
 																@Nonnull Document document,
 																@Nonnull String imageName,
 																boolean runtime);
 
-	@Nonnull <T extends Bean, C extends Bean> ComparisonModel<T, C> getComparisonModel(@Nullable Customer customer,
+	/**
+	 * Resolve a comparison model for a document.
+	 *
+	 * @param customer optional customer override
+	 * @param document document
+	 * @param modelName model name
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return comparison model if found; otherwise {@code null}
+	 */
+	@Nullable <T extends Bean, C extends Bean> ComparisonModel<T, C> getComparisonModel(@Nullable Customer customer,
 																						@Nonnull Document document,
 																						@Nonnull String modelName,
 																						boolean runtime);
-	
-	@Nonnull <T extends Bean> MapModel<T> getMapModel(@Nullable Customer customer,
+
+	/**
+	 * Resolve a map model for a document.
+	 *
+	 * @param customer optional customer override
+	 * @param document document
+	 * @param modelName model name
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return map model if found; otherwise {@code null}
+	 */
+	@Nullable <T extends Bean> MapModel<T> getMapModel(@Nullable Customer customer,
 														@Nonnull Document document,
 														@Nonnull String modelName,
 														boolean runtime);
 
-	@Nonnull <T extends Bean> ChartModel<T> getChartModel(@Nullable Customer customer,
+	/**
+	 * Resolve a chart model for a document.
+	 *
+	 * @param customer optional customer override
+	 * @param document document
+	 * @param modelName model name
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return chart model if found; otherwise {@code null}
+	 */
+	@Nullable <T extends Bean> ChartModel<T> getChartModel(@Nullable Customer customer,
 															@Nonnull Document document,
 															@Nonnull String modelName,
 															boolean runtime);
 
-	@Nonnull <T extends Bean> ListModel<T> getListModel(@Nullable Customer customer,
+	/**
+	 * Resolve a list model for a document.
+	 *
+	 * @param customer optional customer override
+	 * @param document document
+	 * @param modelName model name
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return list model if found; otherwise {@code null}
+	 */
+	@Nullable <T extends Bean> ListModel<T> getListModel(@Nullable Customer customer,
 															@Nonnull Document document,
 															@Nonnull String modelName,
 															boolean runtime);
-	
-	@Nonnull ServerSideAction<Bean> getServerSideAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String className, boolean runtime);
 
-	@Nonnull BizExportAction getBizExportAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String className, boolean runtime);
+	/**
+	 * Resolve a server-side action implementation.
+	 *
+	 * @param customer optional customer override
+	 * @param document document the action belongs to
+	 * @param className action class name (fully qualified)
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return server-side action if found; otherwise {@code null}
+	 */
+	@Nullable ServerSideAction<Bean> getServerSideAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String className, boolean runtime);
 
-	@Nonnull BizImportAction getBizImportAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String className, boolean runtime);
+	/**
+	 * Resolve a biz export action implementation.
+	 *
+	 * @param customer optional customer override
+	 * @param document document the action belongs to
+	 * @param className action class name (fully qualified)
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return export action if found; otherwise {@code null}
+	 */
+	@Nullable BizExportAction getBizExportAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String className, boolean runtime);
 
-	@Nonnull DownloadAction<Bean> getDownloadAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String className, boolean runtime);
+	/**
+	 * Resolve a biz import action implementation.
+	 *
+	 * @param customer optional customer override
+	 * @param document document the action belongs to
+	 * @param className action class name (fully qualified)
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return import action if found; otherwise {@code null}
+	 */
+	@Nullable BizImportAction getBizImportAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String className, boolean runtime);
 
-	@Nonnull UploadAction<Bean> getUploadAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String className, boolean runtime);
+	/**
+	 * Resolve a download action implementation.
+	 *
+	 * @param customer optional customer override
+	 * @param document document the action belongs to
+	 * @param className action class name (fully qualified)
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return download action if found; otherwise {@code null}
+	 */
+	@Nullable DownloadAction<Bean> getDownloadAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String className, boolean runtime);
 
+	/**
+	 * Resolve an upload action implementation.
+	 *
+	 * @param customer optional customer override
+	 * @param document document the action belongs to
+	 * @param className action class name (fully qualified)
+	 * @param runtime {@code true} to prefer runtime overrides
+	 * @return upload action if found; otherwise {@code null}
+	 */
+	@Nullable UploadAction<Bean> getUploadAction(@Nullable Customer customer, @Nonnull Document document, @Nonnull String className, boolean runtime);
+
+	/**
+	 * Validate a customer for domain generation.
+	 *
+	 * @param customer customer to validate
+	 */
 	void validateCustomerForGenerateDomain(@Nonnull Customer customer);
 
+	/**
+	 * Validate a module for domain generation.
+	 *
+	 * @param customer customer
+	 * @param module module to validate
+	 */
 	void validateModuleForGenerateDomain(@Nonnull Customer customer, @Nonnull Module module);
 
+	/**
+	 * Validate a document for domain generation.
+	 *
+	 * @param customer customer
+	 * @param document document to validate
+	 */
 	void validateDocumentForGenerateDomain(@Nonnull Customer customer, @Nonnull Document document);
 
+	/**
+	 * Validate a view for domain generation.
+	 *
+	 * @param customer customer
+	 * @param document document
+	 * @param view view to validate
+	 * @param uxui UX/UI name
+	 */
 	void validateViewForGenerateDomain(@Nonnull Customer customer, @Nonnull Document document, @Nonnull View view, @Nonnull String uxui);
 
 	/**
-	 * @return The global router that is not module specific.
+	 * @return the global router that is not module specific, or {@code null} when none exists
 	 */
-	@Nonnull Router getGlobalRouter();
+	@Nullable Router getGlobalRouter();
 
 	/**
-	 * @return A list of module-specific routers.
+	 * @return list of module-specific routers
 	 */
 	@Nonnull List<Router> getModuleRouters();
-	
+
 	/**
-	 * 
-	 * @param customer
-	 * @param document
-	 * @param reportName
-	 * @return
+	 * Resolve the report file name for a document.
+	 *
+	 * @param customer optional customer override
+	 * @param document document the report belongs to
+	 * @param reportName report name
+	 * @return report file name if found; otherwise {@code null}
 	 */
 	@Nullable String getReportFileName(@Nullable Customer customer, @Nonnull Document document, @Nonnull String reportName);
-	
-	@Nullable Class<?> getJavaClass(@Nullable Customer customer, @Nonnull String fullyQualifiedJavaCodeName);
-	
+
 	/**
-	 * Overridden to return a UserImpl in this interface.
+	 * Resolve a Java class by fully qualified name.
+	 *
+	 * @param customer optional customer override
+	 * @param fullyQualifiedJavaCodeName fully qualified class name
+	 * @return class if found; otherwise {@code null}
+	 */
+	@Nullable Class<?> getJavaClass(@Nullable Customer customer, @Nonnull String fullyQualifiedJavaCodeName);
+
+	/**
+	 * Overridden to return a {@link UserImpl} in this interface.
+	 *
+	 * @param userPrincipal user principal
+	 * @return user if found; otherwise {@code null}
 	 */
 	@Override
 	@Nullable UserImpl retrieveUser(@Nonnull String userPrincipal);
-	
+
 	/**
-	 * 
-	 * @param user
+	 * Clear any cached menus for the given user.
+	 *
+	 * @param user user to reset menus for
 	 */
 	void resetMenus(@Nonnull User user);
 	
 	
 	/**
 	 * Populate the permissions available to a user.
+	 *
 	 * @param user the user to populate permissions for
+	 * @return {@code true} if the user's permissions are successfully populated
 	 */
-	void populatePermissions(@Nonnull User user);
+	boolean populatePermissions(@Nonnull User user);
 	
 	
 	/**
-	 * Clear the permissions and menus available to a user, and then re-populate the user with new permissions.
-	 * <br />
-	 * This is equivalent to clearing permissions and menus from a user, and then calling {@link Repository#populatePermissions(User)}
-	 * and {@link Repository#resetMenus(User)}
-	 * @param user the user to reset user permissions for
+	 * Clear permissions and menus, then re-populate permissions and menus for the user.
+	 * This is equivalent to clearing permissions and menus from a user, then calling
+	 * {@link Repository#populatePermissions(User)} and {@link Repository#resetMenus(User)}.
+	 *
+	 * @param user the user to reset permissions for
 	 */
 	void resetUserPermissions(@Nonnull User user);
 	
 	/**
 	 * Populate user data from a data store using the given connection.
-	 * @param user User to populate.
-	 * @param connection	The connection to use.
+	 *
+	 * @param user user to populate
+	 * @param connection connection to use
+	 * @return {@code true} if user is successfully populated
 	 */
-	void populateUser(@Nonnull User user, @Nonnull Connection connection);
+	boolean populateUser(@Nonnull User user, @Nonnull Connection connection);
 	
 	/**
-	 * Return a list of admin.JobSchedule projections with at least the following document attributes populated
-	 * "jobName", startTime", endTime", "cronExpression", "disabled", "user"
-	 * @return	The Job Schedules
+	 * Retrieve all scheduled jobs for all customers (jobs that are not disabled).
+	 *
+	 * @return list of {@link UserJobSchedule} containing job schedules and their associated users
 	 */
-	@Nonnull List<Bean> retrieveAllJobSchedulesForAllCustomers();
+	@Nonnull List<UserJobSchedule> retrieveAllScheduledJobsForAllCustomers();
 	
 	/**
-	 * Return a list of admin.ReportTemplate projections with at least the following document attributes populated
-	 * "name", startTime", endTime", "cronExpression", "scheduled", "user"
-	 * @return	The Report Templates.
+	 * Retrieve all scheduled reports for all customers (reports flagged as scheduled).
+	 *
+	 * @return list of {@link UserJobSchedule} containing report schedules and their associated users
 	 */
-	@Nonnull List<Bean> retrieveAllReportSchedulesForAllCustomers();
+	@Nonnull List<UserJobSchedule> retrieveAllScheduledReportsForAllCustomers();
 	
 	/**
 	 * Return the name of the public user for a customer set on the Configuration document.
-	 * @param customerName	The customer to get the public user for.
-	 * @return	Return the public user name (without the customer name)
+	 *
+	 * @param customerName customer to get the public user for
+	 * @return public user name (without the customer name), or {@code null} if not configured
 	 */
 	public @Nullable String retrievePublicUserName(@Nonnull String customerName);
 	
-	default @Nullable Document findNearestPersistentUnmappedSuperDocument(@Nullable Customer customer, @Nonnull Module module, @Nonnull Document document) {
-		Document result = null;
-		
+	/**
+	 * Find the nearest persistent single or joined super-document in the inheritance hierarchy for a document.
+	 *
+	 * @param customer optional customer override
+	 * @param module module containing the document
+	 * @param document document to inspect
+	 * @return nearest persistent single/joined super-document, or {@code null} if none
+	 */
+	default @Nullable Document findNearestPersistentSingleOrJoinedSuperDocument(@Nullable Customer customer, @Nonnull Module module, @Nonnull Document document) {
+		Document result = resolveInheritedDocument(customer, module, document);
+		return isPersistentSingleOrJoinedDocument(result) ? result : null;
+	}
+
+	private @Nullable Document resolveInheritedDocument(@Nullable Customer customer, @Nonnull Module module, @Nonnull Document document) {
 		Extends inherits = document.getExtends();
-		if (inherits != null) {
-			result = module.getDocument(customer, inherits.getDocumentName());
-			if (result == null) {
-				throw new MetaDataException("Document " + document.getName() + 
-												" extends document " + inherits.getDocumentName() +
-												" which does not exist in module " + module.getName());
-			}
-			Persistent inheritsPersistent = result.getPersistent();
-			if (inheritsPersistent != null) {
-				if (ExtensionStrategy.mapped.equals(inheritsPersistent.getStrategy())) {
-					Extends baseInherits = result.getExtends();
-					if (baseInherits != null) { // only recurse if we have a base document to recurse to
-						Module baseModule = getModule(customer, result.getOwningModuleName());
-						result = findNearestPersistentUnmappedSuperDocument(customer, baseModule, result);
-					}
+		if (inherits == null) {
+			return null;
+		}
+
+		Document inheritedDocument = null;
+		try {
+			inheritedDocument = Optional.ofNullable(module.getDocument(customer, inherits.getDocumentName()))
+									.orElseThrow(() -> new MetaDataException(DOCUMENT_PREFIX + document.getName() +
+																" extends document " + inherits.getDocumentName() +
+																" which does not exist in module " + module.getName()));
+		}
+		catch (IllegalStateException e) {
+			throw new MetaDataException(DOCUMENT_PREFIX + document.getName() +
+									" extends document " + inherits.getDocumentName() +
+									" which does not exist in module " + module.getName(), e);
+		}
+
+		Persistent persistent = inheritedDocument.getPersistent();
+		if ((persistent != null) && ExtensionStrategy.mapped.equals(persistent.getStrategy())) {
+			Extends baseInherits = inheritedDocument.getExtends();
+			if (baseInherits != null) {
+				Module baseModule = getModule(customer, inheritedDocument.getOwningModuleName());
+				if (baseModule == null) {
+					throw new MetaDataException(DOCUMENT_PREFIX + inheritedDocument.getName() +
+									" is owned by module " + inheritedDocument.getOwningModuleName() +
+									" which does not exist.");
 				}
+				return findNearestPersistentSingleOrJoinedSuperDocument(customer, baseModule, inheritedDocument);
 			}
 		}
-		
-		if (result != null) {
-			Persistent persistent = result.getPersistent();
-			if ((persistent == null) || 
-					(persistent.getName() == null) ||
-					ExtensionStrategy.mapped.equals(persistent.getStrategy())) {
-				result = null;
-			}
+
+		return inheritedDocument;
+	}
+
+	private static boolean isPersistentSingleOrJoinedDocument(@Nullable Document document) {
+		if (document == null) {
+			return false;
 		}
-		return result;
+
+		Persistent persistent = document.getPersistent();
+		if ((persistent == null) || (persistent.getName() == null)) {
+			return false;
+		}
+
+		return ! ExtensionStrategy.mapped.equals(persistent.getStrategy());
 	}
 	
 	/**
-	 * Return its delegating repository or itself if it is not a delegate.
+	 * Notify the configured customer, or every customer when no default customer is configured.
+	 *
+	 * @param notifier The customer notification to invoke.
 	 */
-	@Nonnull ProvidedRepository getDelegator();
+	static void notifyAllCustomersObservers(@Nonnull Consumer<Customer> notifier) {
+		ProvidedRepository repository = ProvidedRepositoryFactory.get();
+		if (UtilImpl.CUSTOMER != null) {
+			notifyObserver(repository, UtilImpl.CUSTOMER, "UtilImpl.CUSTOMER ", notifier);
+		}
+		else {
+			for (String customerName : repository.getAllCustomerNames()) {
+				notifyObserver(repository, customerName, "Customer ", notifier);
+			}
+		}
+	}
 
-	/**
-	 * Set the delegating repository.
-	 */
-	void setDelegator(@Nullable ProvidedRepository delegator);
+	private static void notifyObserver(ProvidedRepository repository,
+										String customerName,
+										String errorPrefix,
+										Consumer<Customer> notifier) {
+		Customer customer = repository.getCustomer(customerName);
+		if (customer == null) {
+			throw new IllegalStateException(errorPrefix + customerName + " does not exist.");
+		}
+		notifier.accept(customer);
+	}
 }

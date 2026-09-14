@@ -21,6 +21,8 @@ import org.skyve.util.Util;
 
 /**
  * Tag
+ * <br/>
+ * Document used to group and organise records with features like tag combinations, file uploads for tagging, filtering, and bulk actions. See <a href="https://skyvers.github.io/skyve-user-guide/tags/">Skyve User Guide - Tags</a> for detailed usage information.
  * 
  * @depend - - - CombinationsOperator
  * @depend - - - FilterOperator
@@ -132,7 +134,7 @@ public abstract class Tag extends AbstractPersistentBean implements org.skyve.do
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum CombinationsOperator implements Enumeration {
+	public enum CombinationsOperator implements Enumeration {
 		union("Union", "Union"),
 		except("Except", "Except"),
 		intersect("Intersect", "Intersect");
@@ -203,7 +205,7 @@ public abstract class Tag extends AbstractPersistentBean implements org.skyve.do
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum FilterOperator implements Enumeration {
+	public enum FilterOperator implements Enumeration {
 		equals("equals", "Equals"),
 		like("like", "Like"),
 		contains("contains", "Contains");
@@ -274,7 +276,7 @@ public abstract class Tag extends AbstractPersistentBean implements org.skyve.do
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum FilterAction implements Enumeration {
+	public enum FilterAction implements Enumeration {
 		tagRecordsThatMatch("tag", "Tag records that match"),
 		unTagRecordsThatMatch("unTag", "UnTag records that match");
 
@@ -526,12 +528,6 @@ public abstract class Tag extends AbstractPersistentBean implements org.skyve.do
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof Tag) && 
-					this.getBizId().equals(((Tag) o).getBizId()));
 	}
 
 	/**

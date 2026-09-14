@@ -1,0 +1,325 @@
+.ui-widget {
+	font-size: 12px !important;
+}
+
+/* Casablanca uses legacy .ui-icon sprites and PrimeFaces only resets those sprites for the
+   old Font Awesome .fa/.fas class names. Upload and crop controls use FA 6's .fa-solid name. */
+.ui-icon.fa-solid {
+	background-image: none !important;
+	text-indent: 0 !important;
+}
+
+/* PrimeFaces creates this per-file remove button in JavaScript, so its icon is not configurable. */
+.ui-fileupload .ui-fileupload-content .ui-fileupload-cancel .ui-icon-close {
+	background-image: none !important;
+	font-family: "Font Awesome 6 Free";
+	font-style: normal;
+	font-weight: 900;
+	text-indent: 0 !important;
+}
+
+.ui-fileupload .ui-fileupload-content .ui-fileupload-cancel .ui-icon-close::before {
+	content: "\f00d";
+}
+
+.ui-panelgrid .ui-widget-content,
+.ui-panelgrid td {
+	border-width: 0;
+	border-style: none;
+}
+
+.ui-fileupload-content {
+	min-height: 200px;
+	position: relative;
+}
+
+.skyve-upload {
+	position: relative;
+}
+
+.skyve-upload-watermark {
+	align-items: center;
+	color: #6b7280;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	left: 50%;
+	opacity: 0.5;
+	pointer-events: none;
+	position: absolute;
+	text-align: center;
+	top: calc(50% + 28px);
+	transform: translate(-50%, -50%);
+	width: calc(100% - 32px);
+	z-index: 1;
+}
+
+.skyve-upload-watermark .fa-cloud-arrow-up {
+	font-size: 4rem;
+	line-height: 1;
+}
+
+.skyve-upload-watermark span {
+	font-size: 1rem;
+	font-weight: 600;
+}
+
+.skyve-upload-watermark small {
+	font-size: 0.8rem;
+}
+
+.skyve-upload .ui-fileupload-files {
+	position: relative;
+	z-index: 2;
+}
+
+.skyve-upload:has(.ui-fileupload-row) .skyve-upload-watermark,
+.capture-only-upload .skyve-upload-watermark {
+	display: none;
+}
+
+#upload {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-height: 0;
+}
+
+#upload .ui-fileupload-buttonbar {
+	flex: 0 0 auto;
+}
+
+#upload .ui-fileupload-content {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+}
+
+#upload .ui-fileupload-files {
+	display: block;
+	margin: 10px 0;
+	width: 100%;
+}
+
+#upload .ui-fileupload-files > div {
+	display: block;
+}
+
+#upload .ui-fileupload-row {
+	align-items: center;
+	display: grid;
+	gap: 8px 12px;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	width: 100%;
+}
+
+#upload .ui-fileupload-row > div {
+	min-width: 0;
+	padding: 4px 0;
+}
+
+#upload .ui-fileupload-row > .ui-fileupload-preview {
+	align-self: center;
+	grid-column: 1;
+	grid-row: 1 / 4;
+}
+
+#upload .ui-fileupload-row > .ui-fileupload-filename {
+	grid-column: 2;
+	grid-row: 1;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+
+#upload .ui-fileupload-row > .ui-fileupload-filename + div {
+	grid-column: 2;
+	grid-row: 2;
+}
+
+#upload .ui-fileupload-row > .ui-fileupload-progress {
+	grid-column: 2;
+	grid-row: 3;
+}
+
+#upload .ui-fileupload-row > div:last-child {
+	align-self: center;
+	grid-column: 3;
+	grid-row: 1 / 4;
+	justify-self: end;
+}
+
+#upload .ui-fileupload-content .ui-progressbar {
+	top: 0;
+	width: 100%;
+}
+
+.capture-only-upload .ui-fileupload-choose {
+	display: none !important;
+}
+
+#upload .ui-fileupload-buttonbar,
+#cropperUpload .ui-fileupload-buttonbar {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	justify-content: center;
+	padding: 8px;
+}
+
+#upload .ui-fileupload-buttonbar .ui-button,
+#cropperUpload .ui-fileupload-buttonbar .ui-button {
+	border-radius: 4px;
+	box-sizing: border-box;
+	height: auto !important;
+	line-height: 1.2;
+	min-height: 46px;
+	min-width: 68px !important;
+	overflow: visible;
+	padding: 6px 8px !important;
+	text-align: center;
+	white-space: nowrap;
+	width: auto !important;
+}
+
+#upload .ui-fileupload-buttonbar .ui-button .ui-button-icon-left,
+#cropperUpload .ui-fileupload-buttonbar .ui-button .ui-button-icon-left {
+	display: block;
+	font-size: 16px;
+	left: auto !important;
+	margin: 0 auto 4px !important;
+	position: static !important;
+	top: auto !important;
+	transform: none !important;
+}
+
+#upload .ui-fileupload-buttonbar .ui-button .ui-button-text,
+#cropperUpload .ui-fileupload-buttonbar .ui-button .ui-button-text {
+	clip: auto !important;
+	display: block !important;
+	height: auto !important;
+	line-height: 1.2;
+	margin: 0 !important;
+	max-width: none;
+	overflow: visible !important;
+	padding: 0 !important;
+	text-indent: 0 !important;
+	width: auto !important;
+}
+
+#upload .ui-fileupload-buttonbar .ui-fileupload-upload.ui-state-disabled,
+#upload .ui-fileupload-buttonbar .ui-fileupload-upload:disabled,
+#upload .ui-fileupload-buttonbar .ui-fileupload-cancel.ui-state-disabled,
+#upload .ui-fileupload-buttonbar .ui-fileupload-cancel:disabled {
+	display: none;
+}
+
+#form {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	margin: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+#cropperUpload {
+	display: none;
+	flex: 0 0 auto;
+}
+
+#cropperContainer {
+	box-sizing: border-box;
+	display: none;
+	flex: 1 1 auto;
+	gap: 10px;
+	justify-content: center;
+	min-height: 0;
+	padding: 10px;
+}
+
+.cropperFrame {
+	align-items: center;
+	box-sizing: border-box;
+	display: flex;
+	flex: 1 1 auto;
+	justify-content: center;
+	min-height: 0;
+	min-width: 0;
+	overflow: visible;
+	padding: 18px;
+}
+
+#cropperImageContainer {
+	align-items: center;
+	display: flex;
+	justify-content: center;
+	max-height: 100%;
+	max-width: 100%;
+}
+
+#cropperImage {
+	display: block;
+	height: auto;
+	max-height: 100%;
+	max-width: 100%;
+	width: auto;
+}
+
+.cropperControls {
+	display: flex;
+	flex: 0 0 auto;
+	flex-direction: column;
+	gap: 10px;
+	justify-content: center;
+}
+
+.cropperControls .ui-button {
+	margin-bottom: 0 !important;
+}
+
+@media(max-width: 640px) {
+	.ui-fileupload-buttonbar .ui-button {
+		padding: 20px !important;
+	}
+
+	.ui-fileupload-buttonbar .ui-button,
+	.cropperControls .ui-button {
+		height: 48px;
+		min-height: 48px !important;
+		min-width: 48px !important;
+		padding: 0 !important;
+		position: relative;
+		width: 48px;
+	}
+
+	.ui-fileupload-buttonbar .ui-button .ui-button-icon-left,
+	.ui-fileupload-buttonbar .ui-button .ui-icon,
+	.ui-fileupload-buttonbar .ui-button .fa,
+	.cropperControls .ui-button .ui-button-icon-left {
+		height: 1em;
+		left: 50% !important;
+		line-height: 1em;
+		margin-left: -0.5em !important;
+		margin-top: -0.5em !important;
+		position: absolute !important;
+		text-align: center;
+		top: 50% !important;
+		width: 1em;
+	}
+
+	.ui-fileupload-buttonbar .ui-button .ui-button-text,
+	.cropperControls .ui-button .ui-button-text {
+		display: none !important;
+		padding: 0 !important;
+	}
+
+	#cropperContainer {
+		flex-direction: column;
+	}
+
+	.cropperControls {
+		flex-direction: row;
+		justify-content: center;
+	}
+}

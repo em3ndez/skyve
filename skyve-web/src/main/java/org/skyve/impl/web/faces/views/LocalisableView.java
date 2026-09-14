@@ -1,27 +1,44 @@
 package org.skyve.impl.web.faces.views;
 
 import java.io.Serializable;
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
 import org.skyve.CORE;
+import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.faces.FacesAction;
 import org.skyve.metadata.user.User;
 import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
 
 import jakarta.faces.context.FacesContext;
 
+/**
+ * Adds EL localisation via "i18n" map property to any Faces View that extends it.
+ * Note that no methods should be final in here as a bean could be injected and a proxy needs to be made.
+ */
 public abstract class LocalisableView implements Serializable {
 	private static final long serialVersionUID = 2440700208785488690L;
+
+    protected static final Logger LOGGER = SkyveLoggerFactory.getLogger(LocalisableView.class);
+    private static final Logger FACES_LOGGER = Category.FACES.logger();
 
 	public static final class I18nMapAdapter implements Map<String, String>, Serializable {
 		private static final long serialVersionUID = 4290123391587825685L;
 
 		private Locale locale;
 		
+		/**
+		 * Sets the locale used to resolve i18n keys.
+		 *
+		 * @param locale the locale to use for key resolution
+		 */
 		public void setLocale(Locale locale) {
 			this.locale = locale;
 		}
@@ -36,38 +53,74 @@ public abstract class LocalisableView implements Serializable {
 			throw new UnsupportedOperationException();
 		}
 
+		/**
+		 * Indicates whether key lookup is supported.
+		 *
+		 * @param key the key to test
+		 * @return never returns normally
+		 */
 		@Override
 		public boolean containsKey(Object key) {
 			throw new UnsupportedOperationException();
 		}
 
+		/**
+		 * Indicates whether value lookup is supported.
+		 *
+		 * @param value the value to test
+		 * @return never returns normally
+		 */
 		@Override
 		public boolean containsValue(Object value) {
 			throw new UnsupportedOperationException();
 		}
 
+		/**
+		 * Resolves the localised value for a key.
+		 *
+		 * @param key the i18n key
+		 * @return the localised value
+		 */
 		@Override
 		public String get(final Object key) {
 			return new FacesAction<String>() {
 				@Override
 				public String callback() throws Exception {
-					String result = Util.i18n((String) key, locale);
-					if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.finest("I18nMapAdapter.get " + key + " = " + result);
+					String result = Util.nullSafeI18n((String) key, locale);
+					if (UtilImpl.FACES_TRACE) FACES_LOGGER.trace("I18nMapAdapter.get {} = {}", key, result);
 					return result;
 				}
 			}.execute();
 		}
 
+		/**
+		 * Indicates whether mutating put is supported.
+		 *
+		 * @param key the key to store
+		 * @param value the value to store
+		 * @return never returns normally
+		 */
 		@Override
 		public String put(String key, String value) {
 			throw new UnsupportedOperationException();
 		}
 
+		/**
+		 * Indicates whether remove is supported.
+		 *
+		 * @param key the key to remove
+		 * @return never returns normally
+		 */
 		@Override
 		public String remove(Object key) {
 			throw new UnsupportedOperationException();
 		}
 
+		/**
+		 * Indicates whether bulk put is supported.
+		 *
+		 * @param m the entries to insert
+		 */
 		@Override
 		public void putAll(Map<? extends String, ? extends String> m) {
 			throw new UnsupportedOperationException();
@@ -96,12 +149,28 @@ public abstract class LocalisableView implements Serializable {
 
 	
 	private String dir;
+
+	private String languageTag;
+
 	/**
 	 * Used in the faces html tag.
 	 * @return	The text direction - rtl or ltr.
 	 */
-	public final String getDir() {
+	public String getDir() {
 		return dir;
+	}
+
+	/**
+	 * Returns the BCP 47 language tag for the rendered page.
+	 *
+	 * <p>Used by Faces templates when rendering the root {@code html} element's
+	 * {@code lang} attribute.
+	 *
+	 * @return the request or user locale as a BCP 47 language tag; defaults to {@code en}
+	 *         when no locale is available
+	 */
+	public String getLanguageTag() {
+		return languageTag;
 	}
 
 	/**
@@ -110,24 +179,45 @@ public abstract class LocalisableView implements Serializable {
 	 */
 	@SuppressWarnings("static-method")
 	public String getEncoding() {
-		return Util.UTF8;
+		return StandardCharsets.UTF_8.name();
 	}
 	
 	private I18nMapAdapter i18n = new I18nMapAdapter();
+
+	/**
+	 * Returns the map adapter used by JSF expressions to resolve localised labels.
+	 *
+	 * @return a request-view adapter that resolves values from the locale set during
+	 *         {@link #initialise()}
+	 */
 	public Map<String, String> getI18n() {
 		return i18n;
 	}
 	
+	/**
+	 * Initialises locale-dependent view state for the current Faces request.
+	 *
+	 * <p>Side effects: reads the current Faces request locale and Skyve user, updates
+	 * the text direction, language tag and {@code i18n} lookup locale for this view
+	 * instance.
+	 */
 	protected void initialise() {
 		Locale locale = FacesContext.getCurrentInstance().getExternalContext().getRequestLocale();
-		User user = CORE.getUser();
+		User user = AbstractPersistence.isPresent() ? CORE.getUser() : null;
 		if (user != null) {
 			Locale userLocale = user.getLocale();
 			if (userLocale != null) {
 				locale = userLocale;
 			}
 		}
-		dir = (locale != null) ? (Util.isRTL(locale) ? "rtl" : "ltr") : "ltr";
+		if (locale == null) {
+			dir = "ltr";
+			languageTag = Locale.ENGLISH.toLanguageTag();
+		}
+		else {
+			dir = Util.isRTL(locale) ? "rtl" : "ltr";
+			languageTag = locale.toLanguageTag();
+		}
 		i18n.setLocale(locale);
 	}
 	
@@ -136,12 +226,17 @@ public abstract class LocalisableView implements Serializable {
 	 * @return	The string as defined in the json configuration.
 	 */
 	@SuppressWarnings("static-method")
-	public final String getEnvironmentIdentifier() {
+	public String getEnvironmentIdentifier() {
 		return UtilImpl.ENVIRONMENT_IDENTIFIER;
 	}
 	
+	/**
+	 * Returns the cache-busting version for web resource URLs.
+	 *
+	 * @return the configured web resource file version
+	 */
 	@SuppressWarnings("static-method")
-	public final String getWebResourceFileVersion() {
+	public String getWebResourceFileVersion() {
 		return UtilImpl.WEB_RESOURCE_FILE_VERSION;
 	}
 }

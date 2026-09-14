@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.List;
 
 import javax.lang.model.element.Modifier;
 
@@ -15,10 +14,8 @@ import org.skyve.impl.generate.DialectOptions;
 import org.skyve.impl.generate.DomainGenerator;
 import org.skyve.impl.generate.ViewGenerator;
 import org.skyve.impl.metadata.repository.LocalDesignRepository;
+import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.metadata.model.document.Bizlet;
-import org.skyve.metadata.repository.ProvidedRepository;
-import org.skyve.persistence.DocumentQuery;
-import org.skyve.persistence.Persistence;
 import org.skyve.toolchain.config.GenerateDomainConfig;
 import org.skyve.toolchain.config.GenerateEditViewConfig;
 import org.skyve.util.DataBuilder;
@@ -30,17 +27,22 @@ import org.slf4j.LoggerFactory;
 
 import com.squareup.javapoet.AnnotationSpec;
 import com.squareup.javapoet.ClassName;
-import com.squareup.javapoet.CodeBlock;
-import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.MethodSpec;
 import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeSpec;
 
-import jakarta.enterprise.inject.Default;
-import jakarta.inject.Inject;
-
+/**
+ * <p>
+ * This mojo creates the Skyve scaffolding for a new Document.
+ * </p>
+ * <p>
+ * It creates the extension class, bizlet class, factory class, and service class.
+ * It also generates the scaffolded edit view.
+ * </p>
+ */
 @Mojo(name = "newScaffoldedDocument")
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate scaffolded source/metadata fragments.
 public class NewScaffoldedDocumentMojo extends NewDocumentMojo {
 	private static final Logger LOGGER = LoggerFactory.getLogger(NewScaffoldedDocumentMojo.class);
 
@@ -77,9 +79,15 @@ public class NewScaffoldedDocumentMojo extends NewDocumentMojo {
 	@Parameter
 	private GenerateEditViewConfig generateEditViewConfig;
 
+	/**
+	 * Executes the mojo to create a new scaffolded document.
+	 * This will create all necessary classes and generate the domain and edit view.
+	 * 
+	 * @throws MojoExecutionException if there is an error during execution
+	 */
 	@Override
 	public void execute() throws MojoExecutionException {
-		super.execute();
+		createDocument();
 
 		createExtensionClass();
 		createBizletClass();
@@ -89,7 +97,15 @@ public class NewScaffoldedDocumentMojo extends NewDocumentMojo {
 		generateEditView();
 	}
 
-	private void createExtensionClass() {
+	void createDocument() throws MojoExecutionException {
+		super.execute();
+	}
+
+	/**
+	 * Creates the document extension class.
+	 * This class extends the base document class and allows for custom behavior.
+	 */
+	void createExtensionClass() {
 		final TypeSpec documentExtension = TypeSpec.classBuilder(getExtensionName())
 														.addModifiers(Modifier.PUBLIC)
 														.superclass(ClassName.get("modules." + moduleName + ".domain", documentName))
@@ -105,7 +121,11 @@ public class NewScaffoldedDocumentMojo extends NewDocumentMojo {
 		}
 	}
 
-	private void createBizletClass() {
+	/**
+	 * Creates the document Bizlet class.
+	 * This class extends Bizlet and provides lifecycle hooks for the document.
+	 */
+	void createBizletClass() {
 		final String bizletName = documentName + "Bizlet";
 		final TypeSpec documentBizlet = TypeSpec.classBuilder(bizletName)
 													.addModifiers(Modifier.PUBLIC)
@@ -123,7 +143,11 @@ public class NewScaffoldedDocumentMojo extends NewDocumentMojo {
 		}
 	}
 
-	private void createFactoryClass() {
+	/**
+	 * Creates the document factory class.
+	 * This class provides factory methods for creating test instances of the document.
+	 */
+	void createFactoryClass() {
 		final String factoryName = documentName + "Factory";
 
 		final ClassName extensionClassName = ClassName.get("modules." + moduleName + "." + documentName, getExtensionName());
@@ -156,84 +180,73 @@ public class NewScaffoldedDocumentMojo extends NewDocumentMojo {
 		}
 	}
 
-	private void createServiceClass() {
-		final String serviceName = documentName + "Service";
-
-		final ClassName extensionClassName = ClassName.get("modules." + moduleName + "." + documentName,getExtensionName());
-		final MethodSpec get = MethodSpec.methodBuilder("get")
-											.addModifiers(Modifier.PUBLIC)
-											.returns(extensionClassName)
-											.addParameter(String.class, "bizId")
-											.addStatement("final $T query = persistence.newDocumentQuery($T.MODULE_NAME, $T.DOCUMENT_NAME)",
-															DocumentQuery.class,
-															extensionClassName,
-															extensionClassName)
-											.addStatement("query.getFilter().addEquals($T.DOCUMENT_ID, bizId)", extensionClassName)
-											.addStatement("return query.beanResult()")
-											.build();
-
-		final MethodSpec getAll = MethodSpec.methodBuilder("getAll")
-												.addModifiers(Modifier.PUBLIC)
-												.returns(ParameterizedTypeName.get(ClassName.get(List.class), extensionClassName))
-												.addStatement("final $T query = persistence.newDocumentQuery($T.MODULE_NAME, $T.DOCUMENT_NAME)",
-																DocumentQuery.class,
-																extensionClassName,
-																extensionClassName)
-												.addStatement("return query.beanResults()")
-												.build();
-
-		final TypeSpec serviceClass = TypeSpec.classBuilder(serviceName)
-												.addJavadoc(CodeBlock.builder().add("This class acts as a service layer to encapsulate domain logic.\n\n")
-																				.add("Add this line to classes that wish to use it: @Inject private transient " + serviceName + " service;")
-																				.build())
-												.addModifiers(Modifier.PUBLIC)
-												.addAnnotation(AnnotationSpec.builder(ClassName.get(Default.class)).build())
-												.addField(FieldSpec.builder(Persistence.class, "persistence")
-																		.addAnnotation(Inject.class)
-																		.addModifiers(Modifier.PRIVATE)
-																		.build())
-												.addMethod(get).addMethod(getAll).build();
-
-		final JavaFile javaFile = JavaFile.builder("modules." + moduleName + "." + documentName, serviceClass).indent("\t").build();
-
+	/**
+	 * Creates the document service class.
+	 * This class provides service layer methods for working with the document.
+	 * It includes methods for retrieving single and multiple instances.
+	 */
+	void createServiceClass() {
+		final NewServiceMojo serviceMojo = new NewServiceMojo();
+		serviceMojo.project = this.project;
+		serviceMojo.prompter = this.prompter;
+		serviceMojo.moduleName = this.moduleName;
+		serviceMojo.documentName = this.documentName;
+		serviceMojo.srcDir = this.srcDir;
+		
 		try {
-			javaFile.writeTo(Paths.get(srcDir));
-		}
-		catch (IOException e) {
+			serviceMojo.createServiceClass();
+		} catch (Exception e) {
 			LOGGER.warn("Failed to scaffold document service.", e);
 		}
 	}
 
+	/**
+	 * Gets the name of the extension class for the document.
+	 * 
+	 * @return The extension class name (document name + "Extension")
+	 */
 	private String getExtensionName() {
 		return documentName + "Extension";
 	}
 
-	private void generateDomain() throws MojoExecutionException {
+	/**
+	 * Generates the domain classes for the document.
+	 * This includes generating the base document class and any related classes.
+	 * 
+	 * @throws MojoExecutionException if there is an error during generation
+	 */
+	void generateDomain() throws MojoExecutionException {
 		if (generateDomainConfig == null) {
 			throw new MojoExecutionException("Generate domain configuration not specified.");
 		}
 
 		try {
 			configureClasspath(srcDir);
-			final ProvidedRepository repository = new LocalDesignRepository(srcDir, false);
-			DomainGenerator.newDomainGenerator(true,
-												generateDomainConfig.isDebug(),
-												generateDomainConfig.isMultiTenant(),
-												repository,
-												DialectOptions.valueOf(generateDomainConfig.getDialect()),
-												srcDir,
-												generatedDir,
-												testDir,
-												generatedTestDir,
-												generateDomainConfig.getExcludedModules().split(",")).generate();
+				registerCustomisations(generateDomainConfig.getCustomisationsClass());
+				setRepository();
+				generateDomain(true,
+								generateDomainConfig.isDebug(),
+								generateDomainConfig.isMultiTenant(),
+								DialectOptions.valueOf(generateDomainConfig.getDialect()),
+								srcDir,
+								generatedDir,
+								testDir,
+								generatedTestDir,
+								generateDomainConfig.getExcludedModules().split(","));
 		}
 		catch (Exception e) {
-			LOGGER.error("Failed to generated domain.", e);
+			LOGGER.error("Failed to generated domain.");
 			throw new MojoExecutionException("Failed to generate domain.", e);
 		}
 	}
 
-	private void generateEditView() throws MojoExecutionException {
+	/**
+	 * Generates the edit view for the document.
+	 * This creates the XML view definition for editing the document.
+	 * 
+	 * @throws MojoExecutionException if there is an error during generation
+	 */
+	void generateEditView() throws MojoExecutionException {
 		try {
 			final String configCustomerName = (generateEditViewConfig != null) ? generateEditViewConfig.getCustomer() : customer;
 			final String customerName = getDefaultOrPromptCustomer(configCustomerName);
@@ -242,22 +255,64 @@ public class NewScaffoldedDocumentMojo extends NewDocumentMojo {
 
 			final String overriddenViewName = (generateEditViewConfig != null) ? generateEditViewConfig.getOverridenViewName() : null;
 
-			configureClasspath(srcDir);
-			ViewGenerator.main(new String[] {srcDir,
+				configureClasspath(srcDir);
+				generateEditView(new String[] {srcDir,
 												customerName,
 												moduleName,
 												documentName,
 												Boolean.toString(isCustomerOverriden),
 												overriddenViewName});
 
-			final Path viewsDirectory = getModulesDirectory().resolve(moduleName).resolve(documentName).resolve("views");
-			final Path source = viewsDirectory.resolve("generatedEdit.xml");
-			final Path destination = viewsDirectory.resolve("edit.xml");
-			Files.move(source, destination);
+				final Path viewsDirectory = getModulesDirectory().resolve(moduleName).resolve(documentName).resolve("views");
+				final Path source = viewsDirectory.resolve("generatedEdit.xml");
+				final Path destination = viewsDirectory.resolve("edit.xml");
+				move(source, destination);
 		}
 		catch (Exception e) {
-			LOGGER.error("Failed to generate edit view.", e);
+			LOGGER.error("Failed to generate edit view.");
 			throw new MojoExecutionException("Failed to generate edit view.", e);
 		}
+	}
+
+	@SuppressWarnings("static-method") // test seam
+	void registerCustomisations(String customisationsClassName) throws Exception {
+		DomainGenerator.registerCustomisations(customisationsClassName);
+	}
+
+	// test seam
+	void setRepository() {
+		ProvidedRepositoryFactory.set(new LocalDesignRepository(srcDir, false));
+	}
+
+	@SuppressWarnings({"static-method", "java:S107"}) // test seam
+	void generateDomain(boolean generateDomainClasses,
+							boolean debug,
+							boolean multiTenant,
+							DialectOptions dialect,
+							String sourceDirectory,
+							String generatedDirectory,
+							String testDirectory,
+							String generatedTestDirectory,
+							String[] excludedModules)
+	throws Exception {
+		DomainGenerator.newDomainGenerator(generateDomainClasses,
+											debug,
+											multiTenant,
+											dialect,
+											sourceDirectory,
+											generatedDirectory,
+											testDirectory,
+											generatedTestDirectory,
+											excludedModules).generate();
+	}
+
+	@SuppressWarnings("static-method") // test seam
+	void generateEditView(String[] arguments) throws Exception {
+		ViewGenerator.main(arguments);
+	}
+
+	@SuppressWarnings("static-method") // test seam
+	void move(Path source, Path destination) throws IOException {
+		Files.move(source, destination);
 	}
 }

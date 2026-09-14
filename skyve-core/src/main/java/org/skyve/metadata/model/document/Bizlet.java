@@ -9,7 +9,12 @@ import org.skyve.impl.metadata.repository.behaviour.BizletMetaData;
 import org.skyve.metadata.MetaData;
 import org.skyve.metadata.controller.ImplicitActionName;
 import org.skyve.util.Util;
+import org.skyve.util.logging.SkyveLoggerFactory;
 import org.skyve.web.WebContext;
+import org.slf4j.Logger;
+
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 
 /**
  * A bizlet allows callbacks to be made at pertinent times in the Skyve server processing.
@@ -40,38 +45,55 @@ import org.skyve.web.WebContext;
  * @param <T>	The type of document bean we want to process with this Bizlet.
  */
 public class Bizlet<T extends Bean> implements MetaData {
+	// NB An instance member LOGGER is OK here as this is not Serializable
+    /**
+     * Executes SkyveLoggerFactory.getLogger.
+     * @param getClass() the getClass()
+     * @return the result
+     */
+    protected final Logger LOGGER = SkyveLoggerFactory.getLogger(getClass());
+
 	/**
-	 * Key/Value pairs for domains defined.
+	 * An immutable code/description pair used to populate drop-down and radio-button widgets.
+	 *
+	 * <p>The {@link #getCode() code} is the value persisted or stored in the bean;
+	 * the {@link #getLocalisedDescription() description} is the label displayed in the UI.
+	 * When only a single string is supplied to the constructor, both code and description
+	 * are set to that string.
 	 */
 	public static class DomainValue implements Serializable {
 		private static final long serialVersionUID = -7737192861504224293L;
 
-		private String code;
-		private String description;
+		@Nonnull private String code;
+		@Nonnull private String description;
 		
 		/**
-		 * 
-		 * @param codeAndDescription
+		 * Creates a domain value where the code and the display description are identical.
+		 *
+		 * @param codeAndDescription  the value used for both code and description;
+		 *                            must not be {@code null}
 		 */
-		public DomainValue(String codeAndDescription) {
+		public DomainValue(@Nonnull String codeAndDescription) {
 			this(codeAndDescription, codeAndDescription);
 		}
 		
 		/**
-		 * 
-		 * @param code
-		 * @param description
+		 * Creates a domain value with distinct code and display description.
+		 *
+		 * @param code         the persisted/stored value; must not be {@code null}
+		 * @param description  the i18n key or literal label shown in the UI; must not be {@code null}
 		 */
-		public DomainValue(String code, String description) {
+		public DomainValue(@Nonnull String code, @Nonnull String description) {
 			this.code = code;
 			this.description = description;
 		}
 		
 		/**
-		 * 
-		 * @return
+		 * Returns the code (persisted or stored value) for this domain entry.
+		 *
+		 * @return the code; never {@code null}
 		 */
-		public String getCode() {
+		public @Nonnull String getCode() {
 			return code;
 		}
 		
@@ -79,13 +101,19 @@ public class Bizlet<T extends Bean> implements MetaData {
 		 * 
 		 * @return
 		 */
-		public String getLocalisedDescription() {
-			return Util.i18n(description);
+		public @Nonnull String getLocalisedDescription() {
+			return Util.nullSafeI18n(description);
 		}
 		
+		/**
+		 * Returns a string representation of this instance.
+		 * @return the result
+		 */
 		@Override
-		public String toString() {
-			return super.toString() + '(' + code + "->" + description + ')';
+		public @Nonnull String toString() {
+			StringBuilder result = new StringBuilder(128);
+			result.append(super.toString()).append('(').append(code).append("->").append(description).append(')');
+			return result.toString();
 		}
 	}
 	
@@ -94,7 +122,7 @@ public class Bizlet<T extends Bean> implements MetaData {
 	/**
 	 * This method is used by Skyve to implement the default behaviour.
 	 */
-	public final void setMetaDataBizlet(BizletMetaData metaDataBizlet) {
+	public final void setMetaDataBizlet(@Nullable BizletMetaData metaDataBizlet) {
 		this.metaDataBizlet = metaDataBizlet;
 	}
 	
@@ -106,7 +134,8 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @return	The new bean.  This can be an entirely different instance if required.
 	 * @throws Exception
 	 */
-	public T newInstance(T bean) throws Exception {
+	@SuppressWarnings({"java:S112", "java:S1130"}) // Intentionally permitted exceptions
+	public @Nonnull T newInstance(@Nonnull T bean) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			metaDataBizlet.newInstance(bean);
@@ -120,7 +149,8 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param e
 	 * @throws Exception
 	 */
-	public void validate(T bean, ValidationException e) throws Exception {
+	@SuppressWarnings({"java:S112", "java:S1130"}) // Intentionally permitted exceptions
+	public void validate(@Nonnull T bean, @Nonnull ValidationException e) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			metaDataBizlet.validate(bean, e);
@@ -135,9 +165,9 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * and at startup for a fat client.
 	 *
 	 * @param attributeName	The name of the attribute to get the domain for.
-	 * @return the meta-data bizlet's domain values or null.
+	 * @return the meta-data bizlet's domain values or null if not defined.
 	 */
-	public List<DomainValue> getConstantDomainValues(String attributeName) throws Exception {
+	public @Nullable List<DomainValue> getConstantDomainValues(@Nonnull String attributeName) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			return metaDataBizlet.getConstantDomainValues(attributeName);
@@ -154,7 +184,7 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param attributeName	The name of the attribute to get the domain for.
 	 * @return the meta-data bizlet's domain values or null.
 	 */
-	public List<DomainValue> getVariantDomainValues(String attributeName) throws Exception {
+	public @Nullable List<DomainValue> getVariantDomainValues(@Nonnull String attributeName) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			return metaDataBizlet.getVariantDomainValues(attributeName);
@@ -172,7 +202,7 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param bean	This bean to use to derive the values.
 	 * @return the meta-data bizlet's domain values or null.
 	 */
-	public List<DomainValue> getDynamicDomainValues(String attributeName, T bean) throws Exception {
+	public @Nullable List<DomainValue> getDynamicDomainValues(@Nonnull String attributeName, @Nonnull T bean) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			return metaDataBizlet.getDynamicDomainValues(attributeName, bean);
@@ -181,15 +211,22 @@ public class Bizlet<T extends Bean> implements MetaData {
 	}
 
 	/**
-	 * This method is called when auto-complete values are required from a view widget.
-	 * They can be based on values from within the containing bean.
-	 * 
-	 * @param attributeName	The name of the attribute to get the domain for.
+	 * Returns auto-complete values for a view widget.
+	 *
+	 * <p>The supplied bean is the bean that owns {@code attributeName}. It can be
+	 * {@code null} when the completion request comes from a compound binding and
+	 * the parent binding currently resolves to {@code null}; for example,
+	 * completing {@code contact.email} before {@code contact} has been populated.
+	 *
+	 * @param attributeName The name of the attribute to get the domain for.
 	 * @param value The value typed into the view widget used to complete upon.
-	 * @param bean	This bean to use to derive the values.
+	 * @param bean This bean to use to derive the values, or {@code null} when no
+	 *             bean instance exists for a compound binding parent (where parent is null).
 	 * @return the meta-data bizlet's completions or null.
 	 */
-	public List<String> complete(String attributeName, String value, T bean) throws Exception {
+	public @Nullable List<String> complete(@Nonnull String attributeName,
+											@Nullable String value,
+											@Nullable T bean) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			return metaDataBizlet.complete(attributeName, value, bean);
@@ -209,7 +246,9 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @return	The bean or null if it can't be resolved.
 	 * @throws Exception
 	 */
-	public T resolve(String bizId, Bean conversationBean, WebContext webContext) throws Exception {
+	public @Nullable T resolve(@Nonnull String bizId,
+								@Nullable Bean conversationBean,
+								@Nonnull WebContext webContext) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			@SuppressWarnings("unchecked")
@@ -227,7 +266,7 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param bean	The bean to be saved (persisted/updated)
 	 * @throws Exception
 	 */
-	public void preSave(T bean) throws Exception {
+	public void preSave(@Nonnull T bean) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			metaDataBizlet.preSave(bean);
@@ -241,7 +280,7 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param bean	The bean to be saved (persisted/updated)
 	 * @throws Exception
 	 */
-	public void postSave(T bean) throws Exception {
+	public void postSave(@Nonnull T bean) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			metaDataBizlet.postSave(bean);
@@ -256,7 +295,7 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param bean	The bean to be deleted.
 	 * @throws Exception
 	 */
-	public void preDelete(T bean) throws Exception {
+	public void preDelete(@Nonnull T bean) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			metaDataBizlet.preDelete(bean);
@@ -272,7 +311,7 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param bean	The bean that has been deleted.
 	 * @throws Exception
 	 */
-	public void postDelete(T bean) throws Exception {
+	public void postDelete(@Nonnull T bean) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			metaDataBizlet.postDelete(bean);
@@ -288,7 +327,7 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param bean	The bean that was loaded.
 	 * @throws Exception
 	 */
-	public void postLoad(T bean) throws Exception {
+	public void postLoad(@Nonnull T bean) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			metaDataBizlet.postLoad(bean);
@@ -303,7 +342,11 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param webContext	The web context.
 	 * @throws Exception
 	 */
-	public T preExecute(ImplicitActionName actionName, T bean, Bean parentBean, WebContext webContext) throws Exception {
+	@SuppressWarnings({"java:S112", "java:S1130"}) // Intentionally permitted exceptions
+	public T preExecute(@Nonnull ImplicitActionName actionName,
+							@Nonnull T bean,
+							@Nullable Bean parentBean,
+							@Nonnull WebContext webContext) throws Exception {
 		return bean;
 	}
 	
@@ -315,7 +358,9 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param webContext	The web context.
 	 * @throws Exception
 	 */
-	public void preRerender(String source, T bean, WebContext webContext) throws Exception {
+	public void preRerender(@Nonnull String source,
+								@Nonnull T bean,
+								@Nonnull WebContext webContext) throws Exception {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			metaDataBizlet.preRerender(source, bean);
@@ -328,7 +373,7 @@ public class Bizlet<T extends Bean> implements MetaData {
 	 * @param bean	The bean rendered in the view.
 	 * @param webContext	The web context.
 	 */
-	public void postRender(T bean, WebContext webContext) {
+	public void postRender(@Nonnull T bean, @Nonnull WebContext webContext) {
 		// Execute the metaDataBizlet if one exists
 		if (metaDataBizlet != null) {
 			metaDataBizlet.postRender(bean);

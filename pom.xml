@@ -4,8 +4,9 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>org.skyve</groupId>
 	<artifactId>skyve-parent</artifactId>
-	<version>9.2.0-SNAPSHOT</version>
+	<version>10.0.0-SNAPSHOT</version>
 	<packaging>pom</packaging>
+	<description>Skyve</description>
 
 	<modules>
 		<module>skyve-core</module>
@@ -15,6 +16,7 @@
 		<module>skyve-content</module>
 		<module>skyve-tools</module>
 		<module>skyve-maven-plugin</module>
+		<module>skyve-coverage</module>
 	</modules>
 
 	<properties>
@@ -23,61 +25,81 @@
 		<!-- Keep this in lock step with hibernate (mockito and selenium aren't critical) -->
 		<byte-buddy.version>1.12.18</byte-buddy.version>
 		<commonmark.version>0.10.0</commonmark.version>
-		<commons-beanutils.version>1.9.4</commons-beanutils.version>
+		<commons-beanutils.version>1.11.0</commons-beanutils.version>
 		<commons-codec.version>1.15</commons-codec.version>
-		<commons-fileupload.version>1.5</commons-fileupload.version>
-		<commons-io.version>2.11.0</commons-io.version>
-		<commons-lang3.version>3.12.0</commons-lang3.version>
+		<commons-lang3.version>3.20.0</commons-lang3.version>
 		<commons-text.version>1.10.0</commons-text.version>
 		<commons-validator.version>1.7</commons-validator.version>
 		<ehcache.version>3.10.8</ehcache.version>
-		<!-- EL test implementation -->
+		<deltaspike.version>2.0.0</deltaspike.version>
+		<!-- EL implementation -->
 		<expressly.version>5.0.0</expressly.version>
 		<gson.version>2.8.9</gson.version>
-		<h2gis.version>2.2.1</h2gis.version>
+		<h2gis.version>2.2.3</h2gis.version>
+		<hamcrest.version>3.0</hamcrest.version>
 		<hibernate.version>5.6.15.Final</hibernate.version>
 		<hibernate-entitymanager.version>5.6.15.Final</hibernate-entitymanager.version>
 		<hibernate-spatial.version>5.6.15.Final</hibernate-spatial.version>
 		<ireport.version>4.7.0</ireport.version>
-		<groovy.version>2.3.2</groovy.version>
-		<jasperreports.version>6.20.5</jasperreports.version>
+		<jasperreports.version>7.0.7</jasperreports.version>
 		<java.version>17</java.version>
 		<javassist.version>3.20.0-GA</javassist.version>
 		<jakartaee-api.version>10.0.0</jakartaee-api.version>
 		<jts.version>1.19.0</jts.version>
 		<lucene.version>9.7.0</lucene.version>
-		<omnifaces.version>4.3</omnifaces.version>
+		<mojarra.version>4.0.11</mojarra.version>
+		<omnifaces.version>4.7.12</omnifaces.version>
 		<owasp.encoder.version>1.2.3</owasp.encoder.version>
-		<owasp.html.sanitizer.version>20200713.1</owasp.html.sanitizer.version>
+		<owasp.html.sanitizer.version>20220608.1</owasp.html.sanitizer.version>
 		<owasp.json.sanitizer.version>[1.0,)</owasp.json.sanitizer.version>
-		<pdfbox.version>1.8.4</pdfbox.version>
-		<pf4j.version>3.10.0</pf4j.version>
-		<bouncycastle.version>1.78.1</bouncycastle.version>
-		<poi.version>5.2.3</poi.version>
-		<primefaces.version>13.0.5</primefaces.version>
-		<primefaces-extensions.version>13.0.5</primefaces-extensions.version>
+		<!-- vulnerability in hibernate spatial transitive dependency -->
+		<postgresql.version>42.7.12</postgresql.version>
+		<pf4j.version>3.14.1</pf4j.version>
+		<bouncycastle.version>1.84</bouncycastle.version>
+		<poi.version>5.4.0</poi.version>
+		<primefaces.version>13.0.10</primefaces.version>
+		<primefaces-extensions.version>13.0.14</primefaces-extensions.version>
 		<primefaces-allthemes.version>1.0.10</primefaces-allthemes.version>
 		<quartz.version>2.3.2</quartz.version>
 		<slf4j-api.version>2.0.11</slf4j-api.version>
 		<spatial4j.version>0.4.1</spatial4j.version>
 		<super-csv.version>2.4.0</super-csv.version>
 		<thumbnailator.version>0.4.8</thumbnailator.version>
-		<tika.version>2.9.1</tika.version>
+		<tika.version>3.1.0</tika.version>
+		<batik.version>1.18</batik.version>
 		<umlgraph.version>5.6.6</umlgraph.version>
 		<xmlschema-core.version>2.0.1</xmlschema-core.version>
 		<generex.version>1.0.2</generex.version>
 		<junidecode.version>0.4.1</junidecode.version>
 		<junit-jupiter.version>5.10.2</junit-jupiter.version>
 		<mockito.version>4.2.0</mockito.version>
+		<jersey.test.version>3.1.10</jersey.test.version>
+		<jacoco-maven-plugin.version>0.8.13</jacoco-maven-plugin.version>
 		<weld.version>5.1.2.Final</weld.version>
-		<spring-security.version>6.2.1</spring-security.version>
-		<spring.version>6.1.3</spring.version>
+		<spring-security.version>6.5.11</spring-security.version>
+		<spring.version>6.2.17</spring.version>
 		<!-- freemarker report versions -->
 		<flying-saucer.version>9.6.1</flying-saucer.version>
 		<freemarker.version>2.3.32</freemarker.version>
 		<cronutils.version>9.2.1</cronutils.version>
 
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+		<skipUnitTests>false</skipUnitTests>
+		<skipIntegrationTests>true</skipIntegrationTests>
+
+		<sonar.organization>skyvers</sonar.organization>
+		<sonar.host.url>https://sonarcloud.io</sonar.host.url>
+		<sonar.coverage.jacoco.xmlReportPaths>${maven.multiModuleProjectDirectory}/skyve-coverage/target/site/jacoco-aggregate/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+		<!-- Excluded because of the javadoc preference -->
+		<sonar.cpd.exclusions>**/*</sonar.cpd.exclusions>
+		<sonar.issue.ignore.multicriteria>e1,e2</sonar.issue.ignore.multicriteria>
+		<!-- Packages are camel case in Skyve documents -->
+		<sonar.issue.ignore.multicriteria.e1.ruleKey>java:S120</sonar.issue.ignore.multicriteria.e1.ruleKey>
+		<sonar.issue.ignore.multicriteria.e1.resourceKey>**/src/main/java/modules/**/*.java</sonar.issue.ignore.multicriteria.e1.resourceKey>
+		<!-- Allow commented out code - its useful -->
+		<sonar.issue.ignore.multicriteria.e2.ruleKey>java:S125</sonar.issue.ignore.multicriteria.e2.ruleKey>
+		<sonar.issue.ignore.multicriteria.e2.resourceKey>**/*.java</sonar.issue.ignore.multicriteria.e2.resourceKey>
 	</properties>
 
 	<distributionManagement>
@@ -92,27 +114,22 @@
 	</distributionManagement>
 
 	<build>
+		<!-- These are inherited in child projects -->
 		<pluginManagement>
 			<plugins>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-surefire-plugin</artifactId>
-                    <configuration>
-                        <argLine>-Djava.locale.providers=COMPAT,CLDR </argLine>
-                   </configuration>
-                </plugin>
 				<plugin>
 					<groupId>org.apache.maven.plugins</groupId>
 					<artifactId>maven-compiler-plugin</artifactId>
+					<version>3.13.0</version>
 					<configuration>
 						<forceJavacCompilerUse>true</forceJavacCompilerUse>
-						<source>${java.version}</source>
-						<target>${java.version}</target>
+						<release>${java.version}</release>
 					</configuration>
 				</plugin>
 				<plugin>
 					<groupId>org.apache.maven.plugins</groupId>
 					<artifactId>maven-source-plugin</artifactId>
+					<version>3.3.0</version>
 					<executions>
 						<execution>
 							<id>attach-sources</id>
@@ -122,60 +139,100 @@
 						</execution>
 					</executions>
 				</plugin>
-                <plugin>
-                    <groupId>org.codehaus.mojo</groupId>
-                    <artifactId>exec-maven-plugin</artifactId>
-                    <version>3.1.0</version>
-                </plugin>
+				<plugin>
+					<groupId>org.codehaus.mojo</groupId>
+					<artifactId>exec-maven-plugin</artifactId>
+					<version>3.1.0</version>
+				</plugin>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-surefire-plugin</artifactId>
+					<version>3.1.2</version>
+					<configuration>
+						<excludes>
+							<exclude>**/*IT</exclude>
+							<exclude>**/*Sail</exclude>
+						</excludes>
+						<skipTests>${skipUnitTests}</skipTests>
+						<rerunFailingTestsCount>2</rerunFailingTestsCount>
+				   </configuration>
+				</plugin>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-failsafe-plugin</artifactId>
+					<version>3.1.2</version>
+					<executions>
+						<execution>
+							<id>integration-tests</id>
+							<goals>
+								<goal>integration-test</goal>
+								<goal>verify</goal>
+							</goals>
+						</execution>
+					</executions>
+					<configuration>
+						<includes>
+							<include>**/*IT</include>
+							<include>**/*Sail</include>
+						</includes>
+						<skipITs>${skipIntegrationTests}</skipITs>
+					</configuration>
+				</plugin>
+				<plugin>
+					<groupId>org.jacoco</groupId>
+					<artifactId>jacoco-maven-plugin</artifactId>
+					<version>0.8.13</version>
+					<configuration>
+					</configuration>
+					<executions>
+						<execution>
+							<id>jacoco-initialize</id>
+							<goals>
+								<goal>prepare-agent</goal>
+							</goals>
+						</execution>
+						<execution>
+							<id>jacoco-site</id>
+							<phase>prepare-package</phase>
+							<goals>
+								<goal>report</goal>
+							</goals>
+						</execution>
+					</executions>
+				</plugin>
 			</plugins>
 		</pluginManagement>
-
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-source-plugin</artifactId>
-				<version>3.3.0</version>
 			</plugin>
+<!-- Don't build coverage unless we need it 
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
-				<version>0.8.10</version>
-				<configuration>
-					<destFile>${basedir}/target/coverage-reports/jacoco-unit.exec</destFile>
-					<dataFile>${basedir}/target/coverage-reports/jacoco-unit.exec</dataFile>
-				</configuration>
-				<executions>
-					<execution>
-						<id>jacoco-initialize</id>
-						<goals>
-							<goal>prepare-agent</goal>
-						</goals>
-					</execution>
-					<execution>
-						<id>jacoco-site</id>
-						<phase>prepare-package</phase>
-						<goals>
-							<goal>report</goal>
-						</goals>
-					</execution>
-				</executions>
+			</plugin>
+-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
 			</plugin>
 		</plugins>
 	</build>
 
 	<repositories>
-        <repository>
-            <id>maven2</id>
-            <url>https://repo.maven.apache.org/maven2/</url>
-        </repository>
-        <repository>
-            <id>oss.sonatype.org</id>
-            <url>https://oss.sonatype.org/content/repositories/releases/</url>
-        </repository>
-        <repository>
-            <id>Prime Faces</id>
-            <url>https://repository.primefaces.org</url>
-        </repository>
+		<repository>
+			<id>maven2</id>
+			<url>https://repo.maven.apache.org/maven2/</url>
+		</repository>
+		<repository>
+			<id>oss.sonatype.org</id>
+			<url>https://oss.sonatype.org/content/repositories/releases/</url>
+		</repository>
+		<repository>
+			<id>Prime Faces</id>
+			<url>https://repository.primefaces.org</url>
+		</repository>
 		<repository>
 			<id>skyve</id>
 			<url>https://repo.skyve.org/repository/skyve/</url>
@@ -210,6 +267,16 @@
 				<version>${commons-text.version}</version>
 			</dependency>
 			<dependency>
+				<groupId>org.apache.deltaspike.core</groupId>
+				<artifactId>deltaspike-core-api</artifactId>
+				<version>${deltaspike.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.apache.deltaspike.core</groupId>
+				<artifactId>deltaspike-core-impl</artifactId>
+				<version>${deltaspike.version}</version>
+			</dependency>
+			<dependency>
 				<groupId>commons-beanutils</groupId>
 				<artifactId>commons-beanutils</artifactId>
 				<version>${commons-beanutils.version}</version>
@@ -223,11 +290,6 @@
 				<groupId>commons-codec</groupId>
 				<artifactId>commons-codec</artifactId>
 				<version>${commons-codec.version}</version>
-			</dependency>
-			<dependency>
-				<groupId>commons-io</groupId>
-				<artifactId>commons-io</artifactId>
-				<version>${commons-io.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>org.javassist</groupId>
@@ -245,8 +307,8 @@
 				<version>${ehcache.version}</version>
 			</dependency>
 			<dependency>
-			    <groupId>org.glassfish.expressly</groupId>
-			    <artifactId>expressly</artifactId>
+				<groupId>org.glassfish.expressly</groupId>
+				<artifactId>expressly</artifactId>
 				<version>${expressly.version}</version>
 			</dependency>
 			<dependency>
@@ -277,7 +339,7 @@
 					<exclusion>
 						<groupId>org.jboss</groupId>
 						<artifactId>jandex</artifactId>
-                    </exclusion>
+					</exclusion>
 				</exclusions>
 			</dependency>
 			<dependency>
@@ -288,8 +350,14 @@
 					<exclusion>
 						<groupId>org.hibernate</groupId>
 						<artifactId>hibernate-core</artifactId>
-                    </exclusion>
+					</exclusion>
 				</exclusions>
+			</dependency>
+			<!-- vulnerability in hibernate spatial transitive dependency -->
+			<dependency>
+				<groupId>org.postgresql</groupId>
+				<artifactId>postgresql</artifactId>
+				<version>${postgresql.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>org.hibernate</groupId>
@@ -299,7 +367,7 @@
 					<exclusion>
 						<groupId>org.hibernate</groupId>
 						<artifactId>hibernate-core</artifactId>
-                    </exclusion>
+					</exclusion>
 				</exclusions>
 			</dependency>
 			<!-- Set for hibernate use here to stop conflicts in mockito and selenium etc -->
@@ -322,15 +390,27 @@
 				<version>${h2gis.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>org.codehaus.groovy</groupId>
-				<artifactId>groovy-all</artifactId>
-				<version>${groovy.version}</version>
-			</dependency>
-			<dependency>
 				<groupId>net.sf.jasperreports</groupId>
 				<artifactId>jasperreports</artifactId>
 				<version>${jasperreports.version}</version>
+				<!-- Exclude vuinerable jackson library version -->
 				<exclusions>
+					<exclusion>
+						<groupId>com.fasterxml.jackson.core</groupId>
+						<artifactId>jackson-core</artifactId>
+					</exclusion>
+					<exclusion>
+						<groupId>com.fasterxml.jackson.core</groupId>
+						<artifactId>jackson-databind</artifactId>
+					</exclusion>
+					<exclusion>
+						<groupId>com.fasterxml.jackson.core</groupId>
+						<artifactId>jackson-annotations</artifactId>
+					</exclusion>
+					<exclusion>
+						<groupId>com.fasterxml.jackson.dataformat</groupId>
+						<artifactId>jackson-dataformat-xml</artifactId>
+					</exclusion>
 					<exclusion>
 						<groupId>org.apache.commons</groupId>
 						<artifactId>commons-collections4</artifactId>
@@ -346,14 +426,44 @@
 				</exclusions>
 			</dependency>
 			<dependency>
+				<groupId>net.sf.jasperreports</groupId>
+				<artifactId>jasperreports-pdf</artifactId>
+				<version>${jasperreports.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>net.sf.jasperreports</groupId>
+				<artifactId>jasperreports-excel-poi</artifactId>
+				<version>${jasperreports.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>net.sf.jasperreports</groupId>
+				<artifactId>jasperreports-jdt</artifactId>
+				<version>${jasperreports.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>net.sf.jasperreports</groupId>
+				<artifactId>jasperreports-charts</artifactId>
+				<version>${jasperreports.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>net.sf.jasperreports</groupId>
+				<artifactId>jasperreports-servlets</artifactId>
+				<version>${jasperreports.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.slf4j</groupId>
+				<artifactId>slf4j-api</artifactId>
+				<version>${slf4j-api.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>com.googlecode.owasp-java-html-sanitizer</groupId>
+				<artifactId>owasp-java-html-sanitizer</artifactId>
+				<version>${owasp.html.sanitizer.version}</version>
+			</dependency>
+			<dependency>
 				<groupId>org.primefaces.themes</groupId>
 				<artifactId>all-themes</artifactId>
 				<version>${primefaces-allthemes.version}</version>
-			</dependency>
-			<dependency>
-				<groupId>commons-fileupload</groupId>
-				<artifactId>commons-fileupload</artifactId>
-				<version>${commons-fileupload.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>com.google.code.gson</groupId>
@@ -407,8 +517,18 @@
 				<groupId>org.quartz-scheduler</groupId>
 				<artifactId>quartz</artifactId>
 				<version>${quartz.version}</version>
+				<exclusions>
+					<exclusion>
+						<groupId>com.mchange</groupId>
+						<artifactId>c3p0</artifactId>
+					</exclusion>
+					<exclusion>
+						<groupId>com.mchange</groupId>
+						<artifactId>mchange-commons-java</artifactId>
+					</exclusion>
+				</exclusions>
 			</dependency>
-    		<dependency>
+			<dependency>
 				<groupId>org.springframework.security</groupId>
 				<artifactId>spring-security-web</artifactId>
 				<version>${spring-security.version}</version>
@@ -435,14 +555,48 @@
 			</dependency>
 			<!-- For Argon 2 -->
 			<dependency>
-			    <groupId>org.bouncycastle</groupId>
-			    <artifactId>bcprov-jdk18on</artifactId>
-			    <version>${bouncycastle.version}</version>
+				<groupId>org.bouncycastle</groupId>
+				<artifactId>bcprov-jdk18on</artifactId>
+				<version>${bouncycastle.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>org.pf4j</groupId>
 				<artifactId>pf4j</artifactId>
 				<version>${pf4j.version}</version>
+			</dependency>
+			<!-- For drawing on upload images -->
+			<dependency>
+				<groupId>org.apache.xmlgraphics</groupId>
+				<artifactId>batik-all</artifactId>
+				<version>${batik.version}</version>
+				<exclusions>
+					<exclusion>
+						<groupId>xml-apis</groupId>
+						<artifactId>xml-apis</artifactId>
+					</exclusion>
+				</exclusions>
+			</dependency>
+			<!-- xml-apis-ext provides org.w3c.dom.stylesheets/css needed by Batik but absent from the JDK module path -->
+			<dependency>
+				<groupId>xml-apis</groupId>
+				<artifactId>xml-apis-ext</artifactId>
+				<version>1.3.04</version>
+			</dependency>
+			<!-- For archiving -->
+			<dependency>
+				<groupId>org.apache.lucene</groupId>
+				<artifactId>lucene-core</artifactId>
+				<version>${lucene.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.apache.lucene</groupId>
+				<artifactId>lucene-queryparser</artifactId>
+				<version>${lucene.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.apache.lucene</groupId>
+				<artifactId>lucene-analysis-common</artifactId>
+				<version>${lucene.version}</version>
 			</dependency>
 			
 			<!-- html reports and html to pdf conversion -->
@@ -467,13 +621,7 @@
 				<artifactId>cron-utils</artifactId>
 				<version>${cronutils.version}</version>
 			</dependency>
-			<!-- for JSON parsing -->
-			<dependency>
-			    <groupId>net.minidev</groupId>
-			    <artifactId>json-smart</artifactId>
-			    <version>2.5.1</version>
-			</dependency>
-
+		
 			<!-- Test dependencies -->
 			<dependency>
 				<groupId>org.junit.jupiter</groupId>
@@ -494,25 +642,40 @@
 				<scope>test</scope>
 			</dependency>
 			<dependency>
+				<groupId>org.mockito</groupId>
+				<artifactId>mockito-junit-jupiter</artifactId>
+				<version>${mockito.version}</version>
+				<scope>test</scope>
+			</dependency>
+			<!-- Jakarta Mail implementation used by tests that build real MimeMessage instances -->
+			<dependency>
+				<groupId>org.eclipse.angus</groupId>
+				<artifactId>jakarta.mail</artifactId>
+				<version>2.0.5</version>
+				<scope>test</scope>
+			</dependency>
+<!-- Removed until byte-buddy can be uplifted (through hibernate)
+			<dependency>
+				<groupId>org.mockito</groupId>
+				<artifactId>mockito-inline</artifactId>
+				<version>${mockito.version}</version>
+				<scope>test</scope>
+			</dependency>
+-->
+			<dependency>
+				<groupId>org.hamcrest</groupId>
+				<artifactId>hamcrest</artifactId>
+				<version>${hamcrest.version}</version>
+				<scope>test</scope>
+			</dependency>
+			<dependency>
 				<groupId>org.jboss.weld.se</groupId>
 				<artifactId>weld-se-core</artifactId>
-	    		<version>${weld.version}</version>
+				<version>${weld.version}</version>
 				<scope>test</scope>
 			</dependency>
 
 			<!-- Runtime dependencies -->
-			<dependency>
-				<groupId>org.slf4j</groupId>
-				<artifactId>slf4j-api</artifactId>
-				<version>${slf4j-api.version}</version>
-				<scope>runtime</scope>
-			</dependency>
-			<dependency>
-				<groupId>org.slf4j</groupId>
-				<artifactId>slf4j-jdk14</artifactId>
-				<version>${slf4j-api.version}</version>
-				<scope>runtime</scope>
-			</dependency>
 			<dependency>
 				<groupId>net.sf.supercsv</groupId>
 				<artifactId>super-csv</artifactId>
@@ -562,4 +725,42 @@
 			</dependency>
 		</dependencies>
 	</dependencyManagement>
+
+	<!-- To produce aggregate jacoco test coverage -->
+	<profiles>
+		<profile>
+			<id>coverage</id>
+			<build>
+				<plugins>
+						<plugin>
+						<groupId>org.jacoco</groupId>
+						<artifactId>jacoco-maven-plugin</artifactId>
+						<version>0.8.13</version>
+						<executions>
+							<!-- Override the pluginManagement jacoco-initialize execution
+							     to run after compilation (process-test-classes), preventing
+							     the JaCoCo agent from being attached to the Maven JVM before
+							     javac runs. Without this, JaCoCo corrupts JDK module class
+							     files (e.g. java.awt.BasicStroke) causing "bad class file"
+							     errors during compilation. -->
+							<execution>
+								<id>jacoco-initialize</id>
+								<phase>process-test-classes</phase>
+								<goals>
+									<goal>prepare-agent</goal>
+								</goals>
+							</execution>
+							<execution>
+								<id>jacoco-report</id>
+								<phase>prepare-package</phase>
+								<goals>
+									<goal>report</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 </project>

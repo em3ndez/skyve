@@ -1,7 +1,7 @@
 <%@ page session="false" language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
 <%@ page import="org.skyve.util.Util"%>
 <!DOCTYPE html>
-<html>
+<html lang="en" xml:lang="en">
 <head>
   <!--
     If you are serving your web app in a path other than the root, change the
@@ -16,7 +16,7 @@
     This is a placeholder for base href that will be replaced by the value of
     the `--base-href` argument provided to `flutter build`.
   -->
-  <base href="<%=Util.getHomeUrl()%>app/">
+  <base href="<%=Util.getBaseUrl()%>app/">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">

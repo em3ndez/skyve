@@ -68,9 +68,8 @@ public class DocumentQueryListModel <T extends Bean> extends ListModel<T> {
 
 		drivingDocument = module.getDocument(customer, query.getDocumentName());
 		for (MetaDataQueryColumn column : query.getColumns()) {
-			MetaDataQueryProjectedColumn projectedColumn = (column instanceof MetaDataQueryProjectedColumn) ?
-																(MetaDataQueryProjectedColumn) column :
-																null;
+			MetaDataQueryProjectedColumn projectedColumn = (column instanceof MetaDataQueryProjectedColumn c) ? c : null;
+			@SuppressWarnings("java:S1125")
 			boolean projected = (projectedColumn != null) ? projectedColumn.isProjected() : true;
 			if (projected) {
 				String binding = column.getBinding();
@@ -156,7 +155,6 @@ public class DocumentQueryListModel <T extends Bean> extends ListModel<T> {
 
 		// This needs to be the ID to satisfy the client data source definitions
 		summaryQuery.addAggregateProjection(AggregateFunction.Count, Bean.DOCUMENT_ID, Bean.DOCUMENT_ID);
-		summaryQuery.addAggregateProjection(AggregateFunction.Min, PersistentBean.FLAG_COMMENT_NAME, PersistentBean.FLAG_COMMENT_NAME);
 		
 		// Only page if this isn't an aggregate query
 		if (! query.isAggregate()) {
@@ -187,7 +185,6 @@ public class DocumentQueryListModel <T extends Bean> extends ListModel<T> {
 		if (query.isAggregate()) {
 			Map<String, Object> properties = new TreeMap<>();
 			properties.put(Bean.DOCUMENT_ID, Long.valueOf(rows.size()));
-			properties.put(PersistentBean.FLAG_COMMENT_NAME, null);
 			summaryBean = new DynamicBean(module.getName(), drivingDocument.getName(), properties);
 		}
 		else {
@@ -221,8 +218,7 @@ public class DocumentQueryListModel <T extends Bean> extends ListModel<T> {
 								SortedMap<String, Object> properties, 
 								Document drivingDocument,
 								MetaDataQueryDefinition query,
-								String selectedTagId)
-	throws Exception {
+								String selectedTagId) {
 		Persistence p = CORE.getPersistence();
 		PersistentBean bean = p.retrieveAndLock(drivingDocument, bizId);
 		BindUtil.populateProperties(p.getUser(), bean, properties, true);

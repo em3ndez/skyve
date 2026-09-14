@@ -13,8 +13,17 @@ import jakarta.xml.bind.annotation.XmlType;
 import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 
 /**
- * 
- * @author Mike NOTE - DO NOT MAKE ANY METHOD IN THIS CLASS FINAL...
+ * Base implementation of {@link PersistentBean} that carries Hibernate ORM
+ * annotations and the bidirectional JAXB/XML mapping for persistent beans.
+ *
+ * <p>Provides the standard persistent-bean fields: {@code bizId},
+ * {@code bizVersion}, {@code bizLock}, and {@code bizKey}.
+ *
+ * <p>Invariant: no method in this class may be declared {@code final} because
+ * Hibernate requires the ability to create subclass proxies via bytecode enhancement.
+ *
+ * @see PersistentBean
+ * @see AbstractBean
  */
 @XmlType
 @MappedSuperclass
@@ -89,16 +98,6 @@ public abstract class AbstractPersistentBean extends AbstractBean implements Per
 	}
 	
 	@Override
-	public int hashCode() {
-		return bizId.hashCode();
-	}
-
-	@Override
-	public String toString() {
-		return super.toString() + '#' + bizId;
-	}
-	
-	@Override
 	public String getBizCustomer() {
 		return bizCustomer;
 	}
@@ -160,6 +159,8 @@ public abstract class AbstractPersistentBean extends AbstractBean implements Per
 	 * @return A string containing the bizKey and the bizId of the record.
 	 */
 	public String getBizKeyBizIdString() {
-		return String.format("%s (%s)", bizKey, bizId);
+		StringBuilder result = new StringBuilder(bizKey.length() + 39);
+		result.append(bizKey).append(" (").append(bizId).append(')');
+		return result.toString();
 	}
 }

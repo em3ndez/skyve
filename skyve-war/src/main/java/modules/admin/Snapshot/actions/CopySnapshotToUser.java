@@ -8,9 +8,18 @@ import org.skyve.web.WebContext;
 
 import modules.admin.domain.Snapshot;
 
+/**
+ * Copies a snapshot to another user, effectively donating the snapshot.
+ * Creates a new snapshot instance with the same name assigned to the target user.
+ */
 public class CopySnapshotToUser implements ServerSideAction<Snapshot> {
 	/**
 	 * Copy a snapshot to a user - ie donate a snapshot.
+	 *
+	 * @param bean the snapshot being copied
+	 * @param webContext the current web context
+	 * @return the action result wrapping the supplied snapshot
+	 * @throws Exception if persistence fails
 	 */
 	@Override
 	public ServerSideActionResult<Snapshot> execute(Snapshot bean, WebContext webContext) throws Exception {
@@ -18,11 +27,11 @@ public class CopySnapshotToUser implements ServerSideAction<Snapshot> {
 		if (bean.getCopyToUser() != null) {
 
 			// copy tag and tagged items
-			Snapshot newSnapshot= Snapshot.newInstance();
+			Snapshot newSnapshot = Snapshot.newInstance();
 			newSnapshot.setName(bean.getName());
 			newSnapshot.setBizUserId(bean.getCopyToUser().getBizId());
 			Persistence pers = CORE.getPersistence();
-			pers.upsertBeanTuple(newSnapshot);			
+			pers.upsertBeanTuple(newSnapshot);
 		}
 		return new ServerSideActionResult<>(bean);
 	}

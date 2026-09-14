@@ -69,7 +69,7 @@ public class StaffQualification extends AbstractPersistentBean implements ChildB
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum Type implements Enumeration {
+	public enum Type implements Enumeration {
 		skill("Skill", "Skill"),
 		experience("Experience", "Experience"),
 		diploma("Diploma", "Diploma"),
@@ -207,12 +207,6 @@ public class StaffQualification extends AbstractPersistentBean implements ChildB
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof StaffQualification) && 
-					this.getBizId().equals(((StaffQualification) o).getBizId()));
 	}
 
 	/**

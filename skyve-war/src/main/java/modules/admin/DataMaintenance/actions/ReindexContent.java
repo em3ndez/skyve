@@ -13,14 +13,23 @@ import org.skyve.web.WebContext;
 
 import modules.admin.domain.DataMaintenance;
 
+/**
+ * Rebuilds content index entries for stored binary content.
+ */
 public class ReindexContent implements ServerSideAction<DataMaintenance> {
+	/**
+	 * Performs the execute operation.
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public ServerSideActionResult<DataMaintenance> execute(DataMaintenance bean, WebContext webContext)
 	throws Exception {
 		User u = CORE.getUser();
 		Customer c = u.getCustomer();
 		Module m = c.getModule(DataMaintenance.MODULE_NAME);
-		
 		JobMetaData job = m.getJob("jReindexAttachments");
 		EXT.getJobScheduler().runOneShotJob(job, bean, u);
 		webContext.growl(MessageSeverity.info, "Reindex Job has been started");

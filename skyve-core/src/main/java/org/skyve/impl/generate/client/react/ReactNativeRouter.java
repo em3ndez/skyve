@@ -1,20 +1,29 @@
 package org.skyve.impl.generate.client.react;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+
 import org.skyve.CORE;
-import org.skyve.impl.metadata.module.menu.*;
+import org.skyve.impl.metadata.module.menu.CalendarItem;
+import org.skyve.impl.metadata.module.menu.EditItem;
+import org.skyve.impl.metadata.module.menu.ListItem;
+import org.skyve.impl.metadata.module.menu.MapItem;
+import org.skyve.impl.metadata.module.menu.TreeItem;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
 import org.skyve.metadata.module.Module.DocumentRef;
 import org.skyve.metadata.module.menu.MenuRenderer;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeSet;
-
+/**
+ * Generates React Native navigation routes for generated views.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate fragments of generated React Native routing output.
 public class ReactNativeRouter {
 	private static String[] EDIT_VIEW_PARAMS = new String[] {"bizId"};
 
@@ -29,7 +38,7 @@ public class ReactNativeRouter {
 	void create() throws IOException {
 		File router = new File(generator.srcSkyvePath, "Router.js");
 		if (router.exists()) {
-			router.delete();
+			Files.delete(router.toPath());
 		}
 
 		try (FileWriter fw = new FileWriter(router)) {
@@ -150,10 +159,10 @@ public class ReactNativeRouter {
 										modelName,
 										itemDocument.getListModel(c, modelName, false));
 				}
-				else if (item.getQueryName() != null) { // query driven
+				else if (itemQueryName != null) { // query driven
 					component.setQuery(menuModule,
 										itemDocument,
-										menuModule.getMetaDataQuery(itemQueryName));
+										menuModule.getNullSafeMetaDataQuery(itemQueryName));
 				}
 				else { // document driven
 					component.setQuery(menuModule,

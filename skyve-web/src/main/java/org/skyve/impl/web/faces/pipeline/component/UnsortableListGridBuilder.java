@@ -17,13 +17,13 @@ public class UnsortableListGridBuilder extends NoOpComponentBuilder {
 									String uxui,
 									ListModel<Bean> model,
 									Document owningDocument,
-									String title,
 									ListGrid listGrid,
+									String stickyHeaderAnchorSelector,
 									boolean aggregateQuery) {
 		if (component != null) {
 			for (UIComponent child : component.getChildren()) {
-				if (child instanceof Column) {
-					((Column) child).setSortable(false);
+				if (child instanceof Column column) {
+					column.setSortable(false);
 				}
 			}
 		}

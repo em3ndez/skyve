@@ -11,6 +11,8 @@ import org.skyve.impl.domain.AbstractTransientBean;
 
 /**
  * Change Password
+ * <br/>
+ * Provides a secure form for users to change their passwords. Supports authenticated changes (logged-in users providing their current password) and self-service resets (when users reset password from resetPassword.jsp and cannot provide their old password).
  * 
  * @stereotype "transient"
  */
@@ -106,12 +108,6 @@ public class ChangePassword extends AbstractTransientBean {
 		}
 	}
 
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof ChangePassword) && 
-					this.getBizId().equals(((ChangePassword) o).getBizId()));
-	}
-
 	/**
 	 * {@link #oldPassword} accessor.
 	 * @return	The value.
@@ -182,5 +178,24 @@ public class ChangePassword extends AbstractTransientBean {
 	public void setResponse(String response) {
 		preset(responsePropertyName, response);
 		this.response = response;
+	}
+
+	/**
+	 * passwordChanged
+	 *
+	 * @return The condition
+	 */
+	@XmlTransient
+	public boolean isPasswordChanged() {
+		return (response != null);
+	}
+
+	/**
+	 * {@link #isPasswordChanged} negation.
+	 *
+	 * @return The negated condition
+	 */
+	public boolean isNotPasswordChanged() {
+		return (! isPasswordChanged());
 	}
 }

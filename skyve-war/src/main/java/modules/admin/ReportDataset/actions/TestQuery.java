@@ -26,7 +26,7 @@ import org.skyve.persistence.BizQL;
 import org.skyve.persistence.SQL;
 import org.skyve.web.WebContext;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 import jakarta.enterprise.inject.spi.CDI;
 import modules.admin.ReportDataset.ReportDatasetExtension;
@@ -34,11 +34,22 @@ import modules.admin.ReportDataset.ReportDatasetExtension.SubstitutedQueryResult
 import modules.admin.ReportParameter.ReportParameterExtension;
 import modules.admin.domain.ReportDataset;
 
+/**
+ * Tests report dataset queries by executing them with test parameters and returning sample results.
+ * Supports BizQL, SQL, and class-based datasets with parameter substitution and result formatting.
+ */
 public class TestQuery implements ServerSideAction<ReportDatasetExtension> {
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(TestQuery.class);
 
-	private static final Logger LOG = LoggerFactory.getLogger(TestQuery.class);
-
+	/**
+	 * Executes execute.
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @return the result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	public ServerSideActionResult<ReportDatasetExtension> execute(ReportDatasetExtension bean, WebContext webContext)
 			throws Exception {
 		// clear any previous results
@@ -62,7 +73,8 @@ public class TestQuery implements ServerSideAction<ReportDatasetExtension> {
 								break;
 							case integer:
 								bql.putParameter(param.getName(),
-										(param.getNumericalTestValue() == null ? null : Integer.valueOf(param.getNumericalTestValue().intValue())));
+										(param.getNumericalTestValue() == null ? null
+												: Integer.valueOf(param.getNumericalTestValue().intValue())));
 								break;
 							case longInteger:
 								bql.putParameter(param.getName(), param.getNumericalTestValue());
@@ -99,7 +111,8 @@ public class TestQuery implements ServerSideAction<ReportDatasetExtension> {
 								break;
 							case integer:
 								sql.putParameter(param.getName(),
-										(param.getNumericalTestValue() == null ? null : Integer.valueOf(param.getNumericalTestValue().intValue())));
+										(param.getNumericalTestValue() == null ? null
+												: Integer.valueOf(param.getNumericalTestValue().intValue())));
 								break;
 							case longInteger:
 								sql.putParameter(param.getName(), param.getNumericalTestValue());
@@ -111,7 +124,7 @@ public class TestQuery implements ServerSideAction<ReportDatasetExtension> {
 				}
 
 				List<DynaBean> results = sql.dynaResults();
-				LOG.info("Returned {} results", Integer.valueOf(results.size()));
+				LOGGER.info("Returned {} results", Integer.valueOf(results.size()));
 
 				for (DynaBean result : results) {
 					LazyDynaMap map = (LazyDynaMap) result;
@@ -124,18 +137,18 @@ public class TestQuery implements ServerSideAction<ReportDatasetExtension> {
 		} else if (DatasetType.classValue == bean.getDatasetType()) {
 			try {
 				@SuppressWarnings("unchecked")
-				Class<BeanReportDataset> reportClass = (Class<BeanReportDataset>) Thread.currentThread().getContextClassLoader().loadClass(bean.getQuery());
+				Class<BeanReportDataset> reportClass = (Class<BeanReportDataset>) Thread.currentThread()
+						.getContextClassLoader()
+						.loadClass(bean.getQuery());
 				if (reportClass != null) {
 					BeanReportDataset dataset = CDI.current().select(reportClass).get();
 					StringBuilder queryResults = new StringBuilder(5120);
 					List<? extends ReportParameter> parameters = bean.getParent().getParameters();
 
 					for (DynaBean result : dataset.getResults(parameters)) {
-						if (result instanceof DynaClass) {
-							DynaClass dynaClass = (DynaClass) result;
+						if (result instanceof DynaClass dynaClass) {
 							printDynaClass(queryResults, result, dynaClass);
-						} else if (result instanceof LazyDynaBean) {
-							LazyDynaBean ldb = (LazyDynaBean) result;
+						} else if (result instanceof LazyDynaBean ldb) {
 							DynaClass dynaClass = ldb.getDynaClass();
 							printDynaClass(queryResults, result, dynaClass);
 						} else {

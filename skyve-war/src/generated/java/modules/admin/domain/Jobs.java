@@ -14,6 +14,8 @@ import org.skyve.impl.domain.ChangeTrackingArrayList;
 
 /**
  * Jobs
+ * <br/>
+ * Non-persistent document that provides a view for live monitoring of currently executing jobs, viewing the history of completed jobs, and maintaining the schedule for future jobs.
  * 
  * @navhas n runningJobs 0..n Job
  * @stereotype "transient"
@@ -71,12 +73,6 @@ public class Jobs extends AbstractTransientBean {
 	public String getBizKey() {
 		return toString();
 
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof Jobs) && 
-					this.getBizId().equals(((Jobs) o).getBizId()));
 	}
 
 	/**

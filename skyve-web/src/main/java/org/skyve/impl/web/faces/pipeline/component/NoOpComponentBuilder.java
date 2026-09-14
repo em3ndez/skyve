@@ -13,6 +13,7 @@ import org.skyve.impl.metadata.view.container.TabPane;
 import org.skyve.impl.metadata.view.widget.Blurb;
 import org.skyve.impl.metadata.view.widget.Button;
 import org.skyve.impl.metadata.view.widget.Chart;
+import org.skyve.impl.metadata.view.widget.DialogButton;
 import org.skyve.impl.metadata.view.widget.DynamicImage;
 import org.skyve.impl.metadata.view.widget.Link;
 import org.skyve.impl.metadata.view.widget.MapDisplay;
@@ -23,9 +24,8 @@ import org.skyve.impl.metadata.view.widget.bound.ZoomIn;
 import org.skyve.impl.metadata.view.widget.bound.input.CheckBox;
 import org.skyve.impl.metadata.view.widget.bound.input.ColourPicker;
 import org.skyve.impl.metadata.view.widget.bound.input.Combo;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentImage;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentLink;
 import org.skyve.impl.metadata.view.widget.bound.input.ContentSignature;
+import org.skyve.impl.metadata.view.widget.bound.input.ContentUpload;
 import org.skyve.impl.metadata.view.widget.bound.input.Geometry;
 import org.skyve.impl.metadata.view.widget.bound.input.GeometryMap;
 import org.skyve.impl.metadata.view.widget.bound.input.HTML;
@@ -52,6 +52,8 @@ import org.skyve.metadata.view.model.list.ListModel;
 import org.skyve.metadata.view.widget.FilterParameter;
 import org.skyve.metadata.view.widget.bound.Parameter;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import jakarta.faces.component.UIComponent;
 
 public class NoOpComponentBuilder extends ComponentBuilder {
@@ -111,6 +113,23 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 
 	@Override
 	public UIComponent spacer(UIComponent component, Spacer spacer) {
+		return component;
+	}
+
+	/**
+	 * Leaves dialog-button construction unchanged.
+	 *
+	 * @param component the current component
+	 * @param label raw button label and nullable escape flag
+	 * @param button dialog-button metadata
+	 * @param formDisabledConditionName optional form-level disabled condition
+	 * @return the original component
+	 */
+	@Override
+	public UIComponent dialogButton(UIComponent component,
+										EscapableText label,
+										DialogButton button,
+										String formDisabledConditionName) {
 		return component;
 	}
 
@@ -197,12 +216,12 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 	}
 
 	@Override
-	public UIComponent dataGrid(UIComponent component, String dataWidgetVar, boolean ordered, String title, DataGrid grid) {
+	public UIComponent dataGrid(UIComponent component, String dataWidgetVar, boolean ordered, DataGrid grid) {
 		return component;
 	}
 
 	@Override
-	public UIComponent dataRepeater(UIComponent component, String dataWidgetVar, String title, DataRepeater repeater) {
+	public UIComponent dataRepeater(UIComponent component, String dataWidgetVar, DataRepeater repeater) {
 		return component;
 	}
 
@@ -221,7 +240,9 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 	}
 
 	@Override
-	public UIComponent addedDataGridBoundColumn(UIComponent component, UIComponent current) {
+	public UIComponent addedDataGridBoundColumn(UIComponent component,
+													UIComponent current,
+													HorizontalAlignment alignment) {
 		return component;
 	}
 
@@ -273,7 +294,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 											Geometry geometry,
 											String formDisabledConditionName,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											HorizontalAlignment textAlignment) {
 		return component;
 	}
@@ -283,7 +304,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 												GeometryMap geometry,
 												String formDisabledConditionName,
 												String title,
-												boolean required) {
+												@Nullable String requiredMessage) {
 		return component;
 	}
 	
@@ -300,8 +321,8 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 									String uxui,
 									ListModel<Bean> model,
 									Document owningDocument,
-									String title,
 									ListGrid listGrid,
+									String stickyHeaderAnchorSelector,
 									boolean aggregateQuery) {
 		return component;
 	}
@@ -319,16 +340,28 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 										ListModel<Bean> model,
 										List<FilterParameter> filterParameters,
 										List<Parameter> parameters,
-										String title,
 										boolean showColumnHeaders,
 										boolean showGrid) {
 		return component;
 	}
 
+	/**
+	 * Leaves list-membership caption construction unchanged for no-op builders.
+	 *
+	 * @param component the existing wrapper component
+	 * @param candidatesHeading raw candidates-list heading and nullable escape flag;
+	 *        {@code null} and {@code Boolean.TRUE} escape, while {@code Boolean.FALSE}
+	 *        allows trusted markup
+	 * @param membersHeading raw members-list heading and nullable escape flag;
+	 *        {@code null} and {@code Boolean.TRUE} escape, while {@code Boolean.FALSE}
+	 *        allows trusted markup
+	 * @param membership the list-membership metadata
+	 * @return {@code component} unchanged
+	 */
 	@Override
 	public EventSourceComponent listMembership(EventSourceComponent component,
-												String candidatesHeading,
-												String membersHeading,
+												EscapableText candidatesHeading,
+												EscapableText membersHeading,
 												ListMembership membership) {
 		return component;
 	}
@@ -339,7 +372,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 											CheckBox checkBox,
 											String formDisabledConditionName,
 											String title,
-											boolean required) {
+											@Nullable String requiredMessage) {
 		return component;
 	}
 
@@ -349,7 +382,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 												ColourPicker colour,
 												String formDisabledConditionName,
 												String title,
-												boolean required,
+												@Nullable String requiredMessage,
 												HorizontalAlignment textAlignment) {
 		return component;
 	}
@@ -360,28 +393,20 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 										Combo combo,
 										String formDisabledConditionName,
 										String title,
-										boolean required) {
+										@Nullable String requiredMessage) {
 		return component;
 	}
 
 	@Override
-	public UIComponent contentImage(UIComponent component,
-										String dataWidgetVar,
-										ContentImage image,
-										String formDisabledConditionName,
-										String title,
-										boolean required) {
-		return component;
-	}
-
-	@Override
-	public UIComponent contentLink(UIComponent component,
-									String dataWidgetVar,
-									ContentLink link,
-									String formDisabledConditionName,
-									String title,
-									boolean required,
-									HorizontalAlignment textAlignment) {
+	public @Nullable UIComponent content(@Nullable UIComponent component,
+											@Nullable String dataWidgetVar,
+											@Nonnull ContentUpload content,
+											@Nullable String formDisabledConditionName,
+											@Nullable String title,
+											@Nullable String requiredMessage,
+											@Nullable HorizontalAlignment textAlignment,
+											boolean formContext,
+											boolean imageUpload) {
 		return component;
 	}
 
@@ -391,7 +416,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 												ContentSignature signature,
 												String formDisabledConditionName,
 												String title,
-												boolean required) {
+												@Nullable String requiredMessage) {
 		return component;
 	}
 
@@ -401,7 +426,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 								HTML html,
 								String formDisabledConditionName,
 								String title,
-								boolean required) {
+								@Nullable String requiredMessage) {
 		return component;
 	}
 
@@ -411,7 +436,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 													LookupDescription lookup,
 													String formDisabledConditionName,
 													String title,
-													boolean required,
+													@Nullable String requiredMessage,
 													HorizontalAlignment textAlignment,
 													String displayBinding,
 													QueryDefinition query) {
@@ -424,7 +449,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 											Password password,
 											String formDisabledConditionName,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											HorizontalAlignment textAlignment) {
 		return component;
 	}
@@ -434,7 +459,8 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 										String dataWidgetVar,
 										Radio radio,
 										String formDisabledConditionName,
-										String title, boolean required) {
+										String title,
+										@Nullable String requiredMessage) {
 		return component;
 	}
 
@@ -444,7 +470,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 											RichText text,
 											String formDisabledConditionName,
 											String title,
-											boolean required) {
+											@Nullable String requiredMessage) {
 		return component;
 	}
 
@@ -454,7 +480,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 											Spinner spinner,
 											String formDisabledConditionName,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											HorizontalAlignment textAlignment,
 											jakarta.faces.convert.Converter<?> facesConverter) {
 		return component;
@@ -466,7 +492,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 											Slider spinner,
 											String formDisabledConditionName,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											jakarta.faces.convert.Converter<?> facesConverter) {
 		return component;
 	}
@@ -477,7 +503,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 											TextArea text,
 											String formDisabledConditionName,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											HorizontalAlignment textAlignment,
 											Integer length) {
 		return component;
@@ -489,7 +515,7 @@ public class NoOpComponentBuilder extends ComponentBuilder {
 										TextField text,
 										String formDisabledConditionName,
 										String title,
-										boolean required,
+										@Nullable String requiredMessage,
 										HorizontalAlignment textAlignment,
 										Integer length,
 										Converter<?> converter,

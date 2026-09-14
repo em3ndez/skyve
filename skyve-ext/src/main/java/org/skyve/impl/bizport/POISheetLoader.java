@@ -1,7 +1,6 @@
 package org.skyve.impl.bizport;
 
 import java.io.InputStream;
-import java.util.ArrayList;
 import java.util.Date;
 import java.util.TreeMap;
 
@@ -17,8 +16,11 @@ import org.skyve.domain.messages.DomainException;
 import org.skyve.domain.messages.UploadException;
 import org.skyve.domain.types.DateTime;
 import org.skyve.domain.types.converters.Converter;
-import org.skyve.util.Util;
 
+/**
+ * {@link AbstractDataFileLoader} implementation that reads data from an
+ * Apache POI {@link org.apache.poi.ss.usermodel.Sheet}.
+ */
 public class POISheetLoader extends AbstractDataFileLoader {
 
 	private Workbook workbook;
@@ -59,9 +61,6 @@ public class POISheetLoader extends AbstractDataFileLoader {
 		this.dataIndex = 0;
 		this.fieldIndex = 0;
 		this.row = sheet.getRow(dataIndex);
-
-		this.fields = new ArrayList<>();
-		this.results = new ArrayList<>();
 	}
 
 	/**
@@ -127,11 +126,11 @@ public class POISheetLoader extends AbstractDataFileLoader {
 				field.setIndex(Integer.valueOf(0));
 			}
 			String val = getStringFieldValue(field.getIndex().intValue(), true);
-			if (val != null && val.trim().length() > 0) {
+			if (val != null && (! val.trim().isEmpty())) {
 				foundNonEmpty = true;
 				break;
 			} else if(debugMode){
-				Util.LOGGER.info(getWhere(field.getIndex().intValue()) + " No value was found at this location.");
+				LOGGER.info("{} No value was found at this location.", getWhere(field.getIndex().intValue()));
 			}
 		}
 
@@ -163,7 +162,7 @@ public class POISheetLoader extends AbstractDataFileLoader {
 			if (cell != null) {
 				//handle empty string more robustly
 				String raw = getStringValueFromCell(col, true);
-				if(raw==null || raw.trim().length()==0){
+				if ((raw == null) || raw.trim().isEmpty()){
 					if (emptyAsZero) {
 						result = Double.valueOf(0);
 					} else {
@@ -198,6 +197,7 @@ public class POISheetLoader extends AbstractDataFileLoader {
 	 * @param col
 	 * @return The String Value of the cell
 	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private String getStringValueFromCell(int col, boolean blankAsNull) {
 		String result = null;
 

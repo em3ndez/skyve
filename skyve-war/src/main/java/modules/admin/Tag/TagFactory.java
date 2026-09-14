@@ -13,11 +13,18 @@ import modules.admin.domain.Contact;
 import modules.admin.domain.Tag;
 
 @SkyveFactory(excludedActions = { BulkDocumentAction.class, PerformCombination.class, PrepareExplanation.class, TagAll.class })
+/**
+ * Creates fixture instances for admin {@link Tag} tests.
+ */
 public class TagFactory {
-
+	/**
+	 * Builds a CRUD fixture with upload defaults pointing at {@link Contact}.
+	 *
+	 * @return A fixture suitable for standard CRUD tests.
+	 */
 	@SkyveFixture(types = FixtureType.crud)
 	public static Tag crudInstance() {
-		Tag tag = new DataBuilder().build(Tag.MODULE_NAME, Tag.DOCUMENT_NAME);
+		Tag tag = new DataBuilder().factoryBuild(Tag.MODULE_NAME, Tag.DOCUMENT_NAME);
 
 		tag.setUploadModuleName(Contact.MODULE_NAME);
 		tag.setUploadDocumentName(Contact.DOCUMENT_NAME);
@@ -25,10 +32,15 @@ public class TagFactory {
 		return tag;
 	}
 
+	/**
+	 * Builds a SAIL fixture with optional action/upload fields cleared.
+	 *
+	 * @return A fixture tailored for SAIL tests.
+	 */
 	@SuppressWarnings("static-method")
 	@SkyveFixture(types = FixtureType.sail)
 	public Tag sail() {
-		Tag result = new DataBuilder().build(Tag.MODULE_NAME, Tag.DOCUMENT_NAME);
+		Tag result = crudInstance();
 
 		result.setOperandTag(null);
 

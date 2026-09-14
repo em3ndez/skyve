@@ -14,6 +14,8 @@ import org.skyve.impl.domain.AbstractPersistentBean;
 
 /**
  * User Role
+ * <br/>
+ * Individual role assignment to a user, providing specific permissions beyond group membership.
  * 
  * @stereotype "persistent child"
  */
@@ -78,12 +80,6 @@ public class UserRole extends AbstractPersistentBean implements ChildBean<UserEx
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof UserRole) && 
-					this.getBizId().equals(((UserRole) o).getBizId()));
 	}
 
 	/**

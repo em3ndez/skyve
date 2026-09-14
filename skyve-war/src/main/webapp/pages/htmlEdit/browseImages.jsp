@@ -1,3 +1,5 @@
+<%@page import="org.skyve.metadata.view.TextOutput.Sanitisation"%>
+<%@page import="org.skyve.util.OWASP"%>
 <%@page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
 <%@page import="java.security.Principal"%>
 <%@page import="java.util.Locale"%>
@@ -8,13 +10,13 @@
 <%@page import="org.skyve.impl.web.WebUtil"%>
 <%
 	String basePath = Util.getSkyveContextUrl() + "/";
-	boolean mobile = UserAgent.getType(request).isMobile();
+	boolean mobile = UserAgent.detectType(request).isMobile();
 	Principal p = request.getUserPrincipal();
 	User user = WebUtil.processUserPrincipalForRequest(request, (p == null) ? null : p.getName());
 	Locale locale = (user == null) ? request.getLocale() : user.getLocale();
 %>
 <!DOCTYPE html>
-<html dir="<%=Util.isRTL(locale) ? "rtl" : "ltr"%>">
+<html dir="<%=Util.isRTL(locale) ? "rtl" : "ltr"%>" lang="<%=locale.getLanguage()%>" xml:lang="<%=locale.getLanguage()%>">
 	<head>
 		<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
 		<meta http-equiv="Content-Type" CONTENT="text/html; CHARSET=utf-8">
@@ -52,7 +54,7 @@
 			        {name:"name"}
 			    ],
 				recordClick: function(viewer, tile, record) {
-					window.opener.CKEDITOR.tools.callFunction(<%=request.getParameter("CKEditorFuncNum")%>, 'images/' + record.image); //imageURLPrefix + record.image);
+					window.opener.CKEDITOR.tools.callFunction(<%=OWASP.sanitise(Sanitisation.text, request.getParameter("CKEditorFuncNum"))%>, 'images/' + record.image); //imageURLPrefix + record.image);
 					window.close();
 				}
 			});

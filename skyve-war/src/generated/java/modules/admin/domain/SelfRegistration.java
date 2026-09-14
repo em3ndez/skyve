@@ -17,6 +17,8 @@ import org.skyve.impl.domain.types.jaxb.DateTimeMapper;
 
 /**
  * Self Registration
+ * <br/>
+ * Document used for self-registration of users into the system with email validation, password confirmation, CAPTCHA integration, bot detection, geo-IP filtering, and breached password checking for secure account creation.
  * 
  * @navhas n user 1 User
  * @stereotype "transient"
@@ -158,12 +160,6 @@ public abstract class SelfRegistration extends AbstractTransientBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof SelfRegistration) && 
-					this.getBizId().equals(((SelfRegistration) o).getBizId()));
 	}
 
 	/**

@@ -1,15 +1,14 @@
 package org.skyve.impl.persistence.hibernate;
 
 import java.sql.ResultSet;
-import java.sql.SQLTimeoutException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 
-import org.hibernate.query.NativeQuery;
 import org.apache.commons.beanutils.DynaBean;
 import org.hibernate.Session;
+import org.hibernate.query.NativeQuery;
 import org.hibernate.type.BigDecimalType;
 import org.hibernate.type.BooleanType;
 import org.hibernate.type.DateType;
@@ -33,37 +32,42 @@ import org.skyve.impl.persistence.AbstractSQL;
 import org.skyve.impl.persistence.DynaIterable;
 import org.skyve.impl.persistence.NamedParameterPreparedStatement;
 import org.skyve.impl.persistence.hibernate.dialect.SkyveDialect;
+import org.skyve.impl.persistence.hibernate.dialect.SkyveDialect.RDBMS;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.metadata.model.Attribute.AttributeType;
 import org.skyve.metadata.model.document.Document;
 import org.skyve.persistence.AutoClosingIterable;
 
+import jakarta.annotation.Nonnull;
 import jakarta.persistence.QueryTimeoutException;
 
 class HibernateSQL extends AbstractSQL {
 	private AbstractHibernatePersistence persistence;
 	
-	HibernateSQL(String moduleName,
-					String documentName,
-					String query,
-					AbstractHibernatePersistence persistence) {
+	HibernateSQL(@Nonnull String moduleName,
+					@Nonnull String documentName,
+					@Nonnull String query,
+					@Nonnull AbstractHibernatePersistence persistence) {
 		super(moduleName, documentName, query);
 		this.persistence = persistence;
 	}
 
-	HibernateSQL(Document document,
-					String query,
-					AbstractHibernatePersistence persistence) {
+	HibernateSQL(@Nonnull Document document,
+					@Nonnull String query,
+					@Nonnull AbstractHibernatePersistence persistence) {
 		super(document, query);
 		this.persistence = persistence;
 	}
 
-	HibernateSQL(String query,
-					AbstractHibernatePersistence persistence) {
+	HibernateSQL(@Nonnull String query,
+					@Nonnull AbstractHibernatePersistence persistence) {
 		super(query);
 		this.persistence = persistence;
 	}
 
+	/**
+	 * {@inheritDoc}
+	 */
 	@Override
 	public <T extends Bean> List<T> beanResults() {
 		String moduleName = getModuleName();
@@ -77,7 +81,7 @@ class HibernateSQL extends AbstractSQL {
 			NativeQuery<T> query = createQueryFromSQL();
 			return query.addEntity(entityName).list();
 		}
-		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException | SQLTimeoutException e) {
+		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException e) {
 			throw new TimeoutException(e);
 		}
 		catch (SkyveException e) {
@@ -88,6 +92,9 @@ class HibernateSQL extends AbstractSQL {
 		}
 	}
 
+	/**
+	 * Performs beanIterable.
+	 */
 	@Override
 	@SuppressWarnings("resource")
 	public <T extends Bean> AutoClosingIterable<T> beanIterable() {
@@ -101,7 +108,7 @@ class HibernateSQL extends AbstractSQL {
 			String entityName = persistence.getDocumentEntityName(moduleName, documentName);
 			return new HibernateAutoClosingIterable<>(createQueryFromSQL().addEntity(entityName).scroll(), false, false);
 		}
-		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException | SQLTimeoutException e) {
+		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException e) {
 			throw new TimeoutException(e);
 		}
 		catch (SkyveException e) {
@@ -112,6 +119,9 @@ class HibernateSQL extends AbstractSQL {
 		}
 	}
 
+	/**
+	 * {@inheritDoc}
+	 */
 	@Override
 	public <T> List<T> scalarResults(Class<T> type) {
 		try {
@@ -122,7 +132,7 @@ class HibernateSQL extends AbstractSQL {
 			}
 			return results;
 		}
-		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException | SQLTimeoutException e) {
+		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException e) {
 			throw new TimeoutException(e);
 		}
 		catch (SkyveException e) {
@@ -133,13 +143,16 @@ class HibernateSQL extends AbstractSQL {
 		}
 	}
 
+	/**
+	 * Performs scalarIterable.
+	 */
 	@Override
 	@SuppressWarnings("resource")
 	public <T> AutoClosingIterable<T> scalarIterable(Class<T> type) {
 		try {
 			return new HibernateAutoClosingIterable<>(createQueryFromSQL().scroll(), true, false);
 		}
-		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException | SQLTimeoutException e) {
+		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException e) {
 			throw new TimeoutException(e);
 		}
 		catch (SkyveException e) {
@@ -150,6 +163,9 @@ class HibernateSQL extends AbstractSQL {
 		}
 	}
 
+	/**
+	 * Performs tupleResults.
+	 */
 	@Override
 	@SuppressWarnings("unchecked")
 	public List<Object[]> tupleResults() {
@@ -160,7 +176,7 @@ class HibernateSQL extends AbstractSQL {
 			}
 			return (List<Object[]>) results;
 		}
-		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException | SQLTimeoutException e) {
+		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException e) {
 			throw new TimeoutException(e);
 		}
 		catch (SkyveException e) {
@@ -171,13 +187,16 @@ class HibernateSQL extends AbstractSQL {
 		}
 	}
 
+	/**
+	 * Performs tupleIterable.
+	 */
 	@Override
 	@SuppressWarnings("resource")
 	public AutoClosingIterable<Object[]> tupleIterable() {
 		try {
 			return new HibernateAutoClosingIterable<>(createQueryFromSQL().scroll(), false, true);
 		}
-		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException | SQLTimeoutException e) {
+		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException e) {
 			throw new TimeoutException(e);
 		}
 		catch (SkyveException e) {
@@ -188,6 +207,9 @@ class HibernateSQL extends AbstractSQL {
 		}
 	}
 
+	/**
+	 * {@inheritDoc}
+	 */
 	@Override
 	public List<DynaBean> dynaResults() {
 		try {
@@ -198,9 +220,6 @@ class HibernateSQL extends AbstractSQL {
 				}
 			}
 		}
-		catch (TimeoutException e) {
-			throw e;
-		}
 		catch (SkyveException e) {
 			throw e;
 		}
@@ -209,15 +228,15 @@ class HibernateSQL extends AbstractSQL {
 		}
 	}
 
+	/**
+	 * Performs dynaIterable.
+	 */
 	@Override
 	@SuppressWarnings("resource")
 	public AutoClosingIterable<DynaBean> dynaIterable() {
 		try {
 			return new DynaIterable(persistence.getConnection(), this, UtilImpl.DATA_STORE, AbstractHibernatePersistence.getDialect());
 		}
-		catch (TimeoutException e) {
-			throw e;
-		}
 		catch (SkyveException e) {
 			throw e;
 		}
@@ -226,13 +245,16 @@ class HibernateSQL extends AbstractSQL {
 		}
 	}
 
+	/**
+	 * {@inheritDoc}
+	 */
 	@Override
 	public int execute() {
 		try {
 			NativeQuery<?> query = createQueryFromSQL();
 			return query.executeUpdate();
 		}
-		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException | SQLTimeoutException e) {
+		catch (QueryTimeoutException | org.hibernate.QueryTimeoutException e) {
 			throw new TimeoutException(e);
 		}
 		catch (SkyveException e) {
@@ -243,8 +265,8 @@ class HibernateSQL extends AbstractSQL {
 		}
 	}
 	
-	@SuppressWarnings("resource")
-	private <T> NativeQuery<T> createQueryFromSQL() throws Exception {
+	@SuppressWarnings({"resource", "java:S3776", "java:S6541"}) // complexity OK
+	private @Nonnull <T> NativeQuery<T> createQueryFromSQL() {
 		Session session = persistence.getSession();
 		NativeQuery<T> result = session.createNativeQuery(toQueryString());
 		// This ensures that the second level (shared) cache is not invalidated.
@@ -254,11 +276,14 @@ class HibernateSQL extends AbstractSQL {
 		
 		HibernateQueryDelegate.timeoutQuery(result, timeoutInSeconds, persistence.isAsyncThread());
 		
+		// Always use streaming JDBC results to avoid out of memory errors on large result sets
+		result.setFetchSize(RDBMS.mysql.equals(AbstractHibernatePersistence.getDialect().getRDBMS()) ? Integer.MIN_VALUE : 1000);
+
 		for (String name : getParameterNames()) {
 			Object value = getParameter(name);
 			
-			if (value instanceof Decimal) {
-				result.setParameter(name, ((Decimal) value).bigDecimalValue(), BigDecimalType.INSTANCE);
+			if (value instanceof Decimal decimal) {
+				result.setParameter(name, decimal.bigDecimalValue(), BigDecimalType.INSTANCE);
 				continue;
 			}
 			else if (value instanceof TimeOnly) {
@@ -273,20 +298,20 @@ class HibernateSQL extends AbstractSQL {
 				result.setParameter(name, new java.sql.Date(((Date) value).getTime()), DateType.INSTANCE);
 				continue;
 			}
-			else if (value instanceof OptimisticLock) {
-				result.setParameter(name, ((OptimisticLock) value).toString(), StringType.INSTANCE);
+			else if (value instanceof OptimisticLock lock) {
+				result.setParameter(name, lock.toString(), StringType.INSTANCE);
 				continue;
 			}
-			else if (value instanceof Enumeration) {
-				result.setParameter(name, ((Enumeration) value).toCode(), StringType.INSTANCE);
+			else if (value instanceof Enumeration enumeration) {
+				result.setParameter(name, enumeration.toCode(), StringType.INSTANCE);
 				continue;
 			}
 			
 			AttributeType type = getParameterType(name);
 
 			if (AttributeType.bool.equals(type)) {
-				if (value instanceof Collection) {
-					result.setParameterList(name, (Collection<?>) value, BooleanType.INSTANCE);
+				if (value instanceof Collection<?> collection) {
+					result.setParameterList(name, collection, BooleanType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					result.setParameterList(name, (Object[]) value, BooleanType.INSTANCE);
@@ -299,8 +324,8 @@ class HibernateSQL extends AbstractSQL {
 						AttributeType.content.equals(type) ||
 						AttributeType.image.equals(type) ||
 						AttributeType.text.equals(type)) {
-				if (value instanceof Collection) {
-					result.setParameterList(name, (Collection<?>) value, StringType.INSTANCE);
+				if (value instanceof Collection<?> collection) {
+					result.setParameterList(name, collection, StringType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					result.setParameterList(name, (Object[]) value, StringType.INSTANCE);
@@ -310,28 +335,28 @@ class HibernateSQL extends AbstractSQL {
 				}
 			}
 			else if (AttributeType.enumeration.equals(type)) {
-				if (value instanceof Collection) {
+				if (value instanceof Collection<?> collection) {
 					List<Object> param = new ArrayList<>();
-					for (Object object : (Collection<?>) value) {
-						param.add((object instanceof Enumeration) ? ((Enumeration) object).toCode() : object);
+					for (Object object : collection) {
+						param.add((object instanceof Enumeration enumeration) ? enumeration.toCode() : object);
 					}
 					result.setParameterList(name, param, StringType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					List<Object> param = new ArrayList<>();
 					for (Object object : (Object[]) value) {
-						param.add((object instanceof Enumeration) ? ((Enumeration) object).toCode() : object);
+						param.add((object instanceof Enumeration enumeration) ? enumeration.toCode() : object);
 					}
 					result.setParameterList(name, param, StringType.INSTANCE);
 				}
 				else {
-					result.setParameter(name, (value instanceof Enumeration) ? ((Enumeration) value).toCode() : value, StringType.INSTANCE);
+					result.setParameter(name, (value instanceof Enumeration enumeration) ? enumeration.toCode() : value, StringType.INSTANCE);
 				}
 			}
 			else if (AttributeType.markup.equals(type) ||
 						AttributeType.memo.equals(type)) {
-				if (value instanceof Collection) {
-					result.setParameterList(name, (Collection<?>) value, TextType.INSTANCE);
+				if (value instanceof Collection<?> collection) {
+					result.setParameterList(name, collection, TextType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					result.setParameterList(name, (Object[]) value, TextType.INSTANCE);
@@ -341,8 +366,8 @@ class HibernateSQL extends AbstractSQL {
 				}
 			}
 			else if (AttributeType.date.equals(type)) {
-				if (value instanceof Collection) {
-					result.setParameterList(name, (Collection<?>) value, DateType.INSTANCE);
+				if (value instanceof Collection<?> collection) {
+					result.setParameterList(name, collection, DateType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					result.setParameterList(name, (Object[]) value, DateType.INSTANCE);
@@ -353,8 +378,8 @@ class HibernateSQL extends AbstractSQL {
 			}
 			else if (AttributeType.dateTime.equals(type) ||
 						AttributeType.timestamp.equals(type)) {
-				if (value instanceof Collection) {
-					result.setParameterList(name, (Collection<?>) value, TimestampType.INSTANCE);
+				if (value instanceof Collection<?> collection) {
+					result.setParameterList(name, collection, TimestampType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					result.setParameterList(name, (Object[]) value, TimestampType.INSTANCE);
@@ -366,22 +391,22 @@ class HibernateSQL extends AbstractSQL {
 			else if (AttributeType.decimal10.equals(type) ||
 						AttributeType.decimal2.equals(type) ||
 						AttributeType.decimal5.equals(type)) {
-				if (value instanceof Collection) {
+				if (value instanceof Collection<?> collection) {
 					List<Object> param = new ArrayList<>();
-					for (Object object : (Collection<?>) value) {
-						param.add((object instanceof Decimal) ? ((Decimal) object).bigDecimalValue() : object);
+					for (Object object : collection) {
+						param.add((object instanceof Decimal decimal) ? decimal.bigDecimalValue() : object);
 					}
 					result.setParameterList(name, param, BigDecimalType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					List<Object> param = new ArrayList<>();
 					for (Object object : (Object[]) value) {
-						param.add((object instanceof Decimal) ? ((Decimal) object).bigDecimalValue() : object);
+						param.add((object instanceof Decimal decimal) ? decimal.bigDecimalValue() : object);
 					}
 					result.setParameterList(name, param, BigDecimalType.INSTANCE);
 				}
 				else {
-					result.setParameter(name, (value instanceof Decimal) ? ((Decimal) value).bigDecimalValue() : value, BigDecimalType.INSTANCE);
+					result.setParameter(name, (value instanceof Decimal decimal) ? decimal.bigDecimalValue() : value, BigDecimalType.INSTANCE);
 				}
 			}
 			else if (AttributeType.geometry.equals(type)) {
@@ -390,9 +415,9 @@ class HibernateSQL extends AbstractSQL {
 					result.setParameter(name, value, dialect.getGeometryType());
 				}
 				else {
-					if (value instanceof Collection) {
+					if (value instanceof Collection<?> collection) {
 						List<Object> param = new ArrayList<>();
-						for (Object object : (Collection<?>) value) {
+						for (Object object : collection) {
 							param.add(object);
 						}
 						result.setParameterList(name, param, dialect.getGeometryType());
@@ -410,8 +435,8 @@ class HibernateSQL extends AbstractSQL {
 				}
 			}
 			else if (AttributeType.integer.equals(type)) {
-				if (value instanceof Collection) {
-					result.setParameterList(name, (Collection<?>) value, IntegerType.INSTANCE);
+				if (value instanceof Collection<?> collection) {
+					result.setParameterList(name, collection, IntegerType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					result.setParameterList(name, (Object[]) value, IntegerType.INSTANCE);
@@ -421,8 +446,8 @@ class HibernateSQL extends AbstractSQL {
 				}
 			}
 			else if (AttributeType.longInteger.equals(type)) {
-				if (value instanceof Collection) {
-					result.setParameterList(name, (Collection<?>) value, LongType.INSTANCE);
+				if (value instanceof Collection<?> collection) {
+					result.setParameterList(name, collection, LongType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					result.setParameterList(name, (Object[]) value, LongType.INSTANCE);
@@ -432,8 +457,8 @@ class HibernateSQL extends AbstractSQL {
 				}
 			}
 			else if (AttributeType.time.equals(type)) {
-				if (value instanceof Collection) {
-					result.setParameterList(name, (Collection<?>) value, TimeType.INSTANCE);
+				if (value instanceof Collection<?> collection) {
+					result.setParameterList(name, collection, TimeType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					result.setParameterList(name, (Object[]) value, TimeType.INSTANCE);
@@ -444,22 +469,22 @@ class HibernateSQL extends AbstractSQL {
 			}
 			else if (AttributeType.association.equals(type) ||
 						AttributeType.id.equals(type)) {
-				if (value instanceof Collection) {
+				if (value instanceof Collection<?> collection) {
 					List<Object> param = new ArrayList<>();
-					for (Object object : (Collection<?>) value) {
-						param.add((object instanceof Bean) ? ((Bean) object).getBizId() : object);
+					for (Object object : collection) {
+						param.add((object instanceof Bean bean) ? bean.getBizId() : object);
 					}
 					result.setParameterList(name, param, StringType.INSTANCE);
 				}
 				else if ((value != null) && value.getClass().isArray()) {
 					List<Object> param = new ArrayList<>();
 					for (Object object : (Object[]) value) {
-						param.add((object instanceof Bean) ? ((Bean) object).getBizId() : object);
+						param.add((object instanceof Bean bean) ? bean.getBizId() : object);
 					}
 					result.setParameterList(name, param, StringType.INSTANCE);
 				}
 				else {
-					result.setParameter(name, (value instanceof Bean) ? ((Bean) value).getBizId() : value, StringType.INSTANCE);
+					result.setParameter(name, (value instanceof Bean bean) ? bean.getBizId() : value, StringType.INSTANCE);
 				}
 			}
 			else {

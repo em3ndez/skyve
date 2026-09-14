@@ -2,6 +2,7 @@ package org.skyve.impl.web.service.smartclient;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 
 import org.skyve.EXT;
@@ -9,10 +10,12 @@ import org.skyve.content.MimeType;
 import org.skyve.domain.messages.DomainException;
 import org.skyve.domain.messages.MessageException;
 import org.skyve.domain.messages.SessionEndedException;
+import org.skyve.impl.metadata.MetadataIconResolver;
+import org.skyve.impl.metadata.MetadataIconResolver.ResolvedIcon;
 import org.skyve.impl.persistence.AbstractPersistence;
-import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.AbstractWebContext;
 import org.skyve.impl.web.UserAgent;
+import org.skyve.impl.web.WebErrorUtil;
 import org.skyve.impl.web.WebUtil;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.document.Document;
@@ -25,7 +28,10 @@ import org.skyve.metadata.view.View;
 import org.skyve.metadata.view.View.ViewType;
 import org.skyve.util.OWASP;
 import org.skyve.util.Util;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
 
+import jakarta.annotation.Nonnull;
 import jakarta.servlet.ServletConfig;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
@@ -33,13 +39,21 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
- * Generates views based on bizhub's XML view spec.
+ * Generates SmartClient JavaScript for edit and create views.
  */
 public class SmartClientGeneratorServlet extends HttpServlet {
 	private static final long serialVersionUID = 1L;
 
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(SmartClientGeneratorServlet.class);
+
 	private static Class<? extends SmartClientViewRenderer> RENDERER_CLASS = null;
 	
+	/**
+	 * Initialises the optional SmartClient renderer override from servlet configuration.
+	 *
+	 * @param config servlet configuration
+	 * @throws ServletException if the configured renderer class cannot be loaded
+	 */
 	@Override
 	@SuppressWarnings("unchecked")
 	public void init(ServletConfig config) throws ServletException {
@@ -56,6 +70,18 @@ public class SmartClientGeneratorServlet extends HttpServlet {
 		}
 	}
 	
+	/**
+	 * Creates the renderer used to generate a SmartClient view script.
+	 *
+	 * @param user active user
+	 * @param module module containing the document
+	 * @param document document metadata to render
+	 * @param view view metadata to render
+	 * @param uxui active UX/UI profile name
+	 * @param noCreateView whether create-view container scaffolding should be skipped
+	 * @return the configured renderer
+	 * @throws DomainException if the configured renderer cannot be instantiated
+	 */
 	public static SmartClientViewRenderer newRenderer(User user, Module module, Document document, View view, String uxui, boolean noCreateView) {
 		if (RENDERER_CLASS == null) {
 			return new SmartClientViewRenderer(user, module, document, view, uxui, noCreateView);
@@ -69,15 +95,25 @@ public class SmartClientGeneratorServlet extends HttpServlet {
 		}
 	}
 
+	/**
+	 * Handles the SmartClient view-generation request.
+	 *
+	 * @param request inbound HTTP request
+	 * @param response outbound HTTP response
+	 * @throws ServletException if request validation fails
+	 * @throws IOException if the response cannot be written
+	 */
 	@Override
+	@SuppressWarnings("java:S1989") // there exists JavaEE error pages
 	protected void doGet(HttpServletRequest request,
 							HttpServletResponse response)
 	throws ServletException, IOException {
-		UtilImpl.LOGGER.info("SmartClient Generate - get....");
+		LOGGER.info("SmartClient Generate - get....");
 		processRequest(request, response);
 	}
 
 	// NB - Never throw ServletException as this will halt the SmartClient Relogin flow.
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	private static void processRequest(HttpServletRequest request,
 										HttpServletResponse response)
 	throws IOException {
@@ -85,7 +121,7 @@ public class SmartClientGeneratorServlet extends HttpServlet {
 		String documentName = OWASP.sanitise(Sanitisation.text, Util.processStringValue(request.getParameter(AbstractWebContext.DOCUMENT_NAME)));
 
 		response.setContentType(MimeType.javascript.toString());
-		response.setCharacterEncoding(Util.UTF8);
+		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 		response.addHeader("Cache-control", "private,no-cache,no-store"); // never
 		response.addDateHeader("Expires", 0); // never
 		try (PrintWriter pw = response.getWriter()) {
@@ -107,9 +143,9 @@ public class SmartClientGeneratorServlet extends HttpServlet {
 					throw new ServletException("No document name in the request.");
 				}
 
-				UxUi uxui = UserAgent.getUxUi(request);
+				UxUi uxui = UserAgent.getSelection(request).getUxUi();
 				String uxuiName = uxui.getName();
-				UtilImpl.LOGGER.info("UX/UI = " + uxuiName);
+				LOGGER.info("UX/UI = {}", uxuiName);
 
 				EXT.checkAccess(user, UserAccess.singular(moduleName, documentName), uxuiName);
 
@@ -118,23 +154,23 @@ public class SmartClientGeneratorServlet extends HttpServlet {
 				View editView = document.getView(uxuiName, customer, ViewType.edit.toString());
 				View createView = document.getView(uxuiName, customer, ViewType.create.toString());
 	
-				String editString = null;
-				String createString = null;
+				StringBuilder edit = null;
+				StringBuilder create = null;
 	
 				// create and edit view are the same - use edit view
 				if (ViewType.edit.toString().equals(createView.getName())) {
 					SmartClientViewRenderer renderer = newRenderer(user, module, document, editView, uxuiName, true);
 					renderer.visit();
-					editString = renderer.getCode().toString();
+					edit = renderer.getCode();
 				}
 				else {
 					SmartClientViewRenderer renderer = newRenderer(user, module, document, editView, uxuiName, false);
 					renderer.visit();
-					editString = renderer.getCode().toString();
+					edit = renderer.getCode();
 	
 					renderer = newRenderer(user, module, document, createView, uxuiName, false);
 					renderer.visit();
-					createString = renderer.getCode().toString();
+					create = renderer.getCode();
 				}
 	
 				pw.append(module.getName()).append('.').append(document.getName()).append(SmartClientWebContext.EDIT_ID_COUNTER).append("=0;");
@@ -143,106 +179,100 @@ public class SmartClientGeneratorServlet extends HttpServlet {
 				pw.append("var view=isc.EditView.create({width:'100%',height:'100%',title:'");
 				pw.append("',_mod:'").append(module.getName()).append("',_doc:'").append(document.getName());
 
-				String iconStyleClass = editView.getIconStyleClass();
-				if (iconStyleClass == null) {
-					iconStyleClass = document.getIconStyleClass();
-					if (iconStyleClass != null) {
-						pw.append("',_editFontIcon:'").append(OWASP.escapeJsString(iconStyleClass));
-					}
-					else {
-						String icon32 = editView.getIcon32x32RelativeFileName();
-						if (icon32 == null) {
-							icon32 = document.getIcon32x32RelativeFileName();
-							if (icon32 != null) {
-								pw.append("',_editIcon:'").append(OWASP.escapeJsString(icon32));
-							}
-						}
-						else { 
-							pw.append("',_editIcon:'").append(OWASP.escapeJsString(icon32));
-						}
-					}
-				}
-				else {
-					pw.append("',_editFontIcon:'").append(OWASP.escapeJsString(iconStyleClass));
-				}
+				ResolvedIcon icon = MetadataIconResolver.resolve(document, editView);
+				appendIcon(pw, "edit", icon);
 
 				String help = editView.getHelpRelativeFileName();
 				if (help != null) {
-					pw.append("',_editHelpFile:'").append(OWASP.escapeJsString(help));
+					pw.append("',_editHelpFile:'").append(OWASP.escapeJsStringWithHtmlFormatting(help));
 				}
 				else {
 					help = editView.getHelpURL();
 					if (help != null) {
-						pw.append("',_editHelpURL:'").append(OWASP.escapeJsString(help));
+						pw.append("',_editHelpURL:'").append(OWASP.escapeJsStringWithHtmlFormatting(help));
 					}
 				}
 
 				// create and edit view are not the same - add the create view icons and help stuff
-				iconStyleClass = createView.getIconStyleClass();
-				if (iconStyleClass == null) {
-					iconStyleClass = document.getIconStyleClass();
-					if (iconStyleClass != null) {
-						pw.append("',_createFontIcon:'").append(OWASP.escapeJsString(iconStyleClass));
-					}
-					else {
-						String icon32 = createView.getIcon32x32RelativeFileName();
-						if (icon32 == null) {
-							icon32 = document.getIcon32x32RelativeFileName();
-							if (icon32 != null) {
-								pw.append("',_createIcon:'").append(OWASP.escapeJsString(icon32));
-							}
-						}
-						else { 
-							pw.append("',_createIcon:'").append(OWASP.escapeJsString(icon32));
-						}
-					}
-				}
-				else {
-					pw.append("',_createFontIcon:'").append(OWASP.escapeJsString(iconStyleClass));
-				}
+				icon = MetadataIconResolver.resolve(document, createView);
+				appendIcon(pw, "create", icon);
 
 				help = createView.getHelpRelativeFileName();
 				if (help != null) {
-					pw.append("',_createHelpFile:'").append(OWASP.escapeJsString(help));
+					pw.append("',_createHelpFile:'").append(OWASP.escapeJsStringWithHtmlFormatting(help));
 				}
 				else {
 					help = createView.getHelpURL();
 					if (help != null) {
-						pw.append("',_createHelpURL:'").append(OWASP.escapeJsString(help));
+						pw.append("',_createHelpURL:'").append(OWASP.escapeJsStringWithHtmlFormatting(help));
 					}
 				}
 				
-				pw.append("',_singular:'").append(OWASP.escapeJsString(document.getLocalisedSingularAlias()));
+				pw.append("',_singular:'").append(OWASP.escapeJsStringWithHtmlFormatting(document.getLocalisedSingularAlias()));
 				pw.append("',_ecnt:").append(module.getName()).append('.').append(document.getName()).append("_ecnt");
 				pw.append(",_ccnt:").append(module.getName()).append('.').append(document.getName()).append("_ccnt});");
 
-				pw.append(editString);
-				if (createString != null) {
-					pw.append(createString);
+				Util.chunkCharsToWriter(edit, pw);
+				if (create != null) {
+					Util.chunkCharsToWriter(create, pw);
 				}
 	
 				pw.append("return view;};");
 			}
 			catch (Throwable t) {
-				t.printStackTrace();
 				persistence.rollback();
 	
 				pw.append("isc.warn('");
-				if (t instanceof MessageException) {
+				if (t instanceof MessageException messageException) {
 					SmartClientEditServlet.appendErrorText("Could not generate view.",
-															((MessageException) t).getMessages(),
+															messageException.getMessages(),
 															pw);
 					pw.append("');");
 				}
 				else {
-					pw.append("isc.warn('Could not generate views.  Please contact your system administrator.');");
+					String reference = WebErrorUtil.logUnexpectedAndGetReference(LOGGER, "SmartClient view generation failed for " + moduleName + "." + documentName, t);
+					appendUnexpectedWarning(reference, pw);
+					pw.append("');");
 				}
 			}
 			finally {
-				if (persistence != null) {
-					persistence.commit(true);
-				}
+				persistence.commit(true);
 			}
 		}
+	}
+
+	/**
+	 * Appends the SmartClient create/edit property for a resolved icon.
+	 *
+	 * @param writer target JavaScript writer
+	 * @param viewType create or edit property prefix
+	 * @param icon resolved icon metadata
+	 */
+	static void appendIcon(@Nonnull PrintWriter writer,
+							@Nonnull String viewType,
+							@Nonnull ResolvedIcon icon) {
+		String iconStyleClass = icon.iconStyleClass();
+		if (iconStyleClass != null) {
+			writer.append("',_").append(viewType).append("FontIcon:'")
+					.append(OWASP.escapeJsStringWithHtmlFormatting(iconStyleClass));
+		}
+		else {
+			String iconFileName = icon.iconFileName();
+			if (iconFileName != null) {
+				writer.append("',_").append(viewType).append("Icon:'")
+						.append(OWASP.escapeJsStringWithHtmlFormatting(iconFileName));
+			}
+		}
+	}
+
+	/**
+	 * Append a generic unexpected error message to the output, with a reference to the logs for more details.
+	 * 
+	 * @param reference The reference to the logs.
+	 * @param pw The PrintWriter to append to.
+	 */
+	static void appendUnexpectedWarning(String reference, PrintWriter pw) {
+		pw.append("Could not generate views. ");
+		pw.append(WebErrorUtil.escapeJsStringWithHtmlFormatting(WebErrorUtil.genericMessage(reference)));
 	}
 }

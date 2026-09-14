@@ -63,8 +63,10 @@ async function callRemoteCommand(commandName, paramsObj) {
 
 export default {
     props: {
-        module: String,
-        document: String,
+        owningModule: String,
+        owningDocument: String,
+        drivingModule: String,
+        drivingDocument: String,
         query: String,
         model: String,
         title: String,
@@ -112,6 +114,10 @@ export default {
         showSnap: {
             type: Boolean,
             default: true
+        },
+        stickyHeaderAnchorSelector: {
+            type: String,
+            default: null
         }
     },
     data() {
@@ -152,14 +158,17 @@ export default {
 
             // Support params for row right click context menu:
             selectedRow: null,
+            stickyHeaderTop: 0,
+            stickyHeaderRefreshTimeout: null,
+            stickyHeaderMenuRefreshHandler: null,
             menuModel: [
                 {
                     label: 'View Detail',
                     icon: 'pi pi-angle-right',
                     command: () => openDocInSameWindow({
                         bizId: this.selectedRow.bizId,
-                        module: this.module,
-                        document: this.document
+                        module: this.selectedRow.bizModule,
+                        document: this.selectedRow.bizDocument
                     })
                 },
                 {
@@ -167,8 +176,8 @@ export default {
                     icon: 'pi pi-external-link',
                     command: () => openDocInNewWindow({
                         bizId: this.selectedRow.bizId,
-                        module: this.module,
-                        document: this.document
+                        module: this.selectedRow.bizModule,
+                        document: this.selectedRow.bizDocument
                     })
                 }
             ],
@@ -262,15 +271,13 @@ export default {
             return visCols;
         },
         dataSource() {
-
             if (this.query) {
-                return `${this.module}_${this.query}`;
+                return `${this.owningModule}_${this.query}`;
             } else if (this.model) {
-                return `${this.module}_${this.document}__${this.model}`;
+                return `${this.owningModule}_${this.owningDocument}__${this.model}`;
             } else {
-                return `${this.module}_${this.document}`;
+                return `${this.owningModule}_${this.drivingDocument}`;
             }
-
         },
         fetchFormData() {
             // Constuct the FormData object that will be POSTed
@@ -381,6 +388,15 @@ export default {
                 "summarySelection": this.summarySelection,
                 "sortColumns": this.sortColumns,
                 "columnWidths": this.columnWidths
+            };
+        },
+        stickyHeaderStyle() {
+            if (!this.stickyHeaderAnchorSelector) {
+                return {};
+            }
+
+            return {
+                '--skyve-vue-list-grid-sticky-top': `${this.stickyHeaderTop}px`
             };
         },
     },
@@ -591,15 +607,41 @@ export default {
 				callRemoteCommand(this.actions.selected, {bizId: event.data.bizId});
             }
 			else if (this.showZoom) {
-			    this.zoomInto(event.data.bizId);
+                const d = event.data;
+			    this.zoomInto(d.bizId, d.bizModule, d.bizDocument);
 			}
         },
-        zoomInto(bizId) {
+        zoomInto(bizId, module, document) {
             openDocInSameWindow({
                 bizId: bizId,
-                module: this.module,
-                document: this.document
+                module: module,
+                document: document
             });
+        },
+        calculateStickyHeaderTop() {
+            if (!this.stickyHeaderAnchorSelector) {
+                return;
+            }
+
+            let top = 0;
+            for (const element of document.querySelectorAll(this.stickyHeaderAnchorSelector)) {
+                top += element.getBoundingClientRect().height;
+            }
+            this.stickyHeaderTop = top;
+        },
+        scheduleStickyHeaderRefresh() {
+            if (!this.stickyHeaderAnchorSelector) {
+                return;
+            }
+
+            this.calculateStickyHeaderTop();
+            if (this.stickyHeaderRefreshTimeout) {
+                clearTimeout(this.stickyHeaderRefreshTimeout);
+            }
+            this.stickyHeaderRefreshTimeout = setTimeout(() => {
+                this.calculateStickyHeaderTop();
+                this.stickyHeaderRefreshTimeout = null;
+            }, 250);
         }
     },
     beforeMount() {
@@ -608,6 +650,31 @@ export default {
         // Seems like the DataTable will reset its filters to whatever
         // was set when it was mounted so we need to set the defaults earlier
         this.initFilters();
+    },
+    mounted() {
+        if (this.stickyHeaderAnchorSelector) {
+            this.scheduleStickyHeaderRefresh();
+            window.addEventListener('resize', this.scheduleStickyHeaderRefresh);
+            window.addEventListener('orientationchange', this.scheduleStickyHeaderRefresh);
+            this.stickyHeaderMenuRefreshHandler = (event) => {
+                if (event.target?.closest?.('.layout-menu-button,.menu-button,#topbar-menu-button')) {
+                    this.scheduleStickyHeaderRefresh();
+                }
+            };
+            document.addEventListener('click', this.stickyHeaderMenuRefreshHandler);
+        }
+    },
+    beforeUnmount() {
+        if (this.stickyHeaderRefreshTimeout) {
+            clearTimeout(this.stickyHeaderRefreshTimeout);
+            this.stickyHeaderRefreshTimeout = null;
+        }
+        window.removeEventListener('resize', this.scheduleStickyHeaderRefresh);
+        window.removeEventListener('orientationchange', this.scheduleStickyHeaderRefresh);
+        if (this.stickyHeaderMenuRefreshHandler) {
+            document.removeEventListener('click', this.stickyHeaderMenuRefreshHandler);
+            this.stickyHeaderMenuRefreshHandler = null;
+        }
     },
     watch: {
         fetchFormData: {
@@ -653,182 +720,204 @@ export default {
         </span>
     </Dialog>
 
-    <DataTable
-        ref="datatable"
-        dataKey="bizId"
-        filterDisplay="menu"
-        selectionMode="single"
-        :stateKey="dataSource"
-        stateStorage="session"
-        :rowsPerPageOptions="[5, 10, 25, 50, 75, 100]"
-        :lazy="true"
-        :value="value"
-        :loading="loading"
-        :totalRecords="totalRecords"
-        :paginator="true"
-        :reorderableColumns="true"
-        :resizableColumns="true"
-        v-model:first="firstRow"
-        v-model:rows="pageSize"
-        v-model:filters="filters"
-        @state-restore="stateRestore"
-        @state-save="stateSave"
-        contextMenu
-        v-model:contextMenuSelection="selectedRow"
-        v-model:selection="selectedRow"
-        @row-contextmenu="onRowContextMenu"
-        @row-click="onRowClick"
-        sortMode="multiple"
-        v-model:multiSortMeta="multiSortMeta"
+    <div
+        :class="{ 'skyve-vue-list-grid-sticky': stickyHeaderAnchorSelector }"
+        :style="stickyHeaderStyle"
     >
-        <template #header>
-            <div v-if="title">
-                {{ title }}
-            </div>
-            <div class="flex flex-column md:flex-row gap-2">
-                <!-- Multi select for choosing visible columns -->
-                <MultiSelect
-                    v-model="selectedColumns"
-                    :options="columns"
-                    optionLabel="header"
-                    display="comma"
-                    placeholder="Select Columns"
-                    :maxSelectedLabels="4"
-                    selectedItemsLabel="{0} columns selected"
-                    :showToggleAll="true"
-                />
-
-                <!-- Snapshot CRUD control -->
-                <SnapshotPicker v-if="showSnap"
-                    :documentQuery="dataSource"
-                    :snapshotState="snapshotState"
-                    @snapshotChanged="snapshotChanged"
-                    stateStorage="session"
-                    :stateKey="dataSource"
-                />
-
-                <!-- Match Any/All Operator -->
-                <Dropdown v-if="showFilter"
-                    v-model="selectedTopLevelOperator"
-                    :options="topLevelOperators"
-                    optionLabel="label"
-                    optionValue="value"
-                />
-                <div v-if="!! smartClientCriteria" style="height: 50px; padding-top: 16px; text-align: center;">
-                    <span class="pi pi-exclamation-triangle" />
-                    &nbsp;
-                    <span>Snapshot cannot be displayed or updated</span>
-                </div>
-            </div>
-        </template>
-        <template #empty> No data found.</template>
-        <template #loading>
-            <span style="color: var(--primary-color-text); text-shadow: 2px 2px 2px black;">
-                Loading data. Please wait.
-            </span>
-        </template>
-        <Column
-            v-for="col of visibleColumns"
-            :key="col.field"
-            :field="col.field"
-            :header="col.header"
-            :sortable="col.sortable"
-            :maxConstraints="20"
-            :footer="summaryRow[col.field]"
-            :filterMatchModeOptions="matchModes[col.type]"
+        <DataTable
+            ref="datatable"
+            dataKey="bizId"
+            filterDisplay="menu"
+            selectionMode="single"
+            :stateKey="dataSource"
+            stateStorage="session"
+            :rowsPerPageOptions="[5, 10, 25, 50, 75, 100]"
+            :lazy="true"
+            :value="value"
+            :loading="loading"
+            :totalRecords="totalRecords"
+            :paginator="true"
+            :reorderableColumns="true"
+            :resizableColumns="true"
+            columnResizeMode="expand"
+            v-model:first="firstRow"
+            v-model:rows="pageSize"
+            v-model:filters="filters"
+            @state-restore="stateRestore"
+            @state-save="stateSave"
+            contextMenu
+            v-model:contextMenuSelection="selectedRow"
+            v-model:selection="selectedRow"
+            @row-contextmenu="onRowContextMenu"
+            @row-click="onRowClick"
+            sortMode="multiple"
+            v-model:multiSortMeta="multiSortMeta"
         >
-            <template
-                #filter="{ filterModel }"
-                v-if="showFilter && col.filterable"
-            >
-                <span v-if="col.type == 'boolean'">
-                    <label :for="'bool-' + col.field">{{ col.header }}</label>
-                    <TriStateCheckbox
-                        :inputId="'bool-' + col.field"
-                        v-model="filterModel.value"
+            <template #header>
+                <div v-if="title">
+                    {{ title }}
+                </div>
+                <div class="flex flex-column md:flex-row gap-2">
+                    <!-- Multi select for choosing visible columns -->
+                    <MultiSelect
+                        v-model="selectedColumns"
+                        :options="columns"
+                        optionLabel="header"
+                        display="comma"
+                        placeholder="Select Columns"
+                        :maxSelectedLabels="4"
+                        selectedItemsLabel="{0} columns selected"
+                        :showToggleAll="true"
                     />
-                </span>
-                <Dropdown
-                    v-else-if="col.type == 'enum'"
-                    v-model="filterModel.value"
-                    :options="col.enumValues"
-                    optionLabel="label"
-                    optionValue="value"
-                >
-                </Dropdown>
-                <DateOnlyCalendar
-                    v-else-if="col.type == 'date'"
-                    v-model="filterModel.value"
-                    :dateFormat="dateFormat"
-                />
-                <Calendar
-                    v-else-if="col.type == 'dateTime'"
-                    v-model="filterModel.value"
-                    :dateFormat="dateFormat"
-                    showTime
-                    :hourFormat="hourFormat"
-                />
-                <Calendar
-                    v-else-if="col.type == 'timestamp'"
-                    v-model="filterModel.value"
-                    :dateFormat="dateFormat"
-                    showTime
-                    :hourFormat="hourFormat"
-                    showSeconds
-                    :stepSecond="5"
-                />
-                <TimeCalendar
-                    v-else-if="col.type == 'time'"
-                    v-model="filterModel.value"
-                    :hourFormat="hourFormat"
-                />
-                <InputText
-                    v-else-if="['text', 'numeric'].includes(col.type)"
-                    v-model="filterModel.value"
-                    type="text"
-                    class="p-column-filter"
-                    :placeholder="'Search by ' + col.header"
-                />
-                <div v-else>
-                    Unknown type: {{ col.type }}
+
+                    <!-- Snapshot CRUD control -->
+                    <SnapshotPicker v-if="showSnap"
+                        :documentQuery="dataSource"
+                        :snapshotState="snapshotState"
+                        @snapshotChanged="snapshotChanged"
+                        stateStorage="session"
+                        :stateKey="dataSource"
+                    />
+
+                    <!-- Match Any/All Operator -->
+                    <Dropdown v-if="showFilter"
+                        v-model="selectedTopLevelOperator"
+                        :options="topLevelOperators"
+                        optionLabel="label"
+                        optionValue="value"
+                    />
+                    <div v-if="!! smartClientCriteria" style="height: 50px; padding-top: 16px; text-align: center;">
+                        <span class="pi pi-exclamation-triangle" />
+                        &nbsp;
+                        <span>Snapshot cannot be displayed or updated</span>
+                    </div>
                 </div>
             </template>
-            <template #body="{ data, field }">
-                <span v-if="col.type == 'image'">
-                    <Image
-                        :id="data[field]"
-                        :module="module"
-                        :document="document"
-                        :binding="field"
+            <template #empty> No data found.</template>
+            <template #loading>
+                <span style="color: var(--primary-color-text); text-shadow: 2px 2px 2px black;">
+                    Loading data. Please wait.
+                </span>
+            </template>
+            <Column
+                v-for="col of visibleColumns"
+                :key="col.field"
+                :field="col.field"
+                :header="col.header"
+                :sortable="col.sortable"
+                :maxConstraints="20"
+                :footer="summaryRow[col.field]"
+                :filterMatchModeOptions="matchModes[col.type]"
+            >
+                <template
+                    #filter="{ filterModel }"
+                    v-if="showFilter && col.filterable"
+                >
+                    <span v-if="col.type == 'boolean'">
+                        <label :for="'bool-' + col.field">{{ col.header }}</label>
+                        <TriStateCheckbox
+                            :inputId="'bool-' + col.field"
+                            v-model="filterModel.value"
+                        />
+                    </span>
+                    <Dropdown
+                        v-else-if="col.type == 'enum'"
+                        v-model="filterModel.value"
+                        :options="col.enumValues"
+                        optionLabel="label"
+                        optionValue="value"
+                    >
+                    </Dropdown>
+                    <DateOnlyCalendar
+                        v-else-if="col.type == 'date'"
+                        v-model="filterModel.value"
+                        :dateFormat="dateFormat"
                     />
-                </span>
-                <span v-else>
-                    {{ data[field] }}
-                </span>
-            </template>
-        </Column>
-        <Column>
-            <!-- Final column with New Doc & Zoom In controls -->
-            <template #header>
-                <Button v-if="showAdd"
-                    icon="pi pi-plus"
-                    @click="() => zoomInto()"
+                    <Calendar
+                        v-else-if="col.type == 'dateTime'"
+                        v-model="filterModel.value"
+                        :dateFormat="dateFormat"
+                        showTime
+                        :hourFormat="hourFormat"
+                    />
+                    <Calendar
+                        v-else-if="col.type == 'timestamp'"
+                        v-model="filterModel.value"
+                        :dateFormat="dateFormat"
+                        showTime
+                        :hourFormat="hourFormat"
+                        showSeconds
+                        :stepSecond="5"
+                    />
+                    <TimeCalendar
+                        v-else-if="col.type == 'time'"
+                        v-model="filterModel.value"
+                        :hourFormat="hourFormat"
+                    />
+                    <InputText
+                        v-else-if="['text', 'numeric'].includes(col.type)"
+                        v-model="filterModel.value"
+                        type="text"
+                        class="p-column-filter"
+                        :placeholder="'Search by ' + col.header"
+                    />
+                    <div v-else>
+                        Unknown type: {{ col.type }}
+                    </div>
+                </template>
+                <template #body="{ data, field }">
+                    <span v-if="col.type == 'image'">
+                        <Image
+                            :id="data[field]"
+                            :module="data.bizModule"
+                            :document="data.bizDocument"
+                            :binding="field"
+                        />
+                    </span>
+                    <span v-else>
+                        {{ data[field] }}
+                    </span>
+                </template>
+            </Column>
+            <!-- Column key and field here to ensure the session state is saved correctly -->
+            <!-- The width !important ensure that resize gestures don't change the column size -->
+            <Column key="_action"
+                    field="_action"
+                    :reorderableColumn="false"
+                    style="width:82px !important">
+                <!-- Final column with New Doc & Zoom In controls -->
+                <template #header>
+                    <Button v-if="showAdd"
+                        icon="pi pi-plus"
+                        @click="() => zoomInto(null, this.drivingModule, this.drivingDocument)"
+                    />
+                </template>
+                <template #body="{ data }">
+                    <Button v-if="showZoom"
+                        icon="pi pi-chevron-right"
+                        @click="() => zoomInto(data.bizId, data.bizModule, data.bizDocument)"
+                    />
+                </template>
+            </Column>
+            <template #footer v-if="showSummary">
+                <Dropdown
+                    :pt:wrapper:style="{ maxHeight: 'none' }"
+                    v-model="summarySelection"
+                    :options="summaryOpts"
                 />
             </template>
-            <template #body="{ data }">
-                <Button v-if="showZoom"
-                    icon="pi pi-chevron-right"
-                    @click="() => zoomInto(data.bizId)"
-                />
-            </template>
-        </Column>
-        <template #footer v-if="showSummary">
-            <Dropdown
-                :pt:wrapper:style="{ maxHeight: 'none' }"
-                v-model="summarySelection"
-                :options="summaryOpts"
-            />
-        </template>
-    </DataTable>
+        </DataTable>
+    </div>
 </template>
-<style scoped></style>
+<style scoped>
+.skyve-vue-list-grid-sticky :deep(.p-datatable-wrapper) {
+    /* PrimeVue sets overflow:auto inline, which traps sticky inside the wrapper. */
+    overflow: visible !important;
+}
+
+.skyve-vue-list-grid-sticky :deep(.p-datatable-thead) {
+    position: sticky !important;
+    top: var(--skyve-vue-list-grid-sticky-top, 0px);
+    z-index: 995;
+}
+</style>

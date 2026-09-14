@@ -1,8 +1,8 @@
 package org.skyve.impl.web.faces;
 
+import java.io.Serializable;
 import java.security.Principal;
 import java.util.Map;
-import java.util.logging.Level;
 
 import org.skyve.CORE;
 import org.skyve.domain.Bean;
@@ -11,13 +11,21 @@ import org.skyve.impl.metadata.customer.CustomerImpl;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.AbstractWebContext;
+import org.skyve.impl.web.RequestUxUiSelection;
+import org.skyve.impl.web.UserAgent;
 import org.skyve.impl.web.WebUtil;
 import org.skyve.impl.web.faces.views.FacesView;
 import org.skyve.metadata.model.document.Bizlet;
+import org.skyve.util.logging.Category;
+import org.skyve.web.UserAgentType;
+import org.slf4j.Logger;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import jakarta.faces.FacesException;
 import jakarta.faces.application.FacesMessage;
 import jakarta.faces.application.FacesMessage.Severity;
+import jakarta.faces.application.ViewExpiredException;
 import jakarta.faces.component.UIViewRoot;
 import jakarta.faces.context.ExternalContext;
 import jakarta.faces.context.FacesContext;
@@ -26,21 +34,48 @@ import jakarta.faces.event.PhaseId;
 import jakarta.faces.event.PhaseListener;
 import jakarta.servlet.http.HttpServletRequest;
 
+/**
+ * Listens for lifecycle events and applies Skyve-specific web behaviour.
+ */
 public class SkyveFacesPhaseListener implements PhaseListener {
 	private static final long serialVersionUID = 3757264858610371158L;
 
+	private static final Logger FACES_LOGGER = Category.FACES.logger();
+	private static final Logger BIZLET_LOGGER = Category.BIZLET.logger();
+
+	/**
+	 * Records the request selection that determines Faces view compatibility.
+	 */
+	static record FacesViewSelectionMarker(boolean emulated,
+											UserAgentType userAgentType,
+											String uxuiName) implements Serializable {
+		private static final long serialVersionUID = -4691985235216910666L;
+	}
+
+	private static final String VIEW_SELECTION_MARKER_KEY = FacesViewSelectionMarker.class.getName();
+
+	/**
+	 * Logs and prepares pre-phase diagnostics for the JSF lifecycle.
+	 *
+	 * @param event the current JSF phase event
+	 */
 	@Override
 	public void beforePhase(PhaseEvent event) {
 		if (UtilImpl.FACES_TRACE) {
 			PhaseId phaseId = event.getPhaseId();
-			UtilImpl.LOGGER.info("SkyveFacesPhaseListener - BEFORE " + phaseId + " : responseComplete=" + event.getFacesContext().getResponseComplete());
+			FACES_LOGGER.info("SkyveFacesPhaseListener - BEFORE {} : responseComplete={}", phaseId, Boolean.valueOf(event.getFacesContext().getResponseComplete()));
 		}
 	}
 
+	/**
+	 * Executes Skyve lifecycle hooks after each JSF phase.
+	 *
+	 * @param event the current JSF phase event
+	 */
 	@Override
 	public void afterPhase(PhaseEvent event) {
 		PhaseId phaseId = event.getPhaseId();
-		if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.info("SkyveFacesPhaseListener - AFTER " + phaseId + " : responseComplete=" + event.getFacesContext().getResponseComplete());
+		if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("SkyveFacesPhaseListener - AFTER {} : responseComplete={}", phaseId, Boolean.valueOf(event.getFacesContext().getResponseComplete()));
 		try {
 			if (PhaseId.RESTORE_VIEW.equals(phaseId)) {
 				afterRestoreView(event);
@@ -63,22 +98,35 @@ public class SkyveFacesPhaseListener implements PhaseListener {
 		}
 	}
 
+	/**
+	 * Subscribes to all JSF phases.
+	 *
+	 * @return {@link PhaseId#ANY_PHASE}
+	 */
 	@Override
 	public PhaseId getPhaseId() {
 		return PhaseId.ANY_PHASE;
 	}
 	
+	/**
+	 * Restores any cached Skyve conversation before JSF processing continues and begins a persistence transaction.
+	 *
+	 * @param event the current RESTORE_VIEW phase event
+	 * @throws Exception when cached conversation restoration fails
+	 */
 	private static void afterRestoreView(PhaseEvent event)
 	throws Exception {
 		FacesContext fc = event.getFacesContext();
 		ExternalContext ec = fc.getExternalContext();
+		UIViewRoot vr = fc.getViewRoot();
+		validateViewSelection(fc, ec, vr);
+
 		Map<String, Object> s = ec.getSessionMap();
 		String webId = ec.getRequestParameterMap().get(AbstractWebContext.CONTEXT_NAME);
-		UIViewRoot vr = fc.getViewRoot();
 
 		// restore from the session - used when http redirect is used to navigate to a new view
 		if (s.containsKey(FacesUtil.MANAGED_BEAN_NAME_KEY)) {
-			if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.info("SkyveFacesPhaseListener - SET PERSISTENCE FROM SESSION");
+			if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("SkyveFacesPhaseListener - SET PERSISTENCE FROM SESSION");
 			FacesView view = (FacesView) s.get(FacesUtil.MANAGED_BEAN_NAME_KEY);
 			restore(view, ec);
 		}
@@ -86,8 +134,8 @@ public class SkyveFacesPhaseListener implements PhaseListener {
 		else if (vr != null) {
 			String managedBeanName = (String) vr.getAttributes().get(FacesUtil.MANAGED_BEAN_NAME_KEY);
 			if (managedBeanName != null) {
-				if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.info("SkyveFacesPhaseListener - SET PERSISTENCE FROM VIEW");
-				FacesView view = FacesUtil.getManagedBean(managedBeanName);
+				if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("SkyveFacesPhaseListener - SET PERSISTENCE FROM VIEW");
+				FacesView view = (FacesView) FacesUtil.getNamed(managedBeanName);
 				restore(view, ec);
 			}
 		}
@@ -98,15 +146,58 @@ public class SkyveFacesPhaseListener implements PhaseListener {
 
 		// initialise the conversation
 		AbstractPersistence persistence = AbstractPersistence.get();
-		if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.info("SkyveFacesPhaseListener - CONNECT PERSISTENCE AND BEGIN TRANSACTION");
+		if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("SkyveFacesPhaseListener - CONNECT PERSISTENCE AND BEGIN TRANSACTION");
 		persistence.begin();
 		HttpServletRequest request = (HttpServletRequest) ec.getRequest();
-    	Principal userPrincipal = request.getUserPrincipal();
-    	WebUtil.processUserPrincipalForRequest(request, (userPrincipal == null) ? null : userPrincipal.getName());
+		Principal userPrincipal = request.getUserPrincipal();
+		WebUtil.processUserPrincipalForRequest(request, (userPrincipal == null) ? null : userPrincipal.getName());
 	}
 
-	private static void restore(FacesView view, ExternalContext ec)
-	throws Exception {
+	/**
+	 * Records a fresh view's request selection or rejects an incompatible restored view.
+	 *
+	 * <p>Side effects: stores one Serializable selection marker in a fresh view's view map. A postback
+	 * with no marker or with a divergent device or UX/UI selection is expired before
+	 * conversation restoration or other request processing can begin.
+	 */
+	private static void validateViewSelection(@Nonnull FacesContext fc,
+			@Nonnull ExternalContext ec,
+			@Nullable UIViewRoot vr) {
+		if (vr == null) {
+			if (fc.isPostback()) {
+				throw incompatibleView(null);
+			}
+			return;
+		}
+
+		HttpServletRequest request = (HttpServletRequest) ec.getRequest();
+		RequestUxUiSelection selection = UserAgent.getSelection(request);
+		FacesViewSelectionMarker current = new FacesViewSelectionMarker(selection.isEmulated(),
+																			selection.getUserAgentType(),
+																			selection.getUxUi().getName());
+		if (fc.isPostback()) {
+			Map<String, Object> viewMap = vr.getViewMap(false);
+			Object marker = (viewMap == null) ? null : viewMap.get(VIEW_SELECTION_MARKER_KEY);
+			if (! current.equals(marker)) {
+				throw incompatibleView(vr.getViewId());
+			}
+		}
+		else {
+			vr.getViewMap().put(VIEW_SELECTION_MARKER_KEY, current);
+		}
+	}
+
+	private static @Nonnull ViewExpiredException incompatibleView(@Nullable String viewId) {
+		return new ViewExpiredException("The restored view is incompatible with the current request selection", viewId);
+	}
+
+	/**
+	 * Rehydrates the supplied Faces view from its cached web context and binds the conversation to the thread.
+	 *
+	 * @param view the faces view to hydrate
+	 * @param ec the external context associated with the current request
+	 */
+	private static void restore(FacesView view, ExternalContext ec) {
 		// restore the context
 		AbstractWebContext webContext = StateUtil.getCachedConversation(view.getDehydratedWebId(),
 																			(HttpServletRequest) ec.getRequest());
@@ -119,8 +210,14 @@ public class SkyveFacesPhaseListener implements PhaseListener {
 		}
 	}
 
-	private static void restore(String webId, ExternalContext ec)
-	throws Exception {
+	/**
+	 * Restores a cached conversation by web id and binds its persistence context to the current thread.
+	 *
+	 * @param webId the cached conversation identifier
+	 * @param ec the external context associated with the current request
+	 * @throws Exception when conversation restoration fails
+	 */
+	private static void restore(String webId, ExternalContext ec) {
 		// restore the context
 		AbstractWebContext webContext = StateUtil.getCachedConversation(webId, (HttpServletRequest) ec.getRequest());
 		if (webContext != null) { // should always be the case
@@ -130,56 +227,70 @@ public class SkyveFacesPhaseListener implements PhaseListener {
 		}
 	}
 
+	/**
+	 * Gathers dual-list model state after model updates so pending list mutations survive later dehydration.
+	 *
+	 * @param event the current UPDATE_MODEL_VALUES phase event
+	 */
 	private static void afterUpdateModelValues(PhaseEvent event) {
 		UIViewRoot vr = event.getFacesContext().getViewRoot();
 		if (vr != null) {
 			// Gather an dual list models in the view.
 			String managedBeanName = (String) vr.getAttributes().get(FacesUtil.MANAGED_BEAN_NAME_KEY);
 			if (managedBeanName != null) {
-				FacesView view = FacesUtil.getManagedBean(managedBeanName);
+				FacesView view = (FacesView) FacesUtil.getNamed(managedBeanName);
 				view.getDualListModels().gather();
 			}
 		}
 	}
 
-	private static void afterResponseRendered(PhaseEvent event)
-	throws Exception {
+	/**
+	 * Performs post-render hooks, recaches the conversation when the response is error-free, dehydrates the view,
+	 * and finally commits and disconnects persistence for the completed Faces response.
+	 *
+	 * @param event the current rendering-complete phase event
+	 * @throws Exception when post-render lifecycle processing fails
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
+	private static void afterResponseRendered(PhaseEvent event) {
 		try {
 			UIViewRoot vr = event.getFacesContext().getViewRoot();
 			if (vr != null) {
 				// Call postRender, cache and dehydrate
 				String managedBeanName = (String) vr.getAttributes().get(FacesUtil.MANAGED_BEAN_NAME_KEY);
 				if (managedBeanName != null) {
-					FacesView view = FacesUtil.getManagedBean(managedBeanName);
-					if (view != null) {
-						AbstractWebContext webContext = view.getWebContext();
+					FacesView view = (FacesView) FacesUtil.getNamed(managedBeanName);
+					AbstractWebContext webContext = view.getWebContext();
 
-						// Call postRender() if applicable
-						Bean postRenderBean = view.getPostRenderBean();
-						if (postRenderBean != null) {
-							CustomerImpl internalCustomer = (CustomerImpl) CORE.getCustomer();
-							boolean vetoed = internalCustomer.interceptBeforePostRender(postRenderBean, webContext);
-							if (! vetoed) {
-								@SuppressWarnings("unchecked")
-								Bizlet<Bean> bizlet = (Bizlet<Bean>) view.getPostRenderBizlet();
-				    			if (bizlet != null) {
-									if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postRender", "Entering " + bizlet.getClass().getName() + ".postRender: " + postRenderBean + ", " + webContext);
-					    			bizlet.postRender(postRenderBean, webContext);
-					    			if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "postRender", "Exiting " + bizlet.getClass().getName() + ".postRender: " + postRenderBean + ", " + webContext);
-				    			}
-								internalCustomer.interceptAfterPostRender(postRenderBean, webContext);
-							}
+					// Call postRender() if applicable
+					Bean postRenderBean = view.getPostRenderBean();
+					if (postRenderBean != null) {
+						CustomerImpl internalCustomer = (CustomerImpl) CORE.getCustomer();
+						boolean vetoed = internalCustomer.interceptBeforePostRender(postRenderBean, webContext);
+						if (! vetoed) {
+							@SuppressWarnings("unchecked")
+							Bizlet<Bean> bizlet = (Bizlet<Bean>) view.getPostRenderBizlet();
+			    			if (bizlet != null) {
+								if (UtilImpl.BIZLET_TRACE) {
+									BIZLET_LOGGER.info("Entering {}.postRender: {}, {}", bizlet.getClass().getName(), postRenderBean, webContext);
+								}
+				    			bizlet.postRender(postRenderBean, webContext);
+				    			if (UtilImpl.BIZLET_TRACE) BIZLET_LOGGER.info("Exiting {}.postRender: {}, {}", bizlet.getClass().getName(), postRenderBean, webContext);
+			    			}
+							internalCustomer.interceptAfterPostRender(postRenderBean, webContext);
 						}
-
-						// Cache the conversation
-						Severity maximumSeverity = event.getFacesContext().getMaximumSeverity();
-						if ((maximumSeverity == null) || 
-								(maximumSeverity.getOrdinal() < FacesMessage.SEVERITY_ERROR.getOrdinal())) {
-							StateUtil.cacheConversation(webContext);
-						}
-						// Dehydrate the view
-						view.dehydrate();
 					}
+
+					// Cache the conversation
+					Severity maximumSeverity = event.getFacesContext().getMaximumSeverity();
+					if ((maximumSeverity == null) ||
+							(maximumSeverity.getOrdinal() < FacesMessage.SEVERITY_ERROR.getOrdinal())) {
+						// Conversation caching commits any active transaction without closing its
+						// persistence context, ensuring Hibernate has released its JDBC resources.
+						StateUtil.commitAndCacheConversation(webContext);
+					}
+					// Dehydrate the view
+					view.dehydrate();
 				}
 			}
 		}
@@ -188,7 +299,7 @@ public class SkyveFacesPhaseListener implements PhaseListener {
 			// If the web container forwards to an xhtml page (say through web.xml), the SkyveFacesFilter isn't invoked.
 			// The SkyveFacesFilter is the last line of defence but usually if the Faces lifecycle is successful
 			// the code below will do the disconnect.
-			if (UtilImpl.FACES_TRACE) UtilImpl.LOGGER.info("SkyveFacesPhaseListener - COMMIT TRANSACTION AND DISCONNECT PERSISTENCE");
+			if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("SkyveFacesPhaseListener - COMMIT TRANSACTION AND DISCONNECT PERSISTENCE");
 			AbstractPersistence persistence = AbstractPersistence.get();
 			persistence.commit(true);
 			if (UtilImpl.FACES_TRACE) StateUtil.logStateStats();

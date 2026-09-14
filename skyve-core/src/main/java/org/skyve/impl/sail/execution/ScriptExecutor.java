@@ -1,12 +1,85 @@
 package org.skyve.impl.sail.execution;
 
+import org.skyve.metadata.sail.language.Automation;
+import org.skyve.metadata.sail.language.Interaction;
+import org.skyve.metadata.sail.language.Procedure;
+import org.skyve.metadata.sail.language.Step;
 import org.skyve.metadata.sail.language.step.Execute;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
+/**
+ * Abstract SAIL executor that drives a full automation script, managing the execution
+ * order of procedures ({@code before}, interactions, {@code after}) and translating
+ * each step into client-generated script output.
+ *
+ * <p>Subclasses provide the target scripting language (Selenese, WebDriver Java, etc.)
+ * by implementing the abstract {@code startTest}, {@code endTest}, and step-specific
+ * methods. The accumulated script is available via {@code getScript()}.
+ *
+ * @param <T> the concrete {@link AutomationContext} type used by this executor
+ * @see ContextualExecutor
+ */
 public abstract class ScriptExecutor<T extends AutomationContext> extends ContextualExecutor<T> {
 	private StringBuilder script = new StringBuilder(4096);
 	private int indent = 0;
+
+	// NB An instance member LOGGER is OK here as this is not Serializable
+    protected final Logger LOGGER = SkyveLoggerFactory.getLogger(getClass());
+
+	@Override
+	public void executeAutomation(Automation automation) {
+		super.executeAutomation(automation); // set context defaults
+
+		Procedure before = automation.getBefore();
+		if (before != null) {
+			startTest("Before Automation");
+			for (Step step : before.getSteps()) {
+				step.execute(this);
+			}
+			endTest();
+		}
+		for (Interaction interaction : automation.getInteractions()) {
+			executeInteraction(interaction);
+		}
+		Procedure after = automation.getAfter();
+		if (after != null) {
+			startTest("After Automation");
+			for (Step step : after.getSteps()) {
+				step.execute(this);
+			}
+			endTest();
+		}
+	}
 	
-	public final ScriptExecutor<T> indent() {
+	@Override
+	public void executeInteraction(Interaction interaction) {
+		LOGGER.info("Execute Interaction {}", interaction.getName());
+		startTest(interaction.getName());
+		Procedure before = interaction.getBefore();
+		if (before != null) {
+			indent().append("<!-- Before ").append(interaction.getName()).append(" -->").newline();
+			for (Step step : before.getSteps()) {
+				step.execute(this);
+			}
+		}
+		for (Step step : interaction.getSteps()) {
+			step.execute(this);
+		}
+		Procedure after = interaction.getAfter();
+		if (after != null) {
+			indent().append("<!-- After ").append(interaction.getName()).append(" -->").newline();
+			for (Step step : after.getSteps()) {
+				step.execute(this);
+			}
+		}
+		endTest();
+	}
+
+	protected abstract void startTest(String heading);
+	protected abstract void endTest();
+
+    public final ScriptExecutor<T> indent() {
 		for (int i = 0; i < indent; i++) {
 			script.append('\t');
 		}
@@ -36,7 +109,7 @@ public abstract class ScriptExecutor<T extends AutomationContext> extends Contex
 	}
 
 	@Override
-	public final void executeExecute(Execute execute) {
+	public void executeExecute(Execute execute) {
 		indent().append(execute.getScript()).newline();
 	}
 	

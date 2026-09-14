@@ -22,16 +22,19 @@ import org.skyve.metadata.module.Module.DocumentRef;
 import org.skyve.metadata.module.menu.MenuGroup;
 import org.skyve.metadata.module.menu.MenuItem;
 import org.skyve.metadata.module.menu.MenuRenderer;
+import org.skyve.util.logging.SkyveLoggerFactory;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /*
  * TODO convert this away from string concatenation so
  * we can prune emtpy items etc.
  */
+/**
+ * Generates Flutter route declarations for generated views.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate fragments of generated Flutter routing output.
 public class FlutterRouting {
-    
-    private final Logger log = LoggerFactory.getLogger(getClass());
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(FlutterRouting.class);
     
 	private FlutterGenerator generator;
 	private Set<String> imports = new TreeSet<>();
@@ -52,10 +55,10 @@ public class FlutterRouting {
             String moduleName = m.getName();
             String docName = d.getName();
             if (generator.getConfig().allowsMoDoc(moduleName, docName)) {
-                log.debug("Generating " + moduleName + "-" + docName);
+                LOGGER.debug("Generating {}.{}", moduleName, docName);
                 return true;
             }
-			log.debug("Filtered out " + moduleName + "-" + docName);
+			LOGGER.debug("Filtered out {}.{}", moduleName, docName);
 			return false;
         };
 	    
@@ -87,7 +90,7 @@ public class FlutterRouting {
 	}
 	
     private void viewImportsAndRoutes(BiPredicate<Module, Document> whiteListPredicate) {
-        log.debug("Rendering view items");
+        LOGGER.debug("Rendering view items");
 
         for (Module module : customer.getModules()) {
 
@@ -112,8 +115,9 @@ public class FlutterRouting {
         }
     }
 
+    @SuppressWarnings("java:S3776") // Complexity OK
     private void menuImportsAndRoutes(BiPredicate<Module, Document> whiteListPredicate) {
-        log.debug("Rendering menu items");
+        LOGGER.debug("Rendering menu items");
 
         final GeneratorConfig config = generator.getConfig();
         String uxui = config.getUxui();
@@ -201,10 +205,10 @@ public class FlutterRouting {
 										modelName,
 										itemDocument.getListModel(customer, modelName, false));
 				}
-				else if (item.getQueryName() != null) { // query driven
+				else if (itemQueryName != null) { // query driven
 					component.setQuery(menuModule,
 										itemDocument,
-										menuModule.getMetaDataQuery(itemQueryName));
+										menuModule.getNullSafeMetaDataQuery(itemQueryName));
 				}
 				else { // document driven
 					component.setQuery(menuModule,

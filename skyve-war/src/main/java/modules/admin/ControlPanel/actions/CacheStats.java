@@ -20,15 +20,41 @@ import org.skyve.web.WebContext;
 
 import modules.admin.ControlPanel.ControlPanelExtension;
 
+/**
+ * Collects and exposes runtime cache statistics for inspection.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate cache statistics HTML fragments.
 public class CacheStats implements ServerSideAction<ControlPanelExtension> {
+	private static final String TABLE_CELL = "<td style=\"padding:20px\">";
+	private static final String EVICTIONS_LABEL = "Evictions: ";
+	private static final String HITS_LABEL = "Hits: ";
+	private static final String MISSES_LABEL = "Misses: ";
+	private static final String PUTS_LABEL = "Puts: ";
+	private static final String REMOVALS_LABEL = "Removals: ";
+
+	/**
+	 * Performs the execute operation.
+	 * 
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
-	public ServerSideActionResult<ControlPanelExtension> execute(ControlPanelExtension bean, WebContext webContext) throws Exception {
+	public ServerSideActionResult<ControlPanelExtension> execute(ControlPanelExtension bean, WebContext webContext)
+			throws Exception {
 		final Caching caching = EXT.getCaching();
-		
+
 		StringBuilder result = new StringBuilder(512);
 		result.append("<table>");
 
 		String cacheName = UtilImpl.CONVERSATION_CACHE.getName();
+		addEHCacheStats(cacheName, caching.getEHCacheStatistics(cacheName), result);
+		cacheName = UtilImpl.CSRF_TOKEN_CACHE.getName();
+		addEHCacheStats(cacheName, caching.getEHCacheStatistics(cacheName), result);
+		cacheName = UtilImpl.SESSION_CACHE.getName();
+		addEHCacheStats(cacheName, caching.getEHCacheStatistics(cacheName), result);
+		cacheName = UtilImpl.GEO_IP_CACHE.getName();
 		addEHCacheStats(cacheName, caching.getEHCacheStatistics(cacheName), result);
 		for (HibernateCacheConfig c : UtilImpl.HIBERNATE_CACHES) {
 			cacheName = c.getName();
@@ -38,104 +64,134 @@ public class CacheStats implements ServerSideAction<ControlPanelExtension> {
 			cacheName = c.getName();
 			if (c instanceof EHCacheConfig<?, ?>) {
 				addEHCacheStats(cacheName, caching.getEHCacheStatistics(cacheName), result);
-			}
-			else if (c instanceof JCacheConfig<?, ?>) {
+			} else if (c instanceof JCacheConfig<?, ?>) {
 				addJCacheStats(cacheName, caching.getJCacheStatisticsMXBean(cacheName), result);
 			}
 		}
 		result.append("</table>");
-		
+
 		bean.setResults(result.toString(), false);
 		bean.setTabIndex(Integer.valueOf(2));
 		return new ServerSideActionResult<>(bean);
 	}
-	
+
+	/**
+	 * Performs the addEHCacheStats operation.
+	 * 
+	 * @param cacheName the cacheName value
+	 * @param stats the EHCache statistics, or {@code null} when statistics are unavailable
+	 * @param sb the sb value
+	 */
 	public static void addEHCacheStats(String cacheName, CacheStatistics stats, StringBuilder sb) {
-		final Caching caching = EXT.getCaching();
-
-		sb.append("<tr><td style=\"padding:20px\">");
+		sb.append("<tr>").append(TABLE_CELL);
 		sb.append("<h1>").append(cacheName).append("</h1>");
 		addStats(stats, sb);
 		sb.append("</td>");
-		
-		TierStatistics ts = caching.getEHTierStatistics(stats, CacheTier.OnHeap);
-		if (ts != null) {
-			sb.append("<td style=\"padding:20px\">");
-			sb.append("<h2>").append("Heap").append("</h2>");
-			addStats(ts, sb);
-			sb.append("</td>");
-		}
-		
-		ts = caching.getEHTierStatistics(stats, CacheTier.OffHeap);
-		if (ts != null) {
-			sb.append("<td style=\"padding:20px\">");
-			sb.append("<h2>").append("Off-Heap").append("</h2>");
-			addStats(ts, sb);
-			sb.append("</td>");
-		}
 
-		ts = caching.getEHTierStatistics(stats, CacheTier.Disk);
-		if (ts != null) {
-			sb.append("<td style=\"padding:20px\">");
-			sb.append("<h2>").append("Disk").append("</h2>");
-			addStats(ts, sb);
-			sb.append("</td>");
+		if (stats != null) {
+			final Caching caching = EXT.getCaching();
+			TierStatistics ts = caching.getEHTierStatistics(stats, CacheTier.OnHeap);
+			if (ts != null) {
+				sb.append(TABLE_CELL);
+				sb.append("<h2>").append("Heap").append("</h2>");
+				addStats(ts, sb);
+				sb.append("</td>");
+			}
+
+			ts = caching.getEHTierStatistics(stats, CacheTier.OffHeap);
+			if (ts != null) {
+				sb.append(TABLE_CELL);
+				sb.append("<h2>").append("Off-Heap").append("</h2>");
+				addStats(ts, sb);
+				sb.append("</td>");
+			}
+
+			ts = caching.getEHTierStatistics(stats, CacheTier.Disk);
+			if (ts != null) {
+				sb.append(TABLE_CELL);
+				sb.append("<h2>").append("Disk").append("</h2>");
+				addStats(ts, sb);
+				sb.append("</td>");
+			}
 		}
 		sb.append("</tr>");
 	}
 
+	/**
+	 * Performs the addJCacheStats operation.
+	 * 
+	 * @param cacheName the cacheName value
+	 * @param stats the stats value
+	 * @param sb the sb value
+	 */
 	public static void addJCacheStats(String cacheName, CacheStatisticsMXBean stats, StringBuilder sb) {
-		sb.append("<tr><td style=\"padding:20px\">");
+		sb.append("<tr>").append(TABLE_CELL);
 		sb.append("<h1>").append(cacheName).append("</h1>");
 		addStats(stats, sb);
 		sb.append("</td>");
 		sb.append("</tr>");
 	}
 
+	/**
+	 * Appends EHCache-level cache statistics to the HTML response table.
+	 *
+	 * @param stats The EHCache statistics source.
+	 * @param sb The HTML output buffer.
+	 */
 	private static void addStats(CacheStatistics stats, StringBuilder sb) {
 		if (stats == null) {
 			sb.append("No stats<br/>");
-		}
-		else {
-			sb.append("Evictions: ").append(stats.getCacheEvictions()).append("<br/>");
+		} else {
+			sb.append(EVICTIONS_LABEL).append(stats.getCacheEvictions()).append("<br/>");
 			sb.append("Expirations: ").append(stats.getCacheExpirations()).append("<br/>");
 			sb.append("Gets: ").append(stats.getCacheGets()).append("<br/>");
-			sb.append("Hits: ").append(stats.getCacheHits()).append("<br/>");
+			sb.append(HITS_LABEL).append(stats.getCacheHits()).append("<br/>");
 			sb.append("Hit (%): ").append(stats.getCacheHitPercentage()).append("<br/>");
-			sb.append("Misses: ").append(stats.getCacheMisses()).append("<br/>");
+			sb.append(MISSES_LABEL).append(stats.getCacheMisses()).append("<br/>");
 			sb.append("Miss (%): ").append(stats.getCacheMissPercentage()).append("<br/>");
-			sb.append("Puts: ").append(stats.getCachePuts()).append("<br/>");
-			sb.append("Removals: ").append(stats.getCacheRemovals()).append("<br/>");
+			sb.append(PUTS_LABEL).append(stats.getCachePuts()).append("<br/>");
+			sb.append(REMOVALS_LABEL).append(stats.getCacheRemovals()).append("<br/>");
 		}
 	}
-	
+
+	/**
+	 * Appends EHCache tier-level statistics to the HTML response table.
+	 *
+	 * @param stats The tier statistics source.
+	 * @param sb The HTML output buffer.
+	 */
 	private static void addStats(TierStatistics stats, StringBuilder sb) {
 		if (stats != null) {
 			sb.append("Allocated Byte Size: ").append(stats.getAllocatedByteSize()).append("<br/>");
 			sb.append("Occupied Byte Size: ").append(stats.getOccupiedByteSize()).append("<br/>");
 			sb.append("Entries: ").append(stats.getMappings()).append("<br/>");
-			sb.append("Evictions: ").append(stats.getEvictions()).append("<br/>");
+			sb.append(EVICTIONS_LABEL).append(stats.getEvictions()).append("<br/>");
 			sb.append("Expirations: ").append(stats.getExpirations()).append("<br/>");
-			sb.append("Hits: ").append(stats.getHits()).append("<br/>");
-			sb.append("Misses: ").append(stats.getMisses()).append("<br/>");
-			sb.append("Puts: ").append(stats.getPuts()).append("<br/>");
-			sb.append("Removals: ").append(stats.getRemovals()).append("<br/>");
+			sb.append(HITS_LABEL).append(stats.getHits()).append("<br/>");
+			sb.append(MISSES_LABEL).append(stats.getMisses()).append("<br/>");
+			sb.append(PUTS_LABEL).append(stats.getPuts()).append("<br/>");
+			sb.append(REMOVALS_LABEL).append(stats.getRemovals()).append("<br/>");
 		}
 	}
 
+	/**
+	 * Appends JCache statistics to the HTML response table.
+	 *
+	 * @param stats The JCache statistics source.
+	 * @param sb The HTML output buffer.
+	 */
 	private static void addStats(CacheStatisticsMXBean stats, StringBuilder sb) {
 		if (stats == null) {
 			sb.append("No Stats<br/>");
-		}
-		else {
-			sb.append("Evictions: ").append(stats.getCacheEvictions()).append("<br/>");
+		} else {
+			sb.append(EVICTIONS_LABEL).append(stats.getCacheEvictions()).append("<br/>");
 			sb.append("Gets: ").append(stats.getCacheGets()).append("<br/>");
 			sb.append("Hit (%): ").append(stats.getCacheHitPercentage()).append("<br/>");
-			sb.append("Hits: ").append(stats.getCacheHits()).append("<br/>");
-			sb.append("Misses: ").append(stats.getCacheMisses()).append("<br/>");
+			sb.append(HITS_LABEL).append(stats.getCacheHits()).append("<br/>");
+			sb.append(MISSES_LABEL).append(stats.getCacheMisses()).append("<br/>");
 			sb.append("Miss (%): ").append(stats.getCacheMissPercentage()).append("<br/>");
-			sb.append("Puts: ").append(stats.getCachePuts()).append("<br/>");
-			sb.append("Removals: ").append(stats.getCacheRemovals()).append("<br/>");
+			sb.append(PUTS_LABEL).append(stats.getCachePuts()).append("<br/>");
+			sb.append(REMOVALS_LABEL).append(stats.getCacheRemovals()).append("<br/>");
 			sb.append("Average Get Time: ").append(stats.getAverageGetTime()).append("<br/>");
 			sb.append("Average Put Time: ").append(stats.getAveragePutTime()).append("<br/>");
 			sb.append("Average Remove Time: ").append(stats.getAverageRemoveTime()).append("<br/>");

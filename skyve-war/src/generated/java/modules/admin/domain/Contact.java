@@ -9,6 +9,7 @@ import jakarta.xml.bind.annotation.XmlType;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import modules.admin.Contact.ContactExtension;
 import org.skyve.CORE;
 import org.skyve.domain.messages.DomainException;
 import org.skyve.domain.types.Enumeration;
@@ -18,6 +19,8 @@ import org.skyve.util.Util;
 
 /**
  * Contact
+ * <br/>
+ * Stores contact information for persons and organisations including names, email addresses, mobile numbers, and photos, with privacy-sensitive data handling.
  * 
  * @depend - - - ContactType
  * @stereotype "persistent"
@@ -25,7 +28,7 @@ import org.skyve.util.Util;
 @XmlType
 @XmlRootElement
 @Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-public class Contact extends AbstractPersistentBean implements org.skyve.domain.app.admin.Contact {
+public abstract class Contact extends AbstractPersistentBean implements org.skyve.domain.app.admin.Contact {
 	/**
 	 * For Serialization
 	 * @hidden
@@ -60,7 +63,7 @@ public class Contact extends AbstractPersistentBean implements org.skyve.domain.
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum ContactType implements Enumeration {
+	public enum ContactType implements Enumeration {
 		person("Person", "Person"),
 		organisation("Organisation", "Organisation");
 
@@ -164,7 +167,7 @@ public class Contact extends AbstractPersistentBean implements org.skyve.domain.
 		return Contact.DOCUMENT_NAME;
 	}
 
-	public static Contact newInstance() {
+	public static ContactExtension newInstance() {
 		try {
 			return CORE.getUser().getCustomer().getModule(MODULE_NAME).getDocument(CORE.getUser().getCustomer(), DOCUMENT_NAME).newInstance(CORE.getUser());
 		}
@@ -179,13 +182,7 @@ public class Contact extends AbstractPersistentBean implements org.skyve.domain.
 	@Override
 	@XmlTransient
 	public String getBizKey() {
-return modules.admin.Contact.ContactBizlet.bizKey(this);
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof Contact) && 
-					this.getBizId().equals(((Contact) o).getBizId()));
+return ((ContactExtension)this).bizKey();
 	}
 
 	/**

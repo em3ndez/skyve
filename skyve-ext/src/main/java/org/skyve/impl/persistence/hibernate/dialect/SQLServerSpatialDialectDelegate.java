@@ -22,37 +22,53 @@ class SQLServerSpatialDialectDelegate implements SkyveDialect, Serializable {
 	// This is used at startup (hopefully before any Serialization)
 	private transient UniqueDelegate uniqueDelegate;
 
+	/**
+	 * Creates a helper that layers Skyve's SQL Server-specific spatial and uniqueness behaviour over a Hibernate dialect.
+	 *
+	 * @param actualDialect the concrete Hibernate dialect that will own the generated SQL
+	 */
 	public SQLServerSpatialDialectDelegate(Dialect actualDialect) {
 		uniqueDelegate = new SQLServer2008NullTolerantUniqueDelegate(actualDialect);
 	}
 	
+	/**
+	 * Returns the SQL type code used for geometry columns.
+	 */
 	@Override
 	public int getGeometrySqlType() {
 		return SqlServer2008GeometryTypeDescriptor.INSTANCE.getSqlType();
 	}
 
+	/**
+	 * Returns the Hibernate geometry type descriptor used by this delegate.
+	 */
 	@Override
 	public JTSGeometryType getGeometryType() {
 		return geometryType;
 	}
 
 	// From SqlServer2008GeometryTypeDescriptor
+	/**
+	 * Converts a JTS geometry into the persisted SQL Server geometry representation.
+	 */
 	@Override
 	public Object convertToPersistedValue(Geometry geometry) {
 		return Encoders.encode(JTS.from(geometry));
 	}
 
 	// From SqlServer2008GeometryTypeDescriptor
+	/**
+	 * Converts a persisted SQL Server geometry value back into a JTS geometry.
+	 */
 	@Override
 	public Geometry convertFromPersistedValue(Object geometry) {
-		byte[] bytes = null;
-		if (geometry instanceof byte[]) {
-			bytes = (byte[]) geometry;
+		byte[] result = null;
+		if (geometry instanceof byte[] bytes) {
+			result = bytes;
 		}
-		else if (geometry instanceof Blob) {
-			Blob blob = (Blob) geometry;
+		else if (geometry instanceof Blob blob) {
 			try {
-				bytes = blob.getBytes(1, (int) blob.length());
+				result = blob.getBytes(1, (int) blob.length());
 			}
 			catch (SQLException e) {
 				throw new IllegalArgumentException("Error on transforming blob into array.", e);
@@ -61,19 +77,28 @@ class SQLServerSpatialDialectDelegate implements SkyveDialect, Serializable {
 		else {
 			throw new IllegalArgumentException( "Expected byte array or BLOB" );
 		}
-		return JTS.to((org.geolatte.geom.Geometry<?>) Decoders.decode(bytes));
+		return JTS.to((org.geolatte.geom.Geometry<?>) Decoders.decode(result));
 	}
 
+	/**
+	 * Determines whether a column definition difference requires ALTER COLUMN DDL.
+	 */
 	@Override
 	public boolean isAlterTableColumnChangeRequired(Column column, ColumnInformation columnInfo) {
 		return DDLDelegate.isAlterTableColumnChangeRequired(column, columnInfo);
 	}
 	
+	/**
+	 * Returns the SQL Server column-modification clause used in ALTER TABLE statements.
+	 */
 	@Override
 	public String getModifyColumnString() {
 		return "alter column";
 	}
 	
+	/**
+	 * Returns the RDBMS identifier for this delegate.
+	 */
 	@Override
 	public RDBMS getRDBMS() {
 		return RDBMS.sqlserver;

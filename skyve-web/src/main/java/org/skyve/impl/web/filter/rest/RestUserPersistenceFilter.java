@@ -1,17 +1,15 @@
 package org.skyve.impl.web.filter.rest;
 
 import java.io.IOException;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.logging.Level;
 
 import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.impl.metadata.user.UserImpl;
 import org.skyve.impl.persistence.AbstractPersistence;
-import org.skyve.impl.util.UtilImpl;
+import org.skyve.impl.web.WebErrorUtil;
 import org.skyve.impl.web.WebUtil;
 import org.skyve.metadata.MetaDataException;
-import org.skyve.util.Util;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.FilterConfig;
@@ -55,11 +53,25 @@ import jakarta.servlet.http.HttpServletResponse;
  *	&lt;url-pattern&gt;{restUrlPattern}&lt;/url-pattern&gt;
  * &lt;/filter-mapping&gt;
  * </pre>
+ *
+ * <p>Side effects: starts a persistence transaction, sets the thread-local persistence user,
+ * and writes REST error responses on authentication/metadata/unexpected failures.
+ *
+ * <p>Threading: this filter stores configuration in {@code persistenceUser} during
+ * initialization and then treats it as read-only for request processing.
  */
 public class RestUserPersistenceFilter extends AbstractRestFilter {
-
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(RestUserPersistenceFilter.class);
+    private static final String AUTHENTICATE_ERROR_MESSAGE = "Unable to authenticate with the provided credentials";
+    
 	private String persistenceUser;
 
+	/**
+	 * Reads the configured persistence user and initializes shared REST filter settings.
+	 *
+	 * @param config filter configuration containing the PersistenceUser parameter
+	 * @throws ServletException when initialization fails
+	 */
 	@Override
 	public void init(FilterConfig config) throws ServletException {
 		persistenceUser = config.getInitParameter("PersistenceUser");
@@ -67,11 +79,23 @@ public class RestUserPersistenceFilter extends AbstractRestFilter {
 		super.init(config);
 	}
 
+	/**
+	 * Processes a REST request under the configured persistence user.
+	 *
+	 * <p>When the configured user cannot be resolved, this method returns HTTP 403.
+	 * For non-security failures, it logs an unexpected error reference and returns
+	 * a generic REST error payload.
+	 *
+	 * @param request the incoming servlet request
+	 * @param response the outgoing servlet response
+	 * @param chain the downstream filter chain
+	 * @throws IOException if writing the response fails
+	 * @throws ServletException if downstream filter processing fails
+	 */
 	@Override
 	public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
-			throws IOException, ServletException {
-		Instant start = Instant.now();
-		Util.LOGGER.fine("RestUserPersistenceFilter intercepted request");
+	throws IOException, ServletException {
+		LOGGER.debug("RestUserPersistenceFilter intercepted request");
 
 		HttpServletRequest httpRequest = (HttpServletRequest) request;
 		HttpServletResponse httpResponse = (HttpServletResponse) response;
@@ -84,33 +108,35 @@ public class RestUserPersistenceFilter extends AbstractRestFilter {
 
 			UserImpl user = ProvidedRepositoryFactory.get().retrieveUser(persistenceUser);
 			if (user != null) {
-				Util.LOGGER.fine("Setting persistence user to: " + persistenceUser);
+				LOGGER.debug("Setting persistence user to: {}", persistenceUser);
 				WebUtil.setSessionId(user, httpRequest);
 				persistence.setUser(user);
-				Util.LOGGER.fine(
-						String.format("RestUserPersistenceFilter persistence injection took: %S",
-								Duration.between(start, Instant.now())));
 				chain.doFilter(httpRequest, httpResponse);
-			} else {
-				error(persistence, httpResponse, HttpServletResponse.SC_FORBIDDEN, realm,
-						"Unable to authenticate with the provided credentials");
 			}
-		} catch (@SuppressWarnings("unused") SecurityException e) {
-			error(persistence, httpResponse, HttpServletResponse.SC_FORBIDDEN, realm,
-					"Unable to authenticate with the provided credentials");
-		} catch (@SuppressWarnings("unused") MetaDataException e) {
-			error(persistence, httpResponse, HttpServletResponse.SC_FORBIDDEN, realm,
-					"Unable to authenticate with the provided credentials");
-		} catch (Throwable t) {
-			t.printStackTrace();
-			UtilImpl.LOGGER.log(Level.SEVERE, t.getLocalizedMessage(), t);
-			error(persistence, httpResponse, t.getLocalizedMessage());
-		} finally {
+			else {
+				error(persistence, httpRequest, httpResponse, HttpServletResponse.SC_FORBIDDEN, realm, AUTHENTICATE_ERROR_MESSAGE);
+			}
+		}
+		catch (Throwable t) {
+			if (persistence != null) {
+				persistence.rollback();
+			}
+			
+			if (t instanceof SecurityException) {
+				error(persistence, httpRequest, httpResponse, HttpServletResponse.SC_FORBIDDEN, realm, AUTHENTICATE_ERROR_MESSAGE);
+			}
+			else if (t instanceof MetaDataException) {
+				error(persistence, httpRequest, httpResponse, HttpServletResponse.SC_FORBIDDEN, realm, AUTHENTICATE_ERROR_MESSAGE);
+			}
+			else {
+				String reference = WebErrorUtil.logUnexpectedAndGetReference(LOGGER, "REST user persistence filter failed", t);
+				error(persistence, httpRequest, httpResponse, WebErrorUtil.genericMessage(reference));
+			}
+		}
+		finally {
 			if (persistence != null) {
 				persistence.commit(true);
 			}
 		}
-		Util.LOGGER.fine(
-				String.format("RestUserPersistenceFilter total request handling took: %S", Duration.between(start, Instant.now())));
 	}
 }

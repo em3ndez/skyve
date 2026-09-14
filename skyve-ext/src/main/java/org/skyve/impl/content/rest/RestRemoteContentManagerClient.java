@@ -4,6 +4,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 import org.skyve.content.AttachmentContent;
 import org.skyve.content.BeanContent;
@@ -13,7 +14,8 @@ import org.skyve.domain.messages.DomainException;
 import org.skyve.impl.cache.StateUtil;
 import org.skyve.impl.content.AbstractContentManager;
 import org.skyve.impl.util.UtilImpl;
-import org.skyve.util.Util;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 /**
  * This class is used to talk to another skyve server's REST content server.
@@ -43,6 +45,9 @@ import org.skyve.util.Util;
  */
 public class RestRemoteContentManagerClient extends AbstractContentManager {
 	private static final String REST_CONTENT_PATH = "/rest/content";
+	private static final String TRUNCATE_INDEXING_UNSUPPORTED = "Truncate indexing of a remote content repository is not supported";
+	
+	private static final Logger LOGGER = SkyveLoggerFactory.getLogger(RestRemoteContentManagerClient.class);
 	
 	@Override
 	public void startup() {
@@ -63,7 +68,7 @@ public class RestRemoteContentManagerClient extends AbstractContentManager {
 
 	@Override
 	public void put(BeanContent content) throws Exception {
-		Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.put() sent for " + content.getBizId());
+		LOGGER.info("Remote call to RestRemoteContentManagerServer.put() sent for {}", content.getBizId());
 		StringBuilder url = new StringBuilder(128);
 		url.append(UtilImpl.CONTENT_REST_SERVER_URL).append(REST_CONTENT_PATH).append(RestRemoteContentManagerServer.BEAN_PATH);
 		call(url.toString(), "PUT", StateUtil.encode64(content));
@@ -71,7 +76,7 @@ public class RestRemoteContentManagerClient extends AbstractContentManager {
 
 	@Override
 	public void put(AttachmentContent content, boolean index) throws Exception {
-		Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.put() sent for " + content.getBizId() + " attribute " + content.getAttributeName());
+		LOGGER.info("Remote call to RestRemoteContentManagerServer.put() sent for {} attribute {}", content.getBizId(), content.getAttributeName());
 		StringBuilder url = new StringBuilder(128);
 		url.append(UtilImpl.CONTENT_REST_SERVER_URL).append(REST_CONTENT_PATH).append(RestRemoteContentManagerServer.ATTACHMENT_PATH);
 		url.append("?index=").append(index);
@@ -81,15 +86,15 @@ public class RestRemoteContentManagerClient extends AbstractContentManager {
 
 	@Override
 	public void update(AttachmentContent content) throws Exception {
-		Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.update() sent for " + content.getContentId());
+		LOGGER.info("Remote call to RestRemoteContentManagerServer.update() sent for {}", content.getContentId());
 		StringBuilder url = new StringBuilder(128);
 		url.append(UtilImpl.CONTENT_REST_SERVER_URL).append(REST_CONTENT_PATH).append(RestRemoteContentManagerServer.ATTACHMENT_PATH);
-		call(url.toString(), "POST", StateUtil.encode64(content));
+		call(url.toString(), "POST", StateUtil.encode64(content.cloneForRemoteUpdate()));
 	}
 	
 	@Override
 	public AttachmentContent getAttachment(String contentId) throws Exception {
-		Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.getAttachment() sent for " + contentId);
+		LOGGER.info("Remote call to RestRemoteContentManagerServer.getAttachment() sent for {}", contentId);
 		StringBuilder url = new StringBuilder(128);
 		url.append(UtilImpl.CONTENT_REST_SERVER_URL).append(REST_CONTENT_PATH).append(RestRemoteContentManagerServer.ATTACHMENT_PATH).append('/').append(contentId);
 		String result = call(url.toString(), "GET", null);
@@ -98,7 +103,7 @@ public class RestRemoteContentManagerClient extends AbstractContentManager {
 
 	@Override
 	public void removeBean(String bizId) throws Exception {
-		Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.removeBean() sent for " + bizId);
+		LOGGER.info("Remote call to RestRemoteContentManagerServer.removeBean() sent for {}", bizId);
 		StringBuilder url = new StringBuilder(128);
 		url.append(UtilImpl.CONTENT_REST_SERVER_URL).append(REST_CONTENT_PATH).append(RestRemoteContentManagerServer.BEAN_PATH).append('/').append(bizId);
 		call(url.toString(), "DELETE", null);
@@ -106,7 +111,7 @@ public class RestRemoteContentManagerClient extends AbstractContentManager {
 
 	@Override
 	public void removeAttachment(String contentId) throws Exception {
-		Util.LOGGER.info("Remote call to RestRemoteContentManagerServer.removeAttachment() sent for " + contentId);
+		LOGGER.info("Remote call to RestRemoteContentManagerServer.removeAttachment() sent for {}", contentId);
 		StringBuilder url = new StringBuilder(128);
 		url.append(UtilImpl.CONTENT_REST_SERVER_URL).append(REST_CONTENT_PATH).append(RestRemoteContentManagerServer.ATTACHMENT_PATH).append('/').append(contentId);
 		call(url.toString(), "DELETE", null);
@@ -121,7 +126,7 @@ public class RestRemoteContentManagerClient extends AbstractContentManager {
 			if (body != null) {
 				connection.setDoOutput(true);
 				try (OutputStream os = connection.getOutputStream()) {
-					os.write(body.getBytes(Util.UTF8));
+					os.write(body.getBytes(StandardCharsets.UTF_8));
 					os.flush();
 				}
 			}
@@ -134,7 +139,7 @@ public class RestRemoteContentManagerClient extends AbstractContentManager {
 			
 			try (InputStream is = connection.getInputStream()) {
 				byte[] bytes = is.readAllBytes();
-				return new String(bytes, Util.UTF8);
+				return new String(bytes, StandardCharsets.UTF_8);
 			}
 		}
 		catch (Exception e) {
@@ -148,18 +153,23 @@ public class RestRemoteContentManagerClient extends AbstractContentManager {
 	}
 
 	@Override
-	public void truncate(String customerName) throws Exception {
-		throw new UnsupportedOperationException("Truncate of a remote content repository is not supported");
+	public void dropIndexing() throws Exception {
+		throw new UnsupportedOperationException("Drop indexing of a remote content repository is not supported");
+	}
+	
+	@Override
+	public void truncateIndexing(String customerName) throws Exception {
+		throw new UnsupportedOperationException(TRUNCATE_INDEXING_UNSUPPORTED);
 	}
 
 	@Override
-	public void truncateAttachments(String customerName) throws Exception {
-		throw new UnsupportedOperationException("Truncate of a remote content repository is not supported");
+	public void truncateAttachmentIndexing(String customerName) throws Exception {
+		throw new UnsupportedOperationException(TRUNCATE_INDEXING_UNSUPPORTED);
 	}
 
 	@Override
-	public void truncateBeans(String customerName) throws Exception {
-		throw new UnsupportedOperationException("Truncate of a remote content repository is not supported");
+	public void truncateBeanIndexing(String customerName) throws Exception {
+		throw new UnsupportedOperationException(TRUNCATE_INDEXING_UNSUPPORTED);
 	}
 
 	@Override

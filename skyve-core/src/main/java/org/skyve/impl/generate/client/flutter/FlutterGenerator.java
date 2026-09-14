@@ -21,12 +21,18 @@ import org.skyve.domain.messages.DomainException;
 import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.metadata.customer.Customer;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
+/**
+ * Orchestrates Flutter client code generation for modules and views.
+ *
+ * <p>Coordinates routing, component/layout rendering, and output writing.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate fragments of generated Flutter project output.
 public class FlutterGenerator {
     public static final String INDENT = "  ";
 
-    private Logger log = LoggerFactory.getLogger(getClass());
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(FlutterGenerator.class);
 
     private GeneratorConfig config;
     Set<FlutterView> views = new TreeSet<>();
@@ -57,7 +63,7 @@ public class FlutterGenerator {
     void refreshFile(String resourcePath, String flutterPath, Map<String, String> substitutions) throws IOException {
         File file = new File(projectPath, flutterPath);
         if (file.exists()) {
-            if (!file.delete()) {
+            if (! file.delete()) {
                 throw new DomainException("Could not delete file " + file.getCanonicalPath());
             }
         }
@@ -74,7 +80,7 @@ public class FlutterGenerator {
             flutterContent = flutterContent.replace(substitution.getKey(), substitution.getValue());
         }
 
-        log.debug(String.format("Refreshing file '%s' with substitutions: %s", file, substitutions.keySet()));
+        LOGGER.debug("Refreshing file {} with substitutions: {}", file, substitutions.keySet());
 
         try (FileWriter fw = new FileWriter(file)) {
             fw.write(flutterContent);

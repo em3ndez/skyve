@@ -3,26 +3,19 @@
 			xmlns="http://www.skyve.org/xml/document"
 			xsi:schemaLocation="http://www.skyve.org/xml/document ../../../schemas/document.xsd"
 			xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<documentation>System user account</documentation>
+	<extends document="UserProxy" />
 	<persistent name="ADM_SecurityUser" />
 	<singularAlias>User</singularAlias>
 	<pluralAlias>Users</pluralAlias>
 	<iconStyleClass>fa-solid fa-user</iconStyleClass>
 	<bizKey sensitivity="personal">
-		<![CDATA[return modules.admin.User.UserBizlet.bizKey(this);]]>
+		<![CDATA[return ((UserExtension)this).bizKey();]]>
 	</bizKey>
 	<implements>
 		<interface>org.skyve.domain.app.admin.User</interface>
 	</implements>
 	<attributes>
-		<text name="userName" required="true" sensitivity="personal">
-			<documentation>
-				<![CDATA[
-					Length is derived from the maximum email address length from RFC 5321
-				]]>
-			</documentation>
-			<displayName>admin.user.userName.displayName</displayName>
-			<length>254</length>
-		</text>
 		<text name="password" audited="false" sensitivity="secret">
 			<displayName>admin.user.password.displayName</displayName>
 			<description>admin.user.password.description</description>
@@ -34,10 +27,6 @@
 			<description>admin.user.generatedPassword.description</description>
 			<length>255</length>
 		</text>
-		<dateTime name="createdDateTime">
-			<displayName>admin.user.createdDateTime.displayName</displayName>
-			<description>admin.user.createdDateTime.description</description>
-		</dateTime>
 		<text name="homeModule" >
 			<displayName>admin.user.homeModule.displayName</displayName>
 			<description>admin.user.homeModule.description</description>
@@ -74,11 +63,23 @@
 			<description>admin.user.passwordLastChangedIP.description</description>
 			<length>45</length>
 		</text>
-		<text name="passwordLastChangedRegion" sensitivity="secret" usage="domain">
+		<text name="passwordLastChangedCountryCode" sensitivity="secret" usage="domain">
 			<documentation>2-letter country-code where password was last changed. Referenced in password change notification email contents.</documentation>
-			<displayName>admin.user.passwordLastChangedRegion.displayName</displayName>
-			<description>admin.user.passwordLastChangedRegion.description</description>
+			<displayName>admin.user.passwordLastChangedCountryCode.displayName</displayName>
+			<description>admin.user.passwordLastChangedCountryCode.description</description>
 			<length>2</length>
+		</text>
+		<text name="passwordLastChangedCountryName" audited="false" persistent="false" trackChanges="false" sensitivity="secret" usage="view">
+			<documentation>
+				<![CDATA[
+					User Locale Country Name where password was last changed.
+					Referenced in password change notification email contents.
+					The getter is overridden in the extension class.
+				]]>
+			</documentation>
+			<displayName>admin.user.passwordLastChangedCountryName.displayName</displayName>
+			<description>admin.user.passwordLastChangedCountryName.description</description>
+			<length>100</length>
 		</text>
 		<text name="passwordResetToken" sensitivity="secret">
 			<documentation>This contains a token (UUID + time in millis) which when submitted by the user will enable them to reset their password.</documentation>
@@ -109,13 +110,6 @@
 			<displayName>admin.user.lastAuthenticationFailure.displayName</displayName>
 			<description>admin.user.lastAuthenticationFailure.description</description>
 		</timestamp>
-		<!-- If you change this association to be composed, change it in admin.UserProxy document also -->
-		<association name="contact" type="aggregation" required="true">
-			<displayName>admin.user.association.contact.displayName</displayName>
-			<description>admin.user.association.contact.description</description>
-			<documentName>Contact</documentName>
-			<queryName>qContacts</queryName>
-		</association>
 		<association name="dataGroup" type="aggregation">
 			<displayName>admin.user.association.dataGroup.displayName</displayName>
 			<description>admin.user.association.dataGroup.description</description>
@@ -192,10 +186,6 @@
 			<displayName>admin.user.contactSelected.displayName</displayName>
 			<defaultValue>false</defaultValue>
 		</boolean>
-		<boolean name="inactive">
-			<displayName>admin.user.inactive.displayName</displayName>
-			<description>admin.user.inactive.description</description>
-		</boolean>
 		<enum name="groupSelection" audited="false" persistent="false" trackChanges="false" usage="view">
 			<displayName>admin.user.groupSelection.displayName</displayName>
 			<values>
@@ -243,12 +233,12 @@
 		</text>	
 		
 		<!-- 2FA -->
-		<text name="twoFactorCode" audited="false">
+		<text name="twoFactorCode" audited="false" sensitivity="secret">
 			<documentation>this is hashed</documentation>
 			<displayName>Two Factor Code</displayName>
-			<length>100</length>
+			<length>255</length>
 		</text>
-		<timestamp name="twoFactorCodeGeneratedTimestamp" audited="false">
+		<timestamp name="twoFactorCodeGeneratedTimestamp" audited="false" sensitivity="secret">
 			<documentation>used to invalidate the 2fa code when X amount of time has passed. Not displayed to the user</documentation>
 			<displayName>2FA Code DateTime</displayName>
 		</timestamp>
@@ -366,6 +356,12 @@
 			<message>The user {userName} already exists.</message>
 			<fieldReferences>
 				<ref>userName</ref>
+			</fieldReferences>
+		</constraint>
+		<constraint name="UniqueUserContact" scope="customer">
+			<message>The contact {contact.bizKey} is already assigned to another user.</message>
+			<fieldReferences>
+				<ref>contact.bizId</ref>
 			</fieldReferences>
 		</constraint>
 	</uniqueConstraints>

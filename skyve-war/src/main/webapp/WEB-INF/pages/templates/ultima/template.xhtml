@@ -6,9 +6,10 @@
 		xmlns:p="http://primefaces.org/ui"
 		xmlns:pe="http://primefaces.org/ui/extensions"
 		xmlns:pu="http://primefaces.org/ultima"
-		xmlns:o="http://omnifaces.org/ui"
 		xmlns:c="http://java.sun.com/jsp/jstl/core"
 		xmlns:s="http://skyve.org/xml/ui"
+		xmlns:sse="http://xmlns.jcp.org/jsf/composite/sse"
+		lang="#{bean.languageTag}" xml:lang="#{bean.languageTag}"
 		dir="#{bean.dir}">
 	<f:view contentType="text/html" encoding="UTF-8">
 		<h:head id="head">
@@ -16,7 +17,7 @@
 				<meta http-equiv="X-UA-Compatible" content="IE=edge" />
 				<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
 				<meta name="apple-mobile-web-app-capable" content="yes" />
-				<meta name="theme-color" content="#{bean.getThemeColour('indigo')}" />
+				<meta name="theme-color" content="#{_skyveTheme.baseColour}" />
 			</f:facet>
 	
 			<title>${project.description}</title>
@@ -25,19 +26,10 @@
 			<h:outputText value="#{bean.skyveVersionComment}" escape="false" />
 			-->	
 			<ui:include src="/WEB-INF/pages/includes/favicon.xhtml" />
-			<!-- 4.7 is disabled by default
-			<link type="text/css" rel="stylesheet" href="fontawesome-4.7.0/css/font-awesome.min.css" />
-			-->
-			<link type="text/css" rel="stylesheet" href="fontawesome-6.5.1/css/all.min.css" />
-			<link type="text/css" rel="stylesheet" href="skyve/css/prime-min.css?v=#{bean.webResourceFileVersion}" />
-			<h:outputStylesheet name="css/ultima.css?v=#{bean.webResourceFileVersion}" library="skyve" />
-			<link type="text/css" rel="stylesheet" href="pages/css/admin.css?v=#{bean.webResourceFileVersion}" />
-			<h:outputStylesheet name="css/ultima.css?v=#{bean.webResourceFileVersion}" library="skyve" />
-			<h:outputScript name="ripple/ripple.js?v=#{bean.webResourceFileVersion}" library="layout" />
-			<h:outputScript name="js/layout.js?v=#{bean.webResourceFileVersion}" library="layout" />
-			<!-- Unsure why this isn't included by the menu component but I had to manually include it -->
-			<h:outputScript name="js/layout.menu.js?v=#{bean.webResourceFileVersion}" library="layout" />
-			<script type="text/javascript" src="skyve/prime/skyve-min.js?v=#{bean.webResourceFileVersion}"></script>
+			<ui:include src="./head-resources.xhtml">
+				<ui:param name="bean" value="#{bean}" />
+				<ui:param name="iframe" value="false" />
+			</ui:include>
 			<script type="text/javascript">
 				<!-- PF8 doesnt work with touch on - a.swipe is not a function when registering swipeLeft and swipeRight -->
 				PrimeFaces.env.touch=false;
@@ -50,12 +42,11 @@
 		<h:body id="body" styleClass="ui-input-filled">
 			<h:panelGroup styleClass="skyveEnvBanner skyveTopEnvBanner" rendered="#{not empty bean.environmentIdentifier}">#{bean.environmentIdentifier}</h:panelGroup>
 			<h:panelGroup styleClass="skyveEnvBanner skyveBottomEnvBanner" rendered="#{not empty bean.environmentIdentifier}">#{bean.environmentIdentifier}</h:panelGroup>
-			<div class="#{showMenu ? 'layout-wrapper layout-menu-static layout-menu-light layout-topbar-'.concat(bean.getThemeColour('indigo')) : 'layout-wrapper layout-topbar-'.concat(bean.getThemeColour('indigo'))}">
+			<div class="#{showMenu ? 'layout-wrapper layout-menu-static layout-menu-light '.concat(_skyveTheme.layoutStyleClass) : 'layout-wrapper '.concat(_skyveTheme.layoutStyleClass)}">
 				<ui:include src="./topbar.xhtml">
 					<ui:param name="showMenu" value="#{showMenu}" />
 					<ui:param name="showSwitchMode" value="#{showSwitchMode}" />
 					<ui:param name="showLogout" value="#{showLogout}" />
-					<ui:param name="title" value="#{bean.title}" />
 					<ui:param name="bean" value="#{bean}" />
 				</ui:include>
 	
@@ -79,14 +70,16 @@
 					</div>
 				</h:form>
 				<div class="layout-main">
-					<p:messages id="messages" widgetVar="messages" globalOnly="true" escape="false">
+					<p:messages id="messages" widgetVar="messages" globalOnly="true" escape="false" styleClass="skyve-global-messages">
 						<p:autoUpdate />
 					</p:messages>
 					<p:growl id="growl" widgetVar="growl" globalOnly="true" escape="false">
 						<p:autoUpdate />
 					</p:growl>
-					<!-- Do not establish a socket for a public user (user in session but no principal established) -->
-					<o:socket id="socket" widgetVar="socket" channel="skyve" user="#{sessionScope['user'].id}" onmessage="function(message) { SKYVE.PF.onPushMessage(message) }" rendered="#{not empty request.remoteUser}" />
+
+					<!-- Do not establish an SSE EventSource for a public user (user in session but no principal established) -->
+					<sse:connect rendered="#{not empty request.remoteUser}" onMessage="SKYVE.PF.onPushMessage" />
+
 					<!-- Need separate growl for push coz autoUpdated growl wont respond through javascript -->
 					<p:growl id="pushGrowl" widgetVar="pushGrowl" for="push" escape="false" />
 					<p:tooltip id="help" widgetVar="help" globalSelector="i" escape="false" />
@@ -118,8 +111,7 @@
 				</div>
 			</div>
 	
-			<div id="glassPane" class="glassPane" />
-			<p:ajaxStatus id="wheelOfDeath" styleClass="wheelOfDeath" onstart="$('#glassPane').css({display:'block'})" oncomplete="$('#glassPane').css({display:'none'})">
+			<p:ajaxStatus id="wheelOfDeath" styleClass="wheelOfDeath">
 				<f:facet name="start">
 					<i class="fa-solid fa-2x fa-circle-notch fa-spin ajax-loader" aria-hidden="true"></i>
 				</f:facet>
@@ -127,10 +119,10 @@
 					<h:outputText value="" />
 				</f:facet>
 			</p:ajaxStatus>
-	
-			<h:outputStylesheet name="styles/layout-light.css?v=#{bean.webResourceFileVersion}" library="layout" />
-			<h:outputStylesheet name="primeflex/primeflex.min.css?v=#{bean.webResourceFileVersion}" library="layout"/>
-			<h:outputStylesheet name="ripple/ripple.css?v=#{bean.webResourceFileVersion}" library="layout" />
-		</h:body>
+			<ui:include src="./body-resources.xhtml">
+				<ui:param name="bean" value="#{bean}" />
+				<ui:param name="iframe" value="false" />
+			</ui:include>
+			</h:body>
 	</f:view>
 </html>

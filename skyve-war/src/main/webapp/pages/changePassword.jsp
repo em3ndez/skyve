@@ -20,23 +20,23 @@
 	
 	Principal p = request.getUserPrincipal();
 	if (p == null) { // not logged in
-		response.sendRedirect(response.encodeRedirectURL(Util.getHomeUrl() + "home.jsp"));
+		response.sendRedirect(response.encodeRedirectURL(Util.getBaseUrl() + "home.jsp"));
 		return;
 	}
 	// Get the user
 	HttpSession session = request.getSession(false);
 	if (session == null) {
-		response.sendRedirect(response.encodeRedirectURL(Util.getHomeUrl() + "home.jsp"));
+		response.sendRedirect(response.encodeRedirectURL(Util.getBaseUrl() + "home.jsp"));
 		return;
 	}
 	user = (User) session.getAttribute(WebContext.USER_SESSION_ATTRIBUTE_NAME);
 	if (user == null) { // if the user is not established yet (but we've logged in...)
-		response.sendRedirect(response.encodeRedirectURL(Util.getHomeUrl() + "home.jsp"));
+		response.sendRedirect(response.encodeRedirectURL(Util.getBaseUrl() + "home.jsp"));
 		return;
 	}
 	
 	String basePath = Util.getSkyveContextUrl() + "/";
-	boolean mobile = UserAgent.getType(request).isMobile();
+	boolean mobile = UserAgent.detectType(request).isMobile();
 	Locale locale = user.getLocale();
 	
 	String passwordChangeErrorMessage = null;
@@ -72,14 +72,14 @@
 		
 		passwordChangeErrorMessage = WebUtil.makePasswordChange(user, oldPasswordValue, newPasswordValue, confirmPasswordValue);
 		if (passwordChangeErrorMessage == null) {
-			request.getSession().setAttribute(WebContext.USER_SESSION_ATTRIBUTE_NAME, user);
-			response.sendRedirect(response.encodeRedirectURL(Util.getHomeUrl() + "home.jsp"));
+			session.invalidate();
+			response.sendRedirect(response.encodeRedirectURL(Util.getLoginUrl()));
 			return;
 		}
 	}
 %>
 <!DOCTYPE html>
-<html dir="<%=Util.isRTL(locale) ? "rtl" : "ltr"%>">
+<html dir="<%=Util.isRTL(locale) ? "rtl" : "ltr"%>" lang="<%=locale.getLanguage()%>" xml:lang="<%=locale.getLanguage()%>">
 	<head>
 		<!-- Standard Meta -->
 	    <meta charset="utf-8" />
@@ -108,7 +108,7 @@
 		<script type="text/javascript" src="semantic24/jquery.slim.min.js"></script>
 		<script type="text/javascript" src="semantic24/components/form.min.js"></script>
 		<script type="text/javascript" src="semantic24/components/transition.min.js"></script>
-		<script type="text/javascript" src="skyve/prime/skyve-min.js"></script>
+		<script type="text/javascript" src="skyve/prime/skyve-min.js?v=<%=UtilImpl.WEB_RESOURCE_FILE_VERSION%>"></script>
 		
 		<!-- Password strength estimator -->
 		<script type="text/javascript" src="zxcvbn/zxcvbn-4.4.2-min.js"></script>

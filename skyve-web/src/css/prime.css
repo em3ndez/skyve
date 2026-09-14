@@ -3,6 +3,41 @@ body,html {
 	padding: 0;
 	height: 100%;
 }
+
+/* Metadata icon and title shared by all PrimeFaces layout themes. */
+.skyve-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.625rem;
+	max-width: 100%;
+	min-width: 0;
+	vertical-align: middle;
+}
+.skyve-title-icon {
+	box-sizing: border-box;
+	color: inherit;
+	flex: 0 0 auto;
+	font-size: 1.75rem;
+	height: 2rem;
+	line-height: 2rem;
+	object-fit: contain;
+	width: 2rem;
+}
+.skyve-title-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+	.skyve-title {
+		gap: 0.4rem;
+	}
+	.skyve-title-icon {
+		font-size: 1.25rem;
+		height: 1.5rem;
+		line-height: 1.5rem;
+		width: 1.5rem;
+	}
+}
 /* Ensure that there is gaps vertically and horizontally between toolbar buttons */
 .ui-toolbar-group-left, .ui-toolbar-group-right {
 	gap: 5px !important;
@@ -14,6 +49,120 @@ body,html {
 }
 .ui-column-filter {
 	width: 95% !important;
+}
+/* Keep PrimeFaces sticky list headers below exposed layout menus/drawers. */
+.ui-datatable-sticky {
+	z-index: 995 !important;
+}
+
+/* A DataGrid stays tabular until its own rendered columns need more room. */
+.skyve-card-grid {
+	box-sizing: border-box;
+	min-width: 0;
+	width: 100%;
+}
+.skyve-card-grid:not(.skyve-card-grid-active) > .ui-datatable-tablewrapper {
+	overflow-x: auto;
+}
+.skyve-card-cell-label {
+	display: none;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper,
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table,
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > tbody {
+	box-sizing: border-box;
+	display: block;
+	min-width: 0;
+	width: 100%;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper {
+	overflow: visible;
+	padding: 12px;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > thead,
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > thead > tr {
+	display: block;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > thead > tr > th:not(.skyve-card-toolbar) {
+	display: none !important;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > thead > tr > th.skyve-card-toolbar {
+	box-sizing: border-box;
+	display: block !important;
+	text-align: start;
+	width: 100% !important;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > thead > tr > th.skyve-card-toolbar > div {
+	align-items: flex-start !important;
+	height: auto !important;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > tbody > tr:not(.ui-datatable-empty-message) {
+	background: var(--surface-card, #fff);
+	border: 1px solid var(--surface-border, #d8dde3);
+	border-radius: 6px;
+	box-sizing: border-box;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin-bottom: 12px;
+	padding: 12px;
+	width: 100%;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > tbody > tr:not(.ui-datatable-empty-message):last-child {
+	margin-bottom: 0;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > tbody > tr > td.skyve-card-cell:not(.ui-helper-hidden) {
+	box-sizing: border-box;
+	display: block !important;
+	flex: 1 1 200px;
+	min-width: min(100%, 180px);
+	overflow-wrap: anywhere;
+	width: auto !important;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > tbody > tr > td.skyve-card-fixed:not(.ui-helper-hidden) {
+	flex: 0 0 min(100%, var(--skyve-card-width));
+	max-width: var(--skyve-card-width);
+	min-width: 0;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > tbody > tr > td.skyve-card-actions:not(.ui-helper-hidden) {
+	box-sizing: border-box;
+	display: block !important;
+	flex: 1 1 100%;
+	width: 100% !important;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > tbody > tr > td.ui-helper-hidden {
+	display: none !important;
+}
+.skyve-card-grid-active .skyve-card-cell-label {
+	color: var(--text-color-secondary, #56616b);
+	display: block;
+	font-size: 12px;
+	font-weight: 700;
+	margin-bottom: 4px;
+}
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > tbody > tr.ui-datatable-empty-message,
+.skyve-card-grid-active > .ui-datatable-tablewrapper > table > tbody > tr.ui-datatable-empty-message > td {
+	display: block;
+	width: 100%;
+}
+.skyve-card-grid-active .ui-datatable-data input:not([type="checkbox"]),
+.skyve-card-grid-active .ui-datatable-data textarea,
+.skyve-card-grid-active .ui-datatable-data .ui-selectonemenu,
+.skyve-card-grid-active .ui-datatable-data .ui-autocomplete {
+	box-sizing: border-box;
+	max-width: 100%;
+	width: 100%;
+}
+@media (max-width: 640px) {
+	.skyve-card-grid-active > .ui-datatable-tablewrapper > table > tbody > tr > td.skyve-card-cell:not(.skyve-card-fixed) {
+		flex-basis: 100%;
+	}
+}
+
+/* Keep Leaflet's internal stacking order below shared PrimeFaces layout chrome. */
+.leaflet-container:not(.leaflet-pseudo-fullscreen) {
+	position: relative;
+	z-index: 0;
 }
 
 /* Make font-awesome icons centered when buttons collapse their labels at mobile breakpoints */
@@ -30,6 +179,45 @@ body,html {
 .ui-autocomplete-dropdown.ui-button {
 	min-width: 0px !important;
 	min-height: 0px !important;
+}
+
+.skyveMorphOpening {
+	animation: skyveMorphOpen 320ms cubic-bezier(.22, 1, .36, 1);
+	transform-origin: var(--skyve-morph-origin, top left);
+	will-change: transform, opacity, border-radius;
+	overflow: hidden;
+}
+.skyveMorphGhost {
+	box-shadow: 0 12px 32px rgba(0, 0, 0, .18);
+	pointer-events: none;
+	position: fixed;
+}
+
+@keyframes skyveMorphOpen {
+	from {
+		border-radius: var(--skyve-morph-start-radius, 16px);
+		opacity: .2;
+		transform: translate(var(--skyve-morph-x, 0), var(--skyve-morph-y, 0)) scale(var(--skyve-morph-scale-x, .25), var(--skyve-morph-scale-y, .25));
+	}
+	42% {
+		border-radius: max(var(--skyve-morph-start-radius, 16px), 38px);
+		opacity: .92;
+	}
+	78% {
+		border-radius: max(var(--skyve-morph-end-radius, 8px), 22px);
+		opacity: 1;
+	}
+	to {
+		border-radius: var(--skyve-morph-end-radius, inherit);
+		opacity: 1;
+		transform: translate(0, 0) scale(1, 1);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.skyveMorphOpening {
+		animation: none;
+	}
 }
 
 /* skyve alignment styles */
@@ -57,50 +245,60 @@ span.right {
 	display: flex;
 	align-items: center;
 	justify-content: start;
+	text-align: left;
 }
 @media (min-width: 641px) {
 	.rightForm {
 		display: flex;
 		align-items: center;
 		justify-content: end;
+		text-align: right;
 	}
 	.centerForm {
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		text-align: center;
 	}
 }
 @media (max-width: 640px) {
 	.rightForm {
 		justify-content: start;
+		text-align: left;
 	}
 	.centerForm {
 		justify-content: start;
+		text-align: left;
 	}
 }
 .leftFormFlex {
 	display: flex;
 	align-items: center;
 	justify-content: start;
+	text-align: left;
 }
 @media (min-width: 768px) {
 	.rightFormFlex {
 		display: flex;
 		align-items: center;
 		justify-content: end;
+		text-align: right;
 	}
 	.centerFormFlex {
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		text-align: center;
 	}
 }
 @media (max-width: 767px) {
 	.rightFormFlex {
 		justify-content: start;
+		text-align: left;
 	}
 	.centerFormFlex {
 		justify-content: start;
+		text-align: left;
 	}
 }
 
@@ -171,20 +369,8 @@ span.right {
 	right: 16px;
 	bottom: 16px
 }
-.glassPane {
-	display: none;
-	position: fixed;
-	width: 100%;
-	height: 100%;
-	z-index: 10000;
-	top: 0;
-	left: 0;
-	margin: 0;
-	padding: 0;
-	background-color: #f3f3f3;
-	opacity:0.1;
-}
 
+/* Red environment banner style */
 .skyveEnvBanner {
 	background: red;
 	font-size: 8px;
@@ -237,6 +423,101 @@ th.hiddenFilter input.ui-column-filter, th.hiddenFilter div.ui-column-customfilt
 	color: rgb(5, 116, 218);
 }
 
+.skyveContentHidden {
+	display: none !important;
+}
+
+.skyveContentPreview.skyveContentEmpty {
+	align-items: center;
+	background: #fafbfc;
+	border-color: #d6dee8 !important;
+	border-style: dashed !important;
+	color: #8a96a6;
+	cursor: pointer;
+	display: flex;
+	justify-content: center;
+}
+
+.skyveContentPreview.skyveContentEmpty:before {
+	content: "\f03e";
+	font-family: "Font Awesome 6 Free";
+	font-size: 1.7rem;
+	font-weight: 900;
+	line-height: 1;
+	margin-top: -1.2rem;
+	opacity: 0.55;
+	position: absolute;
+}
+
+.skyveContentPreview.skyveContentEmpty:after {
+	content: "No image";
+	font-size: 0.85rem;
+	margin-top: 2.1rem;
+	opacity: 0.75;
+}
+
+.skyveContentPreview.skyveContentVideoEmpty:before {
+	content: "\f03d";
+}
+
+.skyveContentPreview.skyveContentVideoEmpty:after {
+	content: "No video";
+}
+
+.skyveContentPhoneResponsive {
+	width: 100%;
+}
+
+.skyveContentPhoneResponsive > tbody > tr > td:first-child {
+	width: 100%;
+}
+
+.skyveContentPhoneResponsive > tbody > tr > td:last-child {
+	vertical-align: middle;
+	white-space: nowrap;
+	width: 1%;
+}
+
+div.skyveContentPreview.skyveContentResponsiveImage,
+.skyveContentResponsiveVideo {
+	max-width: 100%;
+	width: 100% !important;
+}
+
+div.skyveContentPreview.skyveContentResponsiveImage {
+	aspect-ratio: 1 / 1;
+	height: auto !important;
+}
+
+.skyveContentResponsiveVideo {
+	aspect-ratio: 16 / 9;
+	height: auto !important;
+}
+
+/* PrimeFaces ui-g collapse breakpoint */
+@media screen and (max-width: 40em) {
+	div.skyveContentPreview.skyveContentResponsiveImage {
+		min-height: 8rem;
+	}
+}
+
+button.skyveContentActionButton.ui-button-icon-only,
+button.skyveContentActionButton.ui-button-text-icon-left {
+	padding: 0 !important;
+	position: relative;
+}
+button.skyveContentActionButton .ui-button-icon-left {
+	left: 50% !important;
+	margin: 0 !important;
+	position: absolute !important;
+	top: 50% !important;
+	transform: translate(-50%, -50%) !important;
+}
+button.skyveContentActionButton .ui-button-text {
+	padding: 0 !important;
+	text-indent: -9999999px;
+}
+
 /* ensure radio button groups have a text wrap that looks like its in a table */
 .ui-selectoneradio tbody tr td {
 	display: inline-flex;
@@ -255,4 +536,13 @@ th.hiddenFilter input.ui-column-filter, th.hiddenFilter div.ui-column-customfilt
 	display: flex;
 	flex-direction: row;
 	align-items: flex-start;
+}
+
+/* Text search highlight style. */
+.highlight {
+    font-size: 16px;
+    font-weight: bold;
+    color: steelblue;
+    padding: 5px;
+    margin: 3px;
 }

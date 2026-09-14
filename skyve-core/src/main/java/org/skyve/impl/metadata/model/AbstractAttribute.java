@@ -1,14 +1,18 @@
 package org.skyve.impl.metadata.model;
 
+import java.util.Map;
+import java.util.TreeMap;
+
 import org.skyve.domain.Bean;
 import org.skyve.impl.domain.types.jaxb.CDATAAdapter;
 import org.skyve.impl.metadata.repository.NamedMetaData;
+import org.skyve.impl.metadata.repository.PropertyMapAdapter;
 import org.skyve.impl.metadata.view.WidgetReference;
 import org.skyve.impl.metadata.view.widget.bound.input.CheckBox;
 import org.skyve.impl.metadata.view.widget.bound.input.ColourPicker;
 import org.skyve.impl.metadata.view.widget.bound.input.Combo;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentImage;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentLink;
+import org.skyve.impl.metadata.view.widget.bound.input.ContentDisplay;
+import org.skyve.impl.metadata.view.widget.bound.input.ContentUpload;
 import org.skyve.impl.metadata.view.widget.bound.input.Geometry;
 import org.skyve.impl.metadata.view.widget.bound.input.InputWidget;
 import org.skyve.impl.metadata.view.widget.bound.input.LookupDescription;
@@ -26,6 +30,21 @@ import jakarta.xml.bind.annotation.XmlTransient;
 import jakarta.xml.bind.annotation.XmlType;
 import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 
+/**
+ * JAXB-annotated base class for all document attribute types.
+ *
+ * <p>Carries the properties common to every attribute: display name, description,
+ * documentation, widget reference, deprecation flag, change-tracking and audit
+ * settings, transience flag, and an open-ended property map.  Concrete subclasses
+ * add the type-specific details (e.g., field length, collection type, referenced
+ * document).
+ *
+ * <p>Threading: not thread-safe.  Attribute instances are written during metadata
+ * loading and are read-only once placed in the repository cache.
+ *
+ * @see Attribute
+ * @see org.skyve.impl.metadata.repository.NamedMetaData
+ */
 @XmlType(namespace = XMLMetaData.DOCUMENT_NAMESPACE,
 			propOrder = {"documentation",
 							"displayName", 
@@ -34,7 +53,8 @@ import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 							"deprecatedBool",
 							"trackChangesBool",
 							"auditedBool",
-							"transientBool"})
+							"transientBool",
+							"properties"})
 public abstract class AbstractAttribute extends NamedMetaData implements Attribute {
 	private static final long serialVersionUID = -6632233770237276819L;
 
@@ -52,6 +72,10 @@ public abstract class AbstractAttribute extends NamedMetaData implements Attribu
 	private Boolean auditedBool = null;
 	private boolean tranzient;
 	private String documentation;
+	
+	@XmlElement(namespace = XMLMetaData.DOCUMENT_NAMESPACE)
+	@XmlJavaTypeAdapter(PropertyMapAdapter.class)
+	private Map<String, String> properties = new TreeMap<>();
 	
 	@Override
 	public String getDisplayName() {
@@ -74,6 +98,15 @@ public abstract class AbstractAttribute extends NamedMetaData implements Attribu
 		this.description = UtilImpl.processStringValue(description);
 	}
 
+	/**
+	 * Some attributes have no required-ness.
+	 * Fields and associations have this method overridden.
+	 */
+	@Override
+	public String getRequiredMessage() {
+		return null;
+	}
+	
 	@Override
 	public AttributeType getAttributeType() {
 		return attributeType;
@@ -136,11 +169,13 @@ public abstract class AbstractAttribute extends NamedMetaData implements Attribu
 				defaultInputWidget.setBinding(getName());
 			}
 			else if (AttributeType.content.equals(attributeType)) {
-				defaultInputWidget = new ContentLink();
+				defaultInputWidget = new ContentUpload();
 				defaultInputWidget.setBinding(getName());
 			}
 			else if (AttributeType.image.equals(attributeType)) {
-				defaultInputWidget = new ContentImage();
+				ContentUpload content = new ContentUpload();
+				content.setDisplay(ContentDisplay.image);
+				defaultInputWidget = content;
 				defaultInputWidget.setBinding(getName());
 			}
 			else if (AttributeType.geometry.equals(attributeType)) {
@@ -265,5 +300,10 @@ public abstract class AbstractAttribute extends NamedMetaData implements Attribu
 	@XmlJavaTypeAdapter(CDATAAdapter.class)
 	public void setDocumentation(String documentation) {
 		this.documentation = UtilImpl.processStringValue(documentation);
+	}
+	
+	@Override
+	public Map<String, String> getProperties() {
+		return properties;
 	}
 }

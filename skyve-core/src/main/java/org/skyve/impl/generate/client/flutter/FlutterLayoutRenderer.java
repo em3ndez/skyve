@@ -13,7 +13,13 @@ import org.skyve.impl.metadata.view.container.form.Form;
 import org.skyve.impl.metadata.view.container.form.FormColumn;
 import org.skyve.impl.metadata.view.container.form.FormItem;
 import org.skyve.impl.metadata.view.container.form.FormRow;
+
+import jakarta.annotation.Nullable;
  
+/**
+ * Flutter-specific layout/container renderer.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate fragments of generated Flutter layout output.
 public class FlutterLayoutRenderer extends LayoutRenderer {
 	public static final String VBOX_IMPORT = "widgets/skyve_vbox";
 	public static final String HBOX_IMPORT = "widgets/skyve_hbox";
@@ -152,7 +158,7 @@ public class FlutterLayoutRenderer extends LayoutRenderer {
 										FormItem currentFormItem,
 										FormColumn currentFormColumn,
 										String widgetLabel,
-										boolean widgetRequired,
+										@Nullable String widgetRequiredMessage,
 										String widgetInvisible,
 										String widgetHelpText) {
 		imports.add(FlutterComponentRenderer.LABEL_IMPORT);
@@ -162,9 +168,16 @@ public class FlutterLayoutRenderer extends LayoutRenderer {
 	}
 
 	@Override
-	public void layoutFormItemWidget(RenderedComponent formOrRowLayout, RenderedComponent formItemComponent, Form currentForm,
-			FormItem currentFormItem, FormColumn currentFormColumn, String widgetLabel, int formWidgetColspan,
-			boolean widgetRequired, String widgetInvisible, String widgetHelpText) {
+	public void layoutFormItemWidget(RenderedComponent formOrRowLayout,
+										RenderedComponent formItemComponent,
+										Form currentForm,
+										FormItem currentFormItem,
+										FormColumn currentFormColumn,
+										String widgetLabel,
+										int formWidgetColspan,
+										@Nullable String widgetRequiredMessage,
+										String widgetInvisible,
+										String widgetHelpText) {
 		imports.add(FORMITEM_IMPORT);
 RenderedComponent col = new RenderedComponent(FlutterGenerator.INDENT).setAfter("),").setIndent("");
 		col.getOutput().append("SkyveFormItem(");

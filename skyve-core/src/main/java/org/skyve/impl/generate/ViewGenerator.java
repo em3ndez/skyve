@@ -26,7 +26,7 @@ import org.skyve.impl.metadata.view.container.form.FormColumn;
 import org.skyve.impl.metadata.view.container.form.FormItem;
 import org.skyve.impl.metadata.view.container.form.FormLabelLayout;
 import org.skyve.impl.metadata.view.container.form.FormRow;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentImage;
+import org.skyve.impl.metadata.view.widget.bound.input.ContentUpload;
 import org.skyve.impl.metadata.view.widget.bound.input.DefaultWidget;
 import org.skyve.impl.metadata.view.widget.bound.input.GeometryMap;
 import org.skyve.impl.metadata.view.widget.bound.input.ListMembership;
@@ -40,6 +40,7 @@ import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.util.XMLMetaData;
 import org.skyve.metadata.MetaData;
 import org.skyve.metadata.MetaDataException;
+import org.skyve.metadata.SerializableMetaData;
 import org.skyve.metadata.controller.ImplicitActionName;
 import org.skyve.metadata.customer.Customer;
 import org.skyve.metadata.model.Attribute;
@@ -62,8 +63,23 @@ import org.skyve.metadata.view.Action;
 import org.skyve.metadata.view.View.ViewType;
 import org.skyve.util.Binder;
 import org.skyve.util.Binder.TargetMetaData;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.slf4j.Logger;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
+
+/**
+ * Generates server-side view helper classes from view metadata descriptors.
+ *
+ * <p>Traverses view definitions and emits strongly typed references for
+ * generated code consumers.
+ */
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate fragments of generated view-source output.
 public class ViewGenerator {
+
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(ViewGenerator.class);
+
 // Revert the responsive gutter centred layout
 //	private static final Integer ONE = Integer.valueOf(1);
 //	private static final Integer TWO = Integer.valueOf(2);
@@ -126,9 +142,10 @@ public class ViewGenerator {
 
 	private static class Detail {
 		String title;
-		MetaData widget;
+		SerializableMetaData widget;
 	}
 	
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private ViewImpl generateEditView(Customer customer, Module module, Document document, boolean formLabelSideLayout) {
 		ViewImpl result = new ViewImpl();
 		result.setName(ViewType.edit.toString());
@@ -233,9 +250,8 @@ public class ViewGenerator {
 			for (Detail detail : details) {
 				tab = new Tab();
 				tab.setTitle(detail.title);
-				MetaData detailWidget = detail.widget;
-				if (detailWidget instanceof AbstractDataWidget) {
-					AbstractDataWidget adw = (AbstractDataWidget) detailWidget;
+				SerializableMetaData detailWidget = detail.widget;
+				if (detailWidget instanceof AbstractDataWidget adw) {
 					adw.setTitle(null);
 				}
 				tab.getContained().add(detailWidget);
@@ -270,6 +286,7 @@ public class ViewGenerator {
 		return result;
 	}
 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private void processAttributes(Customer customer, 
 									Module module, 
 									Document document,
@@ -334,8 +351,7 @@ public class ViewGenerator {
 					row.getItems().add(item);
 					form.getRows().add(row);
 				}
-				else if (attribute instanceof Collection) {
-					Collection collection = (Collection) attribute;
+				else if (attribute instanceof Collection collection) {
 					Document detailDocument = module.getDocument(customer, collection.getDocumentName());
 	
 					List<String> propertyNames = new ArrayList<>();
@@ -363,9 +379,8 @@ public class ViewGenerator {
 						details.add(detail);
 					}
 				}
-				else if ((attribute instanceof Inverse) && 
-							InverseCardinality.many.equals(((Inverse) attribute).getCardinality())) {
-					Inverse inverse = (Inverse) attribute;
+				else if ((attribute instanceof Inverse inverse) && 
+							InverseCardinality.many.equals(inverse.getCardinality())) {
 					Document detailDocument = module.getDocument(customer, inverse.getDocumentName());
 	
 					List<String> propertyNames = new ArrayList<>();
@@ -381,8 +396,7 @@ public class ViewGenerator {
 														propertyNames);
 					details.add(detail);
 				}
-				else if (attribute instanceof Association) {
-					Association association = (Association) attribute;
+				else if (attribute instanceof Association association) {
 					Document associationDocument = module.getDocument(customer, association.getDocumentName());
 					if (AssociationType.embedded.equals(association.getType())) {
 						Module associationModule = customer.getModule(associationDocument.getOwningModuleName());
@@ -417,9 +431,9 @@ public class ViewGenerator {
 					row.getItems().add(item);
 					form.getRows().add(row);
 				}
-				else if (module.isPrototype() && (attribute instanceof Content)) {
+				else if (attribute instanceof Content) {
 					FormItem item = new FormItem();
-					ContentImage widget = new ContentImage();
+					ContentUpload widget = new ContentUpload();
 					widget.setBinding(binding);
 					item.setWidget(widget);
 					FormRow row = new FormRow();
@@ -457,6 +471,7 @@ public class ViewGenerator {
 		}
 	}
 
+	@SuppressWarnings("java:S3776") // Complexity OK
 	private static DataGrid generateDataGrid(CollectionType collectionType,
 												Customer customer,
 												Module module,
@@ -502,8 +517,7 @@ public class ViewGenerator {
 				}
 				// Set this field as non-editable coz the default widget (lookup description) 
 				// cannot query the document as its either an embedded association or not persistent
-				else if (attribute instanceof Association) {
-					Association association = (Association) attribute;
+				else if (attribute instanceof Association association) {
 					Document associationDocument = module.getDocument(customer, association.getDocumentName());
 					if (AssociationType.embedded.equals(association.getType()) || // embedded
 							(! associationDocument.isPersistable())) { // not persistent document
@@ -556,12 +570,12 @@ public class ViewGenerator {
 		return XMLMetaData.marshalView(generateEditView(customer, document), customerOverridden, uxuiOverridden);
 	}
 
-	private void writeEditView(String srcPath,
-								Module module,
-								Document document,
-								Customer customer,
+	private void writeEditView(@Nonnull String srcPath,
+								@Nonnull Module module,
+								@Nonnull Document document,
+								@Nonnull Customer customer,
 								boolean customerOverridden,
-								String uxui)
+								@Nullable String uxui)
 	throws IOException {
 		StringBuilder filePath = new StringBuilder(64);
 		filePath.append(srcPath);
@@ -579,14 +593,15 @@ public class ViewGenerator {
 		file.mkdirs();
 		filePath.append("generatedEdit.xml");
 		file = new File(filePath.toString());
-		UtilImpl.LOGGER.info("Output is written to " + file.getCanonicalPath());
+		LOGGER.info("Output is written to {}", file.getCanonicalPath());
 		try (PrintWriter out = new PrintWriter(file)) {
 			out.println(generateEditViewXML(customer, document, customerOverridden, uxui != null));
 			out.flush();
 		}
-		UtilImpl.LOGGER.info("Remember to rename this to 'edit.xml' to make this view active.");
+		LOGGER.info("Remember to rename this to 'edit.xml' to make this view active.");
 	}
 
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public static void main(String[] args) throws Exception {
 		String srcPath = null;
 		String customerName = null;
@@ -616,15 +631,18 @@ public class ViewGenerator {
 			System.err.println("Usage: org.skyve.impl.generate.ViewGenerator sourcePath (usually \"src/skyve/\") customerName moduleName documentName customerOverridden (boolean) uxui (optional)");
 			System.exit(1);
 		}
+		if ((srcPath == null) || (customerName == null)) {
+			throw new MetaDataException("sourcePath and customerName are required");
+		}
 
 		ProvidedRepository repository = new LocalDesignRepository();
 		Customer customer = repository.getCustomer(customerName);
+		if (customer == null) {
+			throw new MetaDataException("Customer " + customerName + " does not exist.");
+		}
 
 		// If the module and/or document was not specified, we will just generate all edit views.
 		if ((moduleName == null) || (documentName == null)) {
-			if (customer == null) {
-				throw new MetaDataException("Customer " + customerName + " does not exist.");
-			}
 			for (Module module : customer.getModules()) {
 				for (Map.Entry<String, Module.DocumentRef> entry : module.getDocumentRefs().entrySet()) {
 					Module.DocumentRef documentRef = entry.getValue();
@@ -634,8 +652,8 @@ public class ViewGenerator {
 							new ViewGenerator(repository).writeEditView(srcPath, module, document, customer, customerOverridden, uxui);
 						}
 						catch (Exception e) {
-							UtilImpl.LOGGER.warning(String.format("Failed to generate edit view for %s.%s, %s.",
-									module.getName(), document.getName(), e.getMessage()));
+							LOGGER.warn("Failed to generate edit view for {}.{}, {}.",
+									module.getName(), document.getName(), e.getMessage());
 						}
 					}
 				}
@@ -643,7 +661,13 @@ public class ViewGenerator {
 		}
 		else {
 			Module module = repository.getModule(customer, moduleName);
+			if (module == null) {
+				throw new MetaDataException("Module " + moduleName + " does not exist.");
+			}
 			Document document = repository.getDocument(customer, module, documentName);
+			if (document == null) {
+				throw new MetaDataException("Document " + moduleName + '.' + documentName + " does not exist.");
+			}
 			new ViewGenerator(repository).writeEditView(srcPath, module, document, customer, customerOverridden, uxui);
 		}
 	}

@@ -12,6 +12,7 @@ import org.skyve.impl.metadata.view.container.form.FormItem;
 import org.skyve.impl.metadata.view.container.form.FormRow;
 import org.skyve.impl.metadata.view.widget.bound.input.ContentSignature;
 
+import jakarta.annotation.Nullable;
 import jakarta.faces.component.UIComponent;
 
 public class NoOpLayoutBuilder extends LayoutBuilder {
@@ -100,6 +101,22 @@ public class NoOpLayoutBuilder extends LayoutBuilder {
 		return component;
 	}
 
+	/**
+	 * Ignores form-item label layout requests.
+	 *
+	 * @param formOrRowLayout target form or row layout
+	 * @param formItemComponent form-item component
+	 * @param currentForm current form metadata
+	 * @param currentFormItem current form-item metadata
+	 * @param currentFormColumn current form-column metadata
+	 * @param widgetLabel raw label text
+	 * @param widgetEscapeLabel resolved label escape decision
+	 * @param widgetRequiredMessage required-message text normalised for unescaped
+	 *        PrimeFaces message rendering
+	 * @param widgetEscapeRequiredMessage resolved escape decision retained for layout
+	 * @param widgetInvisible invisible-condition expression
+	 * @param widgetHelpText help text
+	 */
 	@Override
 	public void layoutFormItemLabel(UIComponent formOrRowLayout,
 										UIComponent formItemComponent,
@@ -107,12 +124,35 @@ public class NoOpLayoutBuilder extends LayoutBuilder {
 										FormItem currentFormItem,
 										FormColumn currentFormColumn,
 										String widgetLabel,
-										boolean widgetRequired,
+										boolean widgetEscapeLabel,
+										@Nullable String widgetRequiredMessage,
+										boolean widgetEscapeRequiredMessage,
 										String widgetInvisible,
 										String widgetHelpText) {
 		// do nothing
 	}
 
+	/**
+	 * Ignores form-item widget layout requests.
+	 *
+	 * @param formOrRowLayout target form or row layout
+	 * @param formItemComponent form-item component
+	 * @param currentForm current form metadata
+	 * @param currentFormItem current form-item metadata
+	 * @param currentFormColumn current form-column metadata
+	 * @param widgetLabel raw label text
+	 * @param widgetEscapeLabel resolved label escape decision
+	 * @param widgetColspan widget column span
+	 * @param widgetRequiredMessage required-message text normalised for unescaped
+	 *        PrimeFaces message rendering
+	 * @param widgetEscapeRequiredMessage resolved escape decision retained for layout
+	 * @param widgetInvisible invisible-condition expression
+	 * @param widgetHelpText help text
+	 * @param widgetEscapeHelp resolved help escape decision
+	 * @param widgetPixelWidth optional pixel width
+	 * @param showLabel whether labels are shown
+	 * @param topLabel whether labels render above widgets
+	 */
 	@Override
 	public void layoutFormItemWidget(UIComponent formOrRowLayout,
 										UIComponent formItemComponent,
@@ -120,10 +160,13 @@ public class NoOpLayoutBuilder extends LayoutBuilder {
 										FormItem currentFormItem,
 										FormColumn currentFormColumn,
 										String widgetLabel,
+										boolean widgetEscapeLabel,
 										int widgetColspan,
-										boolean widgetRequired,
+										@Nullable String widgetRequiredMessage,
+										boolean widgetEscapeRequiredMessage,
 										String widgetInvisible,
 										String widgetHelpText,
+										boolean widgetEscapeHelp,
 										Integer widgetPixelWidth,
 										boolean showLabel,
 										boolean topLabel) {

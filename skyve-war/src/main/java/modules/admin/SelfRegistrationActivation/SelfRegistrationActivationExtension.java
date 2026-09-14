@@ -12,9 +12,21 @@ import modules.admin.domain.Configuration;
 import modules.admin.domain.SelfRegistrationActivation;
 import modules.admin.domain.User;
 
+/**
+ * Extends {@link SelfRegistrationActivation} with activation-code processing
+ * and localized message composition for activation outcomes.
+ */
 public class SelfRegistrationActivationExtension extends SelfRegistrationActivation {
 	private static final long serialVersionUID = -852587779096146278L;
 
+	/**
+	 * Activates a user account using the provided activation code.
+	 * This method temporarily escalates access to query and save users.
+	 * 
+	 * @param activationCode The activation code to validate and activate the user
+	 * @return The activated UserExtension instance
+	 */
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public UserExtension activateUser(String activationCode) {
 		// temporarily escalate access to query and save users
 		return CORE.getPersistence().withDocumentPermissionScopes(DocumentPermissionScope.customer, p -> {
@@ -23,12 +35,12 @@ public class SelfRegistrationActivationExtension extends SelfRegistrationActivat
 
 			UserExtension result = userQuery.beanResult();
 			if (result == null) {
-				Util.LOGGER.warning("No user exists for activation code=" + activationCode);
+				LOGGER.warn("No user exists for activation code={}", activationCode);
 				setResult(Result.FAILURE);
 			}
 			else if (Boolean.TRUE.equals(result.getActivated())) {
 				// User already activated, prompt them to login
-				Util.LOGGER.warning("User=" + result.getUserName() + " already activated");
+				LOGGER.warn("User={} already activated", result.getUserName());
 				setUser(result);
 				setResult(Result.ALREADYACTIVATED);
 			}
@@ -63,35 +75,65 @@ public class SelfRegistrationActivationExtension extends SelfRegistrationActivat
 		});
 	}
 
+	/**
+	 * Returns the login URL shown in activation outcome messages.
+	 *
+	 * @return the application login URL
+	 */
 	@Override
 	public String getLoginUrl() {
 		return Util.getSkyveContextUrl() + "/login";
 	}
 
+	/**
+	 * Returns the localized success prompt shown after activation.
+	 *
+	 * @return the success message inviting the user to sign in
+	 */
 	@Override
 	public String getPleaseSignIn() {
-		return Util.i18n("admin.selfRegistrationActivation.pleaseSignIn", this.getUser().getContact().getName(), this.getLoginUrl(),
+		return Util.nullSafeI18n("admin.selfRegistrationActivation.pleaseSignIn", this.getUser().getContact().getName(), this.getLoginUrl(),
 				this.getUser().getContact().getEmail1());
 	}
 
+	/**
+	 * Returns the localized sign-in hyperlink label.
+	 *
+	 * @return the localized sign-in link text
+	 */
 	@Override
 	public String getSignInLink() {
-		return Util.i18n("admin.selfRegistrationActivation.signInLink", this.getLoginUrl());
+		return Util.nullSafeI18n("admin.selfRegistrationActivation.signInLink", this.getLoginUrl());
 	}
 
+	/**
+	 * Returns the localized message for already-activated users.
+	 *
+	 * @return the localized already-activated message
+	 */
 	@Override
 	public String getAlreadyActivated() {
-		return Util.i18n("admin.selfRegistrationActivation.alreadyActivated", this.getUser().getContact().getName(),
+		return Util.nullSafeI18n("admin.selfRegistrationActivation.alreadyActivated", this.getUser().getContact().getName(),
 				this.getLoginUrl());
 	}
 
+	/**
+	 * Returns the localized message for expired activation links.
+	 *
+	 * @return the localized expired-link message
+	 */
 	@Override
 	public String getNoLongerValid() {
-		return Util.i18n("admin.selfRegistrationActivation.noLongerValid", this.getLoginUrl());
+		return Util.nullSafeI18n("admin.selfRegistrationActivation.noLongerValid", this.getLoginUrl());
 	}
 
+	/**
+	 * Returns the localized message for unknown activation codes.
+	 *
+	 * @return the localized unknown-code message
+	 */
 	@Override
 	public String getNotRecognised() {
-		return Util.i18n("admin.selfRegistrationActivation.notRecognised", this.getLoginUrl());
+		return Util.nullSafeI18n("admin.selfRegistrationActivation.notRecognised", this.getLoginUrl());
 	}
 }

@@ -1,6 +1,8 @@
 package org.skyve.impl.web.faces.views;
 
-import java.util.Stack;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.Objects;
 
 import org.primefaces.model.menu.DefaultMenuItem;
 import org.primefaces.model.menu.DefaultMenuModel;
@@ -20,10 +22,12 @@ import org.skyve.metadata.module.Module;
 import org.skyve.metadata.module.menu.MenuGroup;
 import org.skyve.metadata.module.menu.MenuItem;
 import org.skyve.metadata.module.menu.MenuRenderer;
-import org.skyve.metadata.router.UxUi;
+import org.skyve.util.OWASP;
 import org.skyve.util.Util;
 import org.skyve.web.WebAction;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import jakarta.enterprise.context.SessionScoped;
 import jakarta.faces.context.FacesContext;
 import jakarta.inject.Named;
@@ -38,50 +42,74 @@ import jakarta.servlet.http.HttpServletRequest;
  */
 @Named("menu")
 @SessionScoped
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate menu URL rendering fragments.
 public class MenuView extends HarnessView {
 	private static final long serialVersionUID = -7523306130675202901L;
 
 	// The modules menu on the LHS
-	private MenuModel menu;
-	
-	public MenuModel getMenu() {
-		if (menu == null) {
-			setState();
+	// Note: MenuModel is never mutated once established, only the reference is dropped
+	@SuppressWarnings("java:S3077") // Session-scoped access pattern uses effectively immutable menu instances.
+	private transient volatile MenuModel menu;
+
+	@SuppressWarnings("java:S3077") // Access follows the same session-scoped pattern as menu.
+	private transient volatile String menuUxUiName;
+
+	public @Nullable MenuModel getMenu() {
+		@Nonnull FacesContext fc = FacesContext.getCurrentInstance();
+		@Nonnull HttpServletRequest request = (HttpServletRequest) fc.getExternalContext().getRequest();
+		String uxuiName = UserAgent.getSelection(request).getUxUi().getName();
+		// double-checked locking
+		if ((menu == null) || (! Objects.equals(menuUxUiName, uxuiName))) {
+			synchronized (this) {
+				if ((menu == null) || (! Objects.equals(menuUxUiName, uxuiName))) {
+					setState(fc, request, uxuiName);
+				}
+			}
 		}
 		return menu;
 	}
 	
 	public void resetState() {
 		menu = null;
+		menuUxUiName = null;
 	}
 
-	private void setState() {
+	private void setState(@Nonnull FacesContext fc,
+							@Nonnull HttpServletRequest request,
+							@Nullable String uxuiName) {
 		new FacesAction<Void>() {
 			@Override
-			public Void callback() throws Exception {
-				FacesContext fc = FacesContext.getCurrentInstance();
+			public @Nullable Void callback() throws Exception {
 				if (! fc.isPostback()) {
-					HttpServletRequest request = (HttpServletRequest) fc.getExternalContext().getRequest();
 					setBizModuleParameter(request.getParameter("m"));
 					initialise(); // check m parameter and set to default if DNE
-					
-					UxUi uxui = UserAgent.getUxUi(request);
-					menu = createMenuModel(getBizModuleParameter(), uxui.getName());
 				}
+
+				menu = createMenuModel(getBizModuleParameter(), uxuiName);
+				menuUxUiName = uxuiName;
 				
 				return null;
 			}
 		}.execute();
 	}
 
-	private static int menuItemId = 1; 
+	private transient int menuItemId; 
 
-	private MenuModel createMenuModel(String bizModule, String uxui) {
+	/**
+	 * Builds the PrimeFaces menu model for the selected module and UX/UI mode.
+	 *
+	 * @param bizModule the currently selected module
+	 * @param uxui the active UX/UI name
+	 * @return the populated menu model
+	 */
+	@Nonnull MenuModel createMenuModel(@Nullable String bizModule, @Nullable String uxui) {
 		MenuModel result = new DefaultMenuModel();
 
+		menuItemId = 1; // reset IDs for this run
+		
 		// render each module menu
 		new MenuRenderer(uxui, bizModule) {
-			private Stack<Submenu> subs = new Stack<>();
+			private Deque<Submenu> subs = new ArrayDeque<>(16); // non-null elements
 			
 			@Override
 			public void renderModuleMenu(org.skyve.metadata.module.menu.Menu moduleMenu,
@@ -96,7 +124,6 @@ public class MenuView extends HarnessView {
 			@Override
 			public void renderMenuGroup(MenuGroup group, Module menuModule) {
 				DefaultSubMenu sub = DefaultSubMenu.builder().id(String.valueOf(menuItemId++)).label(group.getLocalisedName()).build();
-				sub.setExpanded(true);
 				subs.peek().getElements().add(sub);
 				subs.push(sub);
 			}
@@ -172,95 +199,119 @@ public class MenuView extends HarnessView {
 			public void renderedModuleMenu(org.skyve.metadata.module.menu.Menu moduleMenu, Module menuModule, boolean open) {
 				subs.pop();
 			}
-		}.render(getUser());
+		}.render(Objects.requireNonNull(getUser(), "user"));
 		
 		return result;
 	}
 
-	private static org.primefaces.model.menu.MenuItem createMenuItem(MenuItem item,
-																		String iconStyleClass,
-																		Module menuModule,
-																		Module itemModule,
-																		String itemQueryName,
-																		String itemAbsoluteHref) {
+	/**
+	 * Creates a PrimeFaces menu item from Skyve menu metadata.
+	 *
+	 * @param item the Skyve menu item metadata
+	 * @param iconStyleClass the icon style class
+	 * @param menuModule the current menu module
+	 * @param itemModule the module for the target item
+	 * @param itemQueryName the resolved query name
+	 * @param itemAbsoluteHref an explicit absolute href, when supplied
+	 * @return the configured PrimeFaces menu item
+	 */
+	private @Nonnull org.primefaces.model.menu.MenuItem createMenuItem(@Nonnull MenuItem item,
+																		@Nullable String iconStyleClass,
+																		@Nonnull Module menuModule,
+																		@Nullable Module itemModule,
+																		@Nullable String itemQueryName,
+																		@Nullable String itemAbsoluteHref) {
 		DefaultMenuItem result = DefaultMenuItem.builder().id(String.valueOf(menuItemId++)).value(item.getLocalisedName()).icon(iconStyleClass).build();
-		result.setAjax(false);
-		result.setHref("#");
-		result.setOnclick(createMenuItemOnClick(menuModule, itemModule, item, itemQueryName, itemAbsoluteHref));
+		result.setHref(createMenuHref(menuModule, itemModule, item, itemQueryName, itemAbsoluteHref));
 		return result;
 	}
 
-	public static String createMenuItemOnClick(Module menuModule,
-												Module itemModule,
-												MenuItem item,
-												String itemQueryName,
-												String itemAbsoluteHref) {
-		StringBuilder result = new StringBuilder(128);
-		result.append("SKYVE.PF.startHistory('");
+	/**
+	 * Builds the JavaScript history URL for a rendered menu item.
+	 *
+	 * @param menuModule the module containing the menu definition
+	 * @param itemModule the module targeted by the menu item
+	 * @param item the Skyve menu item metadata
+	 * @param itemQueryName the resolved query name
+	 * @param itemAbsoluteHref an explicit absolute href, when supplied
+	 * @return the JavaScript menu href
+	 */
+	@SuppressWarnings("java:S3776") // Legacy URL assembly branching retained during Javadoc remediation.
+	public static @Nonnull String createMenuHref(@Nonnull Module menuModule,
+													@Nullable Module itemModule,
+													@Nonnull MenuItem item,
+													@Nullable String itemQueryName,
+													@Nullable String itemAbsoluteHref) {
+		@Nonnull StringBuilder destination = new StringBuilder(128);
 		
 		if (itemAbsoluteHref != null) {
-			result.append(itemAbsoluteHref.replace("'", "\\'"));
+			destination.append(itemAbsoluteHref);
 		}
-		else if (item instanceof ListItem) {
-			ListItem listItem = (ListItem) item;
-			result.append(Util.getSkyveContextUrl());
-			result.append("/?a=").append(WebAction.l.toString()).append("&m=").append(menuModule.getName());
+		else if (item instanceof ListItem listItem) {
+			appendSkyveNavigationPrefix(destination);
+			destination.append("a=").append(WebAction.l.toString()).append("&m=").append(menuModule.getName());
 			String modelName = listItem.getModelName();
 			if (modelName != null) {
-				result.append("&d=").append(listItem.getDocumentName());
-				result.append("&q=").append(listItem.getModelName());
+				destination.append("&d=").append(listItem.getDocumentName());
+				destination.append("&q=").append(listItem.getModelName());
 			}
 			else {
-				result.append("&q=").append(itemQueryName);
+				destination.append("&q=").append(itemQueryName);
 			}
 		}
-		else if (item instanceof EditItem) {
-			result.append(Util.getSkyveContextUrl());
-			result.append("/?a=").append(WebAction.e.toString()).append("&m=").append(itemModule.getName());
-			result.append("&d=").append(((EditItem) item).getDocumentName());
+		else if (item instanceof EditItem editItem) {
+			appendSkyveNavigationPrefix(destination);
+			@Nonnull Module editModule = Objects.requireNonNull(itemModule, "itemModule");
+			destination.append("a=").append(WebAction.e.toString()).append("&m=").append(editModule.getName());
+			destination.append("&d=").append(editItem.getDocumentName());
 		}
-		else if (item instanceof CalendarItem) {
-			CalendarItem calendarItem = (CalendarItem) item;
-    		result.append(Util.getSkyveContextUrl());
-            result.append("/?a=").append(WebAction.c.toString()).append("&m=").append(menuModule.getName());
+		else if (item instanceof CalendarItem calendarItem) {
+			appendSkyveNavigationPrefix(destination);
+			destination.append("a=").append(WebAction.c.toString()).append("&m=").append(menuModule.getName());
 			String modelName = calendarItem.getModelName();
 			if (modelName != null) {
-				result.append("&d=").append(calendarItem.getDocumentName());
-				result.append("&q=").append(calendarItem.getModelName());
+				destination.append("&d=").append(calendarItem.getDocumentName());
+				destination.append("&q=").append(calendarItem.getModelName());
 			}
 			else {
-				result.append("&q=").append(itemQueryName);
+				destination.append("&q=").append(itemQueryName);
 			}
-        }
-        else if (item instanceof TreeItem) {
-        	TreeItem treeItem = (TreeItem) item;
-    		result.append(Util.getSkyveContextUrl());
-    		result.append("/?a=").append(WebAction.t.toString()).append("&m=").append(menuModule.getName());
+		}
+		else if (item instanceof TreeItem treeItem) {
+			appendSkyveNavigationPrefix(destination);
+			destination.append("a=").append(WebAction.t.toString()).append("&m=").append(menuModule.getName());
 			String modelName = treeItem.getModelName();
 			if (modelName != null) {
-				result.append("&d=").append(treeItem.getDocumentName());
-				result.append("&q=").append(treeItem.getModelName());
+				destination.append("&d=").append(treeItem.getDocumentName());
+				destination.append("&q=").append(treeItem.getModelName());
 			}
 			else {
-				result.append("&q=").append(itemQueryName);
+				destination.append("&q=").append(itemQueryName);
 			}
-        }
-        else if (item instanceof MapItem) {
-            MapItem mapItem = (MapItem) item;
-    		result.append(Util.getSkyveContextUrl());
-            result.append("/?a=").append(WebAction.m.toString()).append("&m=").append(menuModule.getName());
-            String modelName = mapItem.getModelName();
+		}
+		else if (item instanceof MapItem mapItem) {
+			appendSkyveNavigationPrefix(destination);
+			destination.append("a=").append(WebAction.m.toString()).append("&m=").append(menuModule.getName());
+			String modelName = mapItem.getModelName();
 			if (modelName != null) {
-				result.append("&d=").append(mapItem.getDocumentName());
-				result.append("&q=").append(mapItem.getModelName());
+				destination.append("&d=").append(mapItem.getDocumentName());
+				destination.append("&q=").append(mapItem.getModelName());
 			}
 			else {
-				result.append("&q=").append(itemQueryName);
+				destination.append("&q=").append(itemQueryName);
 			}
-			result.append("&b=").append(mapItem.getGeometryBinding());
-        }
-		
-		result.append("');return false");
-		return result.toString();
+			destination.append("&b=").append(mapItem.getGeometryBinding());
+		}
+
+		return "javascript:SKYVE.PF.startHistory('" + OWASP.escapeJsStringWithHtmlFormatting(destination.toString()) + "')";
+	}
+
+	/**
+	 * Appends the common Skyve navigation URL prefix for menu items.
+
+	 * @param result
+	 */
+	private static void appendSkyveNavigationPrefix(@Nonnull StringBuilder result) {
+		result.append(Util.getSkyveContextUrl()).append("/?");
 	}
 }

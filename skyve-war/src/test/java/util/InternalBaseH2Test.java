@@ -7,9 +7,18 @@ import java.util.UUID;
 
 import org.jboss.weld.environment.se.Weld;
 import org.skyve.EXT;
+import org.skyve.cache.CSRFTokenCacheConfig;
+import org.skyve.cache.ConversationCacheConfig;
+import org.skyve.cache.GeoIPCacheConfig;
+import org.skyve.cache.SessionCacheConfig;
 import org.skyve.impl.cdi.SkyveCDIProducer;
 import org.skyve.impl.content.AbstractContentManager;
 import org.skyve.impl.content.NoOpContentManager;
+import org.skyve.impl.domain.number.NumberGeneratorStaticSingleton;
+import org.skyve.impl.geoip.GeoIPServiceStaticSingleton;
+import org.skyve.impl.job.JobSchedulerStaticSingleton;
+import org.skyve.impl.job.MockJobScheduler;
+import org.skyve.impl.metadata.controller.CustomisationsStaticSingleton;
 import org.skyve.impl.metadata.repository.DefaultRepository;
 import org.skyve.impl.metadata.repository.ProvidedRepositoryFactory;
 import org.skyve.impl.metadata.user.SuperUser;
@@ -27,9 +36,10 @@ import org.skyve.util.test.SkyveFixture.FixtureType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockServletContext;
 
+import jakarta.enterprise.inject.spi.CDI;
 import jakarta.servlet.http.HttpServletRequest;
-import modules.admin.ModulesUtil;
 import modules.admin.User.UserExtension;
+import modules.admin.User.UserService;
 import modules.admin.domain.User;
 
 /**
@@ -69,6 +79,11 @@ abstract class InternalBaseH2Test {
 		// init the cache once
 		UtilImpl.CONTENT_DIRECTORY = CONTENT_DIRECTORY + UUID.randomUUID().toString() + "/";
 
+		UtilImpl.CONVERSATION_CACHE = new ConversationCacheConfig(10, 0, 0, 60);
+		UtilImpl.CSRF_TOKEN_CACHE = new CSRFTokenCacheConfig(10, 0, 0, 60);
+		UtilImpl.SESSION_CACHE = new SessionCacheConfig(10, 0, 0, 60);
+		UtilImpl.GEO_IP_CACHE = new GeoIPCacheConfig(10, 0, 0, 60);
+		UtilImpl.FORCE_NON_PERSISTENT_CACHING = true;
 		EXT.getCaching().startup();
 
 		// init injection
@@ -89,6 +104,8 @@ abstract class InternalBaseH2Test {
 			weld.shutdown();
 		}
 
+		// Note:- Don't shutdown the Cache Manager here as Persistence thread locals have a hold of the hibernate level 2 caches by reference
+
 		// clean up any temporary content directories after shutdown
 		File contentDir = new File(UtilImpl.CONTENT_DIRECTORY);
 		if (contentDir.exists()) {
@@ -103,6 +120,10 @@ abstract class InternalBaseH2Test {
 		AbstractPersistence.IMPLEMENTATION_CLASS = HibernateContentPersistence.class;
 		AbstractPersistence.DYNAMIC_IMPLEMENTATION_CLASS = RDBMSDynamicPersistence.class;
 		AbstractContentManager.IMPLEMENTATION_CLASS = NoOpContentManager.class;
+		NumberGeneratorStaticSingleton.setDefault();
+		GeoIPServiceStaticSingleton.setDefault();
+		CustomisationsStaticSingleton.setDefault();
+		JobSchedulerStaticSingleton.set(new MockJobScheduler());
 		UtilImpl.DATA_STORE = new DataStore(DB_DRIVER, DB_URL, DB_UNAME, DB_PWD, DB_DIALECT);
 		UtilImpl.DATA_STORES.put("test", UtilImpl.DATA_STORE);
 		UtilImpl.DDL_SYNC = true;
@@ -116,6 +137,11 @@ abstract class InternalBaseH2Test {
 		UtilImpl.CONFIGURATION = new TreeMap<>();
 
 		ProvidedRepositoryFactory.set(new DefaultRepository());
+		// Warm up the repository so the customer and its modules are loaded before
+		// setUser is called, otherwise SuperUser.getAccessibleModuleNames()
+		// silently returns null when the customer metadata hasn't been loaded yet,
+		// which causes a NPE in AbstractHibernatePersistence.resetDocumentPermissionScopes().
+		ProvidedRepositoryFactory.get().getCustomer(CUSTOMER);
 
 		final SuperUser user = new SuperUser();
 		user.setCustomerName(CUSTOMER);
@@ -127,7 +153,7 @@ abstract class InternalBaseH2Test {
 		persistence.begin();
 
 		// create admin user
-		if (ModulesUtil.currentAdminUser() == null) {
+		if (CDI.current().select(UserService.class).get().currentAdminUser() == null) {
 			User adminUser = createAdminUser(user);
 			persistence.save(adminUser);
 		}
@@ -137,10 +163,21 @@ abstract class InternalBaseH2Test {
 	 * Common tear down after each test
 	 */
 	protected static void internalAfter() {
+		internalAfter(true);
+	}
+
+	/**
+	 * Common tear down after each test.
+	 * @param close Whether to close and remove the current persistence after rollback.
+	 */
+	protected static void internalAfter(boolean close) {
 		final AbstractPersistence persistence = AbstractPersistence.get();
 		persistence.rollback();
 		persistence.evictAllCached();
 		persistence.evictAllSharedCache();
+		if (close) {
+			persistence.commit(true);
+		}
 		SingletonCachedBizlet.dispose();
 	}
 

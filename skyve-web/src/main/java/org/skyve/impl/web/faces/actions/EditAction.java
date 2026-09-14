@@ -1,9 +1,8 @@
 package org.skyve.impl.web.faces.actions;
 
+import java.util.Deque;
 import java.util.Map;
 import java.util.SortedMap;
-import java.util.Stack;
-import java.util.logging.Level;
 
 import org.apache.commons.lang3.StringUtils;
 import org.skyve.CORE;
@@ -16,6 +15,7 @@ import org.skyve.impl.metadata.model.document.DocumentImpl;
 import org.skyve.impl.persistence.AbstractPersistence;
 import org.skyve.impl.util.UtilImpl;
 import org.skyve.impl.web.AbstractWebContext;
+import org.skyve.impl.web.UserAgent;
 import org.skyve.impl.web.WebUtil;
 import org.skyve.impl.web.faces.FacesAction;
 import org.skyve.impl.web.faces.FacesUtil;
@@ -29,21 +29,45 @@ import org.skyve.metadata.model.document.Document;
 import org.skyve.metadata.module.Module;
 import org.skyve.metadata.user.User;
 import org.skyve.metadata.user.UserAccess;
-import org.skyve.util.Util;
+import org.skyve.util.logging.Category;
+import org.skyve.util.logging.SkyveLoggerFactory;
+import org.skyve.util.monitoring.Monitoring;
+import org.skyve.util.monitoring.RequestKey;
+import org.slf4j.Logger;
 
 import jakarta.faces.context.ExternalContext;
 import jakarta.faces.context.FacesContext;
 import jakarta.servlet.http.HttpServletRequest;
 
+/**
+ * Executes a Faces callback action within the current Skyve web context.
+ */
 public class EditAction extends FacesAction<Void> {
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(EditAction.class);
+    private static final Logger FACES_LOGGER = Category.FACES.logger();
+    private static final Logger BIZLET_LOGGER = Category.BIZLET.logger();
+
 	private FacesView facesView = null;
+
+	/**
+	 * Creates an edit action bound to the supplied Faces view state.
+	 *
+	 * @param facesView the target Faces view model
+	 */
 	public EditAction(FacesView facesView) {
 		this.facesView = facesView;
 	}
 
+	/**
+	 * Initializes edit/create view state by restoring or creating context beans and applying pre-execute hooks.
+	 *
+	 * @return {@code null}; the action updates {@code facesView} and conversation state by side effect
+	 * @throws Exception when edit initialization fails
+	 */
 	@Override
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	public Void callback() throws Exception {
-		if (UtilImpl.FACES_TRACE) Util.LOGGER.info("EditAction");
+		if (UtilImpl.FACES_TRACE) FACES_LOGGER.info("EditAction");
 
 		Bean bean = null;
 		AbstractWebContext webContext = null;
@@ -52,6 +76,7 @@ public class EditAction extends FacesAction<Void> {
 		
 		try {
 			ExternalContext ec = FacesContext.getCurrentInstance().getExternalContext();
+			String uxuiName = UserAgent.getSelection((HttpServletRequest) ec.getRequest()).getUxUi().getName();
 			Map<String, Object> session = ec.getSessionMap();
 			// This is executed from a redirect from a data grid add or zoom in, or from a subsequent zoom out or remove.
 			// See ActionUtil.redirectViewScopedConversation().
@@ -59,6 +84,7 @@ public class EditAction extends FacesAction<Void> {
 				FacesView sessionView = (FacesView) session.remove(FacesUtil.MANAGED_BEAN_NAME_KEY);
 				String viewBinding = sessionView.getViewBinding();
 				facesView.setViewBinding(viewBinding);
+				// Add session view zoom in bindings to view zoom in bindings in head first order first
 				facesView.getZoomInBindings().addAll(sessionView.getZoomInBindings());
 				webContext = sessionView.getWebContext();
 				bean = webContext.getCurrentBean();
@@ -71,7 +97,7 @@ public class EditAction extends FacesAction<Void> {
 				final String bizModule = current.getBizModule();
 				final String bizDocument = current.getBizDocument();
 
-				EXT.checkAccess(user, UserAccess.singular(bizModule, bizDocument), facesView.getUxUi().getName());
+				EXT.checkAccess(user, UserAccess.singular(bizModule, bizDocument), uxuiName);
 				
 				facesView.setBizModuleParameter(bizModule);
 				facesView.setBizDocumentParameter(bizDocument);
@@ -86,7 +112,7 @@ public class EditAction extends FacesAction<Void> {
 					throw new IllegalStateException("bizDocument is required");
 				}
 
-				EXT.checkAccess(user, UserAccess.singular(bizModule, bizDocument), facesView.getUxUi().getName());
+				EXT.checkAccess(user, UserAccess.singular(bizModule, bizDocument), uxuiName);
 
 				Module module = customer.getModule(bizModule);
 				Document document = module.getDocument(customer, bizDocument);
@@ -118,33 +144,38 @@ public class EditAction extends FacesAction<Void> {
 																	document, 
 																	bean, 
 																	parameters,
-																	facesView.getUxUi().getName());
+																	uxuiName);
 						
 						CustomerImpl internalCustomer = (CustomerImpl) customer;
 						boolean vetoed = internalCustomer.interceptBeforePreExecute(ImplicitActionName.New, bean, null, webContext);
 						if (! vetoed) {
 							Bizlet<Bean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 							if (bizlet != null) {
-								if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preExecute", "Entering " + bizlet.getClass().getName() + ".preExecute: " + ImplicitActionName.New + ", " + bean + ", null, " + ", " + webContext);
+								if (UtilImpl.BIZLET_TRACE) {
+									BIZLET_LOGGER.info("Entering {}.preExecute: {}, {}, null, , {}", bizlet.getClass().getName(), ImplicitActionName.New, bean, webContext);
+								}
 				    			bean = bizlet.preExecute(ImplicitActionName.New, bean, null, webContext);
-								if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preExecute", "Exiting " + bizlet.getClass().getName() + ".preExecute: " + bean);
+								if (UtilImpl.BIZLET_TRACE) {
+									BIZLET_LOGGER.info("Exiting {}.preExecute: {}", bizlet.getClass().getName(), bean);
+								}
 							}
 							internalCustomer.interceptAfterPreExecute(ImplicitActionName.New, bean, null, webContext);
 							
 							// We want to call post render
 							facesView.setPostRender(bizlet, bean);
 						}
+						Monitoring.measure(RequestKey.create(document));
 					}
 				}
 				else {
 					AbstractPersistence persistence = AbstractPersistence.get();
+					webContext = new FacesWebContext();
+					webContext.setConversation(persistence);
 					try {
 						// NB can throw NoResultsException or SecurityException
 						bean = WebUtil.findReferencedBean(document, bizId, persistence, null, webContext);
 					}
 					finally {
-						webContext = new FacesWebContext();
-						webContext.setConversation(persistence);
 						webContext.setCurrentBean(bean);
 					}
 					
@@ -161,15 +192,20 @@ public class EditAction extends FacesAction<Void> {
 						if (! vetoed) {
 							Bizlet<Bean> bizlet = ((DocumentImpl) document).getBizlet(customer);
 							if (bizlet != null) {
-								if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preExecute", "Entering " + bizlet.getClass().getName() + ".preExecute: " + ImplicitActionName.Edit + ", " + bean + ", null, " + ", " + webContext);
+								if (UtilImpl.BIZLET_TRACE) {
+									BIZLET_LOGGER.info("Entering {}.preExecute: {}, {}, null, , {}", bizlet.getClass().getName(), ImplicitActionName.Edit, bean, webContext);
+								}
 				    			bean = bizlet.preExecute(ImplicitActionName.Edit, bean, null, webContext);
-								if (UtilImpl.BIZLET_TRACE) UtilImpl.LOGGER.logp(Level.INFO, bizlet.getClass().getName(), "preExecute", "Exiting " + bizlet.getClass().getName() + ".preExecute: " + bean);
+								if (UtilImpl.BIZLET_TRACE) {
+									BIZLET_LOGGER.info("Exiting {}.preExecute: {}", bizlet.getClass().getName(), bean);
+								}
 							}
 							internalCustomer.interceptAfterPreExecute(ImplicitActionName.Edit, bean, null, webContext);
 							
 							// We want to call post render
 							facesView.setPostRender(bizlet, bean);
 			    		}
+						Monitoring.measure(RequestKey.edit(document));
 					}
 				}
 			}
@@ -198,13 +234,13 @@ public class EditAction extends FacesAction<Void> {
 		}
 		catch (Exception e) {
 			// Failed to get the current bean - current is null
-			UtilImpl.LOGGER.info("EditAction:- Could not get binding " + viewBinding + " in bean " + bean + " : " + e.getMessage());
+			LOGGER.info("EditAction:- Could not get binding {} in bean {} : {}", viewBinding, bean, e.getMessage(), e);
 		}
 		if (current != null) { // successful binding get
-			Stack<String> zoomInBindings = facesView.getZoomInBindings();
+			Deque<String> zoomInBindings = facesView.getZoomInBindings();
 			String[] bindings = StringUtils.split(bindingParameter, ',');
 			for (String binding : bindings) {
-				zoomInBindings.add(binding);
+				zoomInBindings.add(binding); // add to the tail
 			}
 			facesView.setViewBinding(viewBinding);
 			facesView.setBizModuleParameter(current.getBizModule());

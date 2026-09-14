@@ -3,8 +3,9 @@ package org.skyve.impl.web.spring;
 import java.io.IOException;
 
 import org.skyve.impl.util.TwoFactorAuthConfigurationSingleton;
-import org.skyve.impl.util.UtilImpl;
 import org.skyve.util.Util;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.provisioning.UserDetailsManager;
 import org.springframework.security.web.authentication.SavedRequestAwareAuthenticationSuccessHandler;
@@ -25,13 +26,23 @@ import jakarta.servlet.http.HttpServletResponse;
  * @author mike
  */
 public class SkyveAuthenticationSuccessHandler extends SavedRequestAwareAuthenticationSuccessHandler {
+
+	private static final Logger LOG = SkyveLoggerFactory.getLogger(SkyveAuthenticationSuccessHandler.class);
+
 	private UserDetailsManager userDetailsManager;
 	
+	/**
+	 * Creates the authentication success handler with optional user-details management support.
+	 */
 	public SkyveAuthenticationSuccessHandler(UserDetailsManager userDetailsManager) {
 		this.userDetailsManager = userDetailsManager;
 	}
 	
+	/**
+	 * Process the redirect after login
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void onAuthenticationSuccess(HttpServletRequest request,
 										HttpServletResponse response,
 										Authentication authentication)
@@ -42,12 +53,11 @@ public class SkyveAuthenticationSuccessHandler extends SavedRequestAwareAuthenti
 		if (savedRequest != null) {
 			redirectUrl = savedRequest.getRedirectUrl();
 			if (redirectUrl != null) {
-				UtilImpl.LOGGER.info("Redirect after login requested to " + redirectUrl);
+				LOG.info("Redirect after login requested to {}", redirectUrl);
 				// its http behind proxy server terminating TLS or some other edge case
 				if (Util.isSecureUrl() && redirectUrl.startsWith("http://")) { // could be https:// or ws:// or wss://
-					if (savedRequest instanceof DefaultSavedRequest) {
+					if (savedRequest instanceof DefaultSavedRequest defaultSavedRequest) {
 						// Remake the url from the skyve server URL, the request URI and any query parameters
-						DefaultSavedRequest defaultSavedRequest = (DefaultSavedRequest) savedRequest;
 						StringBuilder url = new StringBuilder(256);
 						url.append(Util.getServerUrl()).append(defaultSavedRequest.getRequestURI());
 						String query = defaultSavedRequest.getQueryString();
@@ -80,18 +90,15 @@ public class SkyveAuthenticationSuccessHandler extends SavedRequestAwareAuthenti
 		
 		if (userDetailsManager != null) {
 			Object principal = authentication.getPrincipal();
-			if (principal instanceof TwoFactorAuthUser) {
-				TwoFactorAuthUser tfaUser = (TwoFactorAuthUser) principal;
+			if (principal instanceof TwoFactorAuthUser tfaUser) {
 				String customerName = tfaUser.getCustomer();
-				if (customerName != null) {
-					if (TwoFactorAuthConfigurationSingleton.getInstance().isPushTfa(customerName)) {
-						cleanupTFACodes(tfaUser);
-					}
+				if ((customerName != null) && (TwoFactorAuthConfigurationSingleton.getInstance().isPushTfa(customerName))) {
+					cleanupTFACodes(tfaUser);
 				}
 			}
 		}
 		
-		UtilImpl.LOGGER.info("Redirected to " + redirectUrl);
+		LOG.info("Redirected to {}", redirectUrl);
 		requestCache.removeRequest(request, response);
 		clearAuthenticationAttributes(request);
 		getRedirectStrategy().sendRedirect(request, response, redirectUrl);

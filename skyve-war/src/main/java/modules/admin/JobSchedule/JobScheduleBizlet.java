@@ -1,15 +1,11 @@
 package modules.admin.JobSchedule;
 
-import java.lang.reflect.Field;
-import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-import org.quartz.CronExpression;
 import org.skyve.CORE;
 import org.skyve.EXT;
-import org.skyve.domain.messages.DomainException;
 import org.skyve.domain.messages.Message;
 import org.skyve.domain.messages.ValidationException;
 import org.skyve.job.JobScheduler;
@@ -21,80 +17,13 @@ import org.skyve.util.Binder;
 
 import modules.admin.domain.JobSchedule;
 
-public class JobScheduleBizlet extends Bizlet<JobSchedule> {
-	public static String getBizKey(JobSchedule schedule) {
-		try {
-			String jobName = schedule.getJobName();
-			int dotIndex = jobName.indexOf('.');
-			Customer customer = CORE.getUser().getCustomer();
-			Module module = customer.getModule(jobName.substring(0, dotIndex));
-			JobMetaData job = module.getJob(jobName.substring(dotIndex + 1));
-	
-			return module.getName() + " - " + job.getLocalisedDisplayName();
-		}
-		catch (@SuppressWarnings("unused") Exception e) {
-			return "";
-		}
-	}
-	
-	public static class JobCronExpression {
-		private CronExpression expression = null;
-
-		public JobCronExpression(String cronExpression)
-		throws ParseException {
-			expression = new CronExpression(cronExpression);
-		}
-
-		private Object get(String name) {
-			try {
-				Field f = expression.getClass().getDeclaredField(name);
-				if (! f.canAccess(expression)) {
-					f.setAccessible(true);
-				}
-				return f.get(expression);
-			}
-			catch (Exception e) {
-				throw new DomainException("Cant get " + name + " from CRON expression " + expression.getCronExpression(), e);
-			}
-		}
-		
-		@SuppressWarnings("unchecked")
-		public Set<Integer> getMinutes() {
-			return (Set<Integer>) get("minutes");
-		}
-		
-		@SuppressWarnings("unchecked")
-		public Set<Integer> getHours() {
-			return (Set<Integer>) get("hours");
-		}
-		
-		@SuppressWarnings("unchecked")
-		public Set<Integer> getDaysOfMonth() {
-			return (Set<Integer>) get("daysOfMonth");
-		}
-
-		@SuppressWarnings("unchecked")
-		public Set<Integer> getMonths() {
-			return (Set<Integer>) get("months");
-		}
-
-		@SuppressWarnings("unchecked")
-		public Set<Integer> getDaysOfWeek() {
-			return (Set<Integer>) get("daysOfWeek");
-		}
-		
-		public boolean getLastDayOfWeek() {
-			return Boolean.TRUE.equals(get("lastdayOfWeek"));
-		}
-
-		public boolean getLastDayOfMonth() {
-			return Boolean.TRUE.equals(get("lastdayOfMonth"));
-		}
-		public boolean getNearestWeekday() {
-			return Boolean.TRUE.equals(get("nearestWeekday"));
-		}
-	}
-
+/**
+ * Provides schedule-editor Bizlet behaviour for job scheduling in admin.
+ * <p>
+ * The bizlet translates between UI selector fields and Quartz cron expressions,
+ * manages scheduler side-effects on save/delete, and validates schedule selections.
+ */
+public class JobScheduleBizlet extends Bizlet<JobScheduleExtension> {
 	private static final String ALL_CODE = "*";
 	private static final Integer ALL_CODE_SPEC = Integer.valueOf(99);
 	private static final String SELECTED_CODE = "X";
@@ -102,23 +31,46 @@ public class JobScheduleBizlet extends Bizlet<JobSchedule> {
 	private static final String LAST_WEEK_DAY_CODE = "LW";
 	private static final String ANY_CODE = "?";
 	private static final Integer ANY_CODE_SPEC = Integer.valueOf(98);
-	
+	private static final String MINUTE_PREFIX = "minute";
+	private static final String HOUR_PREFIX = "hour";
+	private static final String DAY_PREFIX = "day";
+	private static final String MONTH_PREFIX = "month";
+	private static final String WEEKDAY_PREFIX = "weekday";
+
+	/**
+	 * Initialises new schedule beans with wildcard selections.
+	 *
+	 * @param bean
+	 *        the new schedule bean
+	 * @return the same bean with default selector codes applied
+	 * @throws Exception
+	 *         if initialisation fails
+	 */
 	@Override
-	public JobSchedule newInstance(JobSchedule bean) throws Exception {
+	public JobScheduleExtension newInstance(JobScheduleExtension bean) throws Exception {
 		bean.setAllMinutes(ALL_CODE);
 		bean.setAllHours(ALL_CODE);
 		bean.setAllDays(ALL_CODE);
 		bean.setAllMonths(ALL_CODE);
 		bean.setAllWeekdays(ALL_CODE);
-		
+
 		return bean;
 	}
 
+	/**
+	 * Returns selector options for all/selected schedule dimensions.
+	 *
+	 * @param attributeName
+	 *        the attribute requesting domain values
+	 * @return selector values for supported dimensions, otherwise {@code null}
+	 * @throws Exception
+	 *         if resolution fails
+	 */
 	@Override
 	public List<DomainValue> getConstantDomainValues(String attributeName)
-	throws Exception {
+			throws Exception {
 		List<DomainValue> result = null;
-		
+
 		if (JobSchedule.allMinutesPropertyName.equals(attributeName) ||
 				JobSchedule.allHoursPropertyName.equals(attributeName) ||
 				JobSchedule.allMonthsPropertyName.equals(attributeName) ||
@@ -126,26 +78,34 @@ public class JobScheduleBizlet extends Bizlet<JobSchedule> {
 			result = new ArrayList<>(2);
 			result.add(new DomainValue(ALL_CODE, "All"));
 			result.add(new DomainValue(SELECTED_CODE, "Selected"));
-		}
-		else if (JobSchedule.allDaysPropertyName.equals(attributeName)) {
+		} else if (JobSchedule.allDaysPropertyName.equals(attributeName)) {
 			result = new ArrayList<>(4);
 			result.add(new DomainValue(ALL_CODE, "All"));
 			result.add(new DomainValue(LAST_DAY_CODE, "Last Day"));
 			result.add(new DomainValue(LAST_WEEK_DAY_CODE, "Last Week Day"));
 			result.add(new DomainValue(SELECTED_CODE, "Selected"));
 		}
-		
+
 		return result;
 	}
 
+	/**
+	 * Returns available schedulable job names grouped by module.
+	 *
+	 * @param attributeName
+	 *        the attribute requesting variant values
+	 * @return job-name values for {@link JobSchedule#jobNamePropertyName}
+	 * @throws Exception
+	 *         if metadata traversal fails
+	 */
 	@Override
 	public List<DomainValue> getVariantDomainValues(String attributeName)
-	throws Exception {
+			throws Exception {
 		List<DomainValue> result = new ArrayList<>();
 
 		if (JobSchedule.jobNamePropertyName.equals(attributeName)) {
 			Customer customer = CORE.getUser().getCustomer();
-			
+
 			for (Module module : customer.getModules()) {
 				for (JobMetaData job : module.getJobs()) {
 					StringBuilder sb = new StringBuilder(128);
@@ -156,93 +116,103 @@ public class JobScheduleBizlet extends Bizlet<JobSchedule> {
 				}
 			}
 		}
-		
+
 		return result;
 	}
 
+	/**
+	 * Populates UI selector booleans from the persisted cron expression.
+	 *
+	 * @param bean
+	 *        the schedule bean being loaded
+	 * @throws Exception
+	 *         if cron parsing fails
+	 */
 	@Override
-	public void postLoad(JobSchedule bean) throws Exception {
+	@SuppressWarnings("java:S3776") // Complexity OK
+	public void postLoad(JobScheduleExtension bean) throws Exception {
 		JobCronExpression expression = new JobCronExpression(bean.getCronExpression());
-		
+
 		Set<Integer> minutes = expression.getMinutes();
 		Set<Integer> hours = expression.getHours();
 		Set<Integer> days = expression.getDaysOfMonth();
 		Set<Integer> months = expression.getMonths();
 		Set<Integer> weekdays = expression.getDaysOfWeek();
-		
+
 		if (minutes.contains(ALL_CODE_SPEC)) {
 			bean.setAllMinutes(ALL_CODE);
-		}
-		else {
+		} else {
 			bean.setAllMinutes(SELECTED_CODE);
 			for (int i = 0, l = 60; i < l; i++) {
-				Binder.set(bean, "minute" + i, minutes.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
+				Binder.set(bean, MINUTE_PREFIX + i, minutes.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
 			}
 		}
 
 		if (hours.contains(ALL_CODE_SPEC)) {
 			bean.setAllHours(ALL_CODE);
-		}
-		else {
+		} else {
 			bean.setAllHours(SELECTED_CODE);
 			for (int i = 0, l = 24; i < l; i++) {
-				Binder.set(bean, "hour" + i, hours.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
+				Binder.set(bean, HOUR_PREFIX + i, hours.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
 			}
 		}
-		
-		if (days.contains(ALL_CODE_SPEC) | days.contains(ANY_CODE_SPEC)) {
+
+		if (days.contains(ALL_CODE_SPEC) || days.contains(ANY_CODE_SPEC)) {
 			bean.setAllDays(ALL_CODE);
-		}
-		else if (expression.getLastDayOfMonth()) {
+		} else if (expression.getLastDayOfMonth()) {
 			if (expression.getNearestWeekday()) {
 				bean.setAllDays(LAST_WEEK_DAY_CODE);
-			}
-			else {
+			} else {
 				bean.setAllDays(LAST_DAY_CODE);
 			}
-		}
-		else {
+		} else {
 			bean.setAllDays(SELECTED_CODE);
 			for (int i = 1, l = 32; i < l; i++) {
-				Binder.set(bean, "day" + i, days.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
+				Binder.set(bean, DAY_PREFIX + i, days.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
 			}
 		}
-		
+
 		if (months.contains(ALL_CODE_SPEC)) {
 			bean.setAllMonths(ALL_CODE);
-		}
-		else {
+		} else {
 			bean.setAllMonths(SELECTED_CODE);
 			for (int i = 1, l = 13; i < l; i++) {
-				Binder.set(bean, "month" + i, months.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
+				Binder.set(bean, MONTH_PREFIX + i, months.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
 			}
 		}
-		
+
 		if (weekdays.contains(ALL_CODE_SPEC) || weekdays.contains(ANY_CODE_SPEC)) {
 			bean.setAllWeekdays(ALL_CODE);
-		}
-		else {
+		} else {
 			bean.setAllWeekdays(SELECTED_CODE);
 			for (int i = 1, l = 8; i < l; i++) {
-				Binder.set(bean, "weekday" + i, weekdays.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
+				Binder.set(bean, WEEKDAY_PREFIX + i, weekdays.contains(Integer.valueOf(i)) ? Boolean.TRUE : Boolean.FALSE);
 			}
 		}
 	}
 
+	/**
+	 * Builds and stores the cron expression from UI selector fields.
+	 *
+	 * @param bean
+	 *        the schedule bean being saved
+	 * @throws Exception
+	 *         if expression generation fails
+	 */
 	@Override
-	public void preSave(JobSchedule bean) throws Exception {
+	@SuppressWarnings("java:S3776") // Complexity OK
+	public void preSave(JobScheduleExtension bean) throws Exception {
 		StringBuilder expression = new StringBuilder(128);
-		
+
 		// append seconds
 		expression.append("0 ");
-		
+
 		// append minutes
 		if (ALL_CODE.equals(bean.getAllMinutes())) {
 			expression.append(ALL_CODE);
-		}
-		else {
+		} else {
 			for (int i = 0, l = 60; i < l; i++) {
-				if (Boolean.TRUE.equals(Binder.get(bean, "minute" + i))) {
+				if (Boolean.TRUE.equals(Binder.get(bean, MINUTE_PREFIX + i))) {
 					expression.append(i).append(',');
 				}
 			}
@@ -253,37 +223,32 @@ public class JobScheduleBizlet extends Bizlet<JobSchedule> {
 		// append hours
 		if (ALL_CODE.equals(bean.getAllHours())) {
 			expression.append(ALL_CODE);
-		}
-		else {
+		} else {
 			for (int i = 0, l = 24; i < l; i++) {
-				if (Boolean.TRUE.equals(Binder.get(bean, "hour" + i))) {
+				if (Boolean.TRUE.equals(Binder.get(bean, HOUR_PREFIX + i))) {
 					expression.append(i).append(',');
 				}
 			}
 			expression.setLength(expression.length() - 1); // remove last comma
 		}
 		expression.append(' ');
-		
+
 		// append days
 		String allDays = bean.getAllDays();
 		String allWeekdays = bean.getAllWeekdays();
 		if (ALL_CODE.equals(allDays)) {
 			if (SELECTED_CODE.equals(allWeekdays)) {
 				expression.append(ANY_CODE);
-			}
-			else {
+			} else {
 				expression.append(ALL_CODE);
 			}
-		}
-		else if (LAST_DAY_CODE.equals(allDays)) {
+		} else if (LAST_DAY_CODE.equals(allDays)) {
 			expression.append(LAST_DAY_CODE);
-		}
-		else if (LAST_WEEK_DAY_CODE.equals(allDays)) {
+		} else if (LAST_WEEK_DAY_CODE.equals(allDays)) {
 			expression.append(LAST_WEEK_DAY_CODE);
-		}
-		else {
+		} else {
 			for (int i = 1, l = 32; i < l; i++) {
-				if (Boolean.TRUE.equals(Binder.get(bean, "day" + i))) {
+				if (Boolean.TRUE.equals(Binder.get(bean, DAY_PREFIX + i))) {
 					expression.append(i).append(',');
 				}
 			}
@@ -294,24 +259,22 @@ public class JobScheduleBizlet extends Bizlet<JobSchedule> {
 		// append months
 		if (ALL_CODE.equals(bean.getAllMonths())) {
 			expression.append(ALL_CODE);
-		}
-		else {
+		} else {
 			for (int i = 1, l = 13; i < l; i++) {
-				if (Boolean.TRUE.equals(Binder.get(bean, "month" + i))) {
+				if (Boolean.TRUE.equals(Binder.get(bean, MONTH_PREFIX + i))) {
 					expression.append(i).append(',');
 				}
 			}
 			expression.setLength(expression.length() - 1); // remove last comma
 		}
 		expression.append(' ');
-		
+
 		// append weekdays
 		if (ALL_CODE.equals(bean.getAllWeekdays())) {
 			expression.append(ANY_CODE);
-		}
-		else {
+		} else {
 			for (int i = 1, l = 8; i < l; i++) {
-				if (Boolean.TRUE.equals(Binder.get(bean, "weekday" + i))) {
+				if (Boolean.TRUE.equals(Binder.get(bean, WEEKDAY_PREFIX + i))) {
 					expression.append(i).append(',');
 				}
 			}
@@ -323,89 +286,112 @@ public class JobScheduleBizlet extends Bizlet<JobSchedule> {
 
 	/**
 	 * Reschedule this job after any runAs user name change has been flushed.
+	 *
+	 * @param bean
+	 *        the saved schedule bean
+	 * @throws Exception
+	 *         if unschedule/schedule operations fail
 	 */
 	@Override
-	public void postSave(JobSchedule bean) throws Exception {
-		Customer customer = CORE.getUser().getCustomer();
-		
+	public void postSave(JobScheduleExtension bean) throws Exception {
 		// Re-schedule the job
-		JobScheduler jobScheduler = EXT.getJobScheduler();
-		jobScheduler.unscheduleJob(bean, customer);
+		final JobScheduler jobScheduler = EXT.getJobScheduler();
+		jobScheduler.unscheduleJob(bean.getBizId(), CORE.getCustomer().getName());
 		if (! Boolean.TRUE.equals(bean.getDisabled())) {
-			jobScheduler.scheduleJob(bean, bean.getRunAs().toMetaDataUser());
+			jobScheduler.scheduleJob(bean.toJobSchedule(), bean.getRunAs().toMetaDataUser());
 		}
-	}
-	
-	@Override
-	public void preDelete(JobSchedule bean) throws Exception {
-		EXT.getJobScheduler().unscheduleJob(bean, CORE.getUser().getCustomer());
 	}
 
+	/**
+	 * Unschedules the persisted job before deleting the schedule record.
+	 *
+	 * @param bean
+	 *        the schedule being deleted
+	 * @throws Exception
+	 *         if unscheduling fails
+	 */
 	@Override
-	public void validate(JobSchedule bean, ValidationException e)
-	throws Exception {
-		if ((! ALL_CODE.equals(bean.getAllDays())) && (! ALL_CODE.equals(bean.getAllWeekdays()))) {
-			e.getMessages().add(new Message(new String[] {JobSchedule.allDaysPropertyName, JobSchedule.allWeekdaysPropertyName},
-												"Choose week days or days of the month, but not both"));
+	public void preDelete(JobScheduleExtension bean) throws Exception {
+		EXT.getJobScheduler().unscheduleJob(bean.getBizId(), CORE.getCustomer().getName());
+	}
+
+	/**
+	 * Validates selector combinations and minimum field selections.
+	 *
+	 * @param bean
+	 *        the schedule bean under validation
+	 * @param e
+	 *        the validation exception collector
+	 * @throws Exception
+	 *         if validation processing fails
+	 */
+	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
+	public void validate(JobScheduleExtension bean, ValidationException e)
+			throws Exception {
+		if ((!ALL_CODE.equals(bean.getAllDays())) && (!ALL_CODE.equals(bean.getAllWeekdays()))) {
+			e.getMessages()
+					.add(new Message(new String[] { JobSchedule.allDaysPropertyName, JobSchedule.allWeekdaysPropertyName },
+							"Choose week days or days of the month, but not both"));
 		}
-		
+
 		if (SELECTED_CODE.equals(bean.getAllMinutes())) {
 			boolean found = false;
 			for (int i = 0, l = 60; i < l; i++) {
-				if (Boolean.TRUE.equals(Binder.get(bean, "minute" + i))) {
+				if (Boolean.TRUE.equals(Binder.get(bean, MINUTE_PREFIX + i))) {
 					found = true;
 					break;
 				}
 			}
-			if (! found) {
+			if (!found) {
 				e.getMessages().add(new Message(JobSchedule.allMinutesPropertyName, "Must select at least one minute."));
 			}
 		}
 		if (SELECTED_CODE.equals(bean.getAllHours())) {
 			boolean found = false;
 			for (int i = 0, l = 24; i < l; i++) {
-				if (Boolean.TRUE.equals(Binder.get(bean, "hour" + i))) {
+				if (Boolean.TRUE.equals(Binder.get(bean, HOUR_PREFIX + i))) {
 					found = true;
 					break;
 				}
 			}
-			if (! found) {
+			if (!found) {
 				e.getMessages().add(new Message(JobSchedule.allHoursPropertyName, "Must select at least one hour."));
 			}
 		}
 		if (SELECTED_CODE.equals(bean.getAllDays())) {
 			boolean found = false;
 			for (int i = 1, l = 32; i < l; i++) {
-				if (Boolean.TRUE.equals(Binder.get(bean, "day" + i))) {
+				if (Boolean.TRUE.equals(Binder.get(bean, DAY_PREFIX + i))) {
 					found = true;
 					break;
 				}
 			}
-			if (! found) {
+			if (!found) {
 				e.getMessages().add(new Message(JobSchedule.allDaysPropertyName, "Must select at least one day."));
 			}
 		}
 		if (SELECTED_CODE.equals(bean.getAllMonths())) {
 			boolean found = false;
 			for (int i = 1, l = 13; i < l; i++) {
-				if (Boolean.TRUE.equals(Binder.get(bean, "month" + i))) {
+				if (Boolean.TRUE.equals(Binder.get(bean, MONTH_PREFIX + i))) {
 					found = true;
 					break;
 				}
 			}
-			if (! found) {
+			if (!found) {
 				e.getMessages().add(new Message(JobSchedule.allMonthsPropertyName, "Must select at least one month."));
 			}
 		}
 		if (SELECTED_CODE.equals(bean.getAllWeekdays())) {
 			boolean found = false;
 			for (int i = 1, l = 8; i < l; i++) {
-				if (Boolean.TRUE.equals(Binder.get(bean, "weekday" + i))) {
+				if (Boolean.TRUE.equals(Binder.get(bean, WEEKDAY_PREFIX + i))) {
 					found = true;
 					break;
 				}
 			}
-			if (! found) {
+			if (!found) {
 				e.getMessages().add(new Message(JobSchedule.allWeekdaysPropertyName, "Must select at least one week day."));
 			}
 		}

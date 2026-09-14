@@ -19,8 +19,28 @@ import org.skyve.persistence.DocumentQuery.AggregateFunction;
 import org.skyve.persistence.Persistence;
 import org.skyve.util.Binder;
 
+import jakarta.annotation.Nonnull;
+
+/**
+ * Base implementation of {@link NumberGenerator} that reads and increments sequence
+ * counters stored in the {@code DocumentNumber} admin document.
+ *
+ * <p>The counter for a {@code (moduleName, documentName, fieldName)} triple is
+ * persisted in the database. On first access the implementation bootstraps from
+ * the maximum value already present in the field's column so that generated numbers
+ * never collide with existing data.
+ *
+ * <p>Subclasses must implement {@link NumberGenerator#next} using the
+ * {@link #getNextNumber} helper, supplying the appropriate
+ * {@link org.skyve.persistence.Persistence} instance.
+ *
+ * @see DocumentNumberGenerator
+ * @see NumberGeneratorStaticSingleton
+ */
 public abstract class AbstractDocumentNumberGenerator implements NumberGenerator {
-	@SuppressWarnings("static-method")
+	private static final String NUMERIC_PATTERN = "^\\d+$";
+
+	@SuppressWarnings({"static-method", "java:S3776"}) // Complexity OK
 	protected String getNextNumber(Persistence pers,
 									String prefix,
 									String moduleName,
@@ -37,7 +57,8 @@ public abstract class AbstractDocumentNumberGenerator implements NumberGenerator
 		DocumentNumber dN = null;
 		try {
 			// temporarily escalate access to the Document Number sequences
-			List<DocumentNumber> num = pers.withDocumentPermissionScopes(DocumentPermissionScope.customer, p -> {
+			@SuppressWarnings("null") // always returns a list
+			@Nonnull List<DocumentNumber> num = pers.withDocumentPermissionScopes(DocumentPermissionScope.customer, p -> {
 				DocumentQuery qN = pers.newDocumentQuery(AppConstants.ADMIN_MODULE_NAME, AppConstants.DOCUMENT_NUMBER_DOCUMENT_NAME);
 				qN.getFilter().addEquals(AppConstants.MODULE_NAME_ATTRIBUTE_NAME, moduleName);
 				qN.getFilter().addEquals(AppConstants.DOCUMENT_NAME_ATTRIBUTE_NAME, documentName);
@@ -137,13 +158,13 @@ public abstract class AbstractDocumentNumberGenerator implements NumberGenerator
 				value = Integer.valueOf(Integer.parseInt(numberPart) + 1);
 
 				// cater for purely numeric prefix
-			} else if (prefix.matches("^\\d+$") && lastNumber.matches("^\\d+$") && !"0".equals(lastNumber)) {
+			} else if (prefix.matches(NUMERIC_PATTERN) && lastNumber.matches(NUMERIC_PATTERN) && !"0".equals(lastNumber)) {
 				int len = prefix.length();
 				value = Integer.valueOf(Integer.parseInt(lastNumber.substring(len)) + 1);
 				nonNumeric = prefix;
 
 				// cater for numeric only
-			} else if (lastNumber.matches("^\\d+$")) {
+			} else if (lastNumber.matches(NUMERIC_PATTERN)) {
 				nonNumeric = prefix;
 				value = Integer.valueOf(Integer.parseInt(lastNumber) + 1);
 			}

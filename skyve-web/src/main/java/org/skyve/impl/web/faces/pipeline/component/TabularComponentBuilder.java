@@ -5,11 +5,11 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 import org.primefaces.behavior.ajax.AjaxBehavior;
 import org.primefaces.behavior.ajax.AjaxBehaviorListenerImpl;
-import org.primefaces.behavior.confirm.ConfirmBehavior;
 import org.primefaces.component.accordionpanel.AccordionPanel;
 import org.primefaces.component.autocomplete.AutoComplete;
 import org.primefaces.component.barchart.BarChart;
@@ -29,6 +29,7 @@ import org.primefaces.component.inputmask.InputMask;
 import org.primefaces.component.inputtext.InputText;
 import org.primefaces.component.inputtextarea.InputTextarea;
 import org.primefaces.component.linechart.LineChart;
+import org.primefaces.component.menubutton.MenuButton;
 import org.primefaces.component.menuitem.UIMenuItem;
 import org.primefaces.component.message.Message;
 import org.primefaces.component.outputlabel.OutputLabel;
@@ -52,6 +53,7 @@ import org.primefaces.component.tabview.TabView;
 import org.primefaces.component.texteditor.TextEditor;
 import org.primefaces.component.toolbar.Toolbar;
 import org.primefaces.component.tristatecheckbox.TriStateCheckbox;
+import org.primefaces.component.tristatecheckbox.TriStateCheckboxBase;
 import org.primefaces.model.DualListModel;
 import org.primefaces.model.charts.ChartModel;
 import org.skyve.CORE;
@@ -88,6 +90,7 @@ import org.skyve.domain.types.converters.timestamp.MM_DD_YYYY_HH_MI_SS;
 import org.skyve.domain.types.converters.timestamp.YYYY_MM_DD_HH24_MI_SS;
 import org.skyve.domain.types.converters.timestamp.YYYY_MM_DD_HH_MI_SS;
 import org.skyve.impl.bind.BindUtil;
+import org.skyve.impl.generate.ViewRenderer;
 import org.skyve.impl.metadata.model.document.InverseOne;
 import org.skyve.impl.metadata.repository.module.MetaDataQueryContentColumnMetaData.DisplayType;
 import org.skyve.impl.metadata.view.HorizontalAlignment;
@@ -103,6 +106,7 @@ import org.skyve.impl.metadata.view.event.ServerSideActionEventAction;
 import org.skyve.impl.metadata.view.widget.Blurb;
 import org.skyve.impl.metadata.view.widget.Chart;
 import org.skyve.impl.metadata.view.widget.Chart.ChartType;
+import org.skyve.impl.metadata.view.widget.DialogButton;
 import org.skyve.impl.metadata.view.widget.DynamicImage;
 import org.skyve.impl.metadata.view.widget.Link;
 import org.skyve.impl.metadata.view.widget.MapDisplay;
@@ -113,9 +117,10 @@ import org.skyve.impl.metadata.view.widget.bound.input.CheckBox;
 import org.skyve.impl.metadata.view.widget.bound.input.ColourPicker;
 import org.skyve.impl.metadata.view.widget.bound.input.Combo;
 import org.skyve.impl.metadata.view.widget.bound.input.CompleteType;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentImage;
-import org.skyve.impl.metadata.view.widget.bound.input.ContentLink;
+import org.skyve.impl.metadata.view.widget.bound.input.ContentCapture;
+import org.skyve.impl.metadata.view.widget.bound.input.ContentDisplay;
 import org.skyve.impl.metadata.view.widget.bound.input.ContentSignature;
+import org.skyve.impl.metadata.view.widget.bound.input.ContentUpload;
 import org.skyve.impl.metadata.view.widget.bound.input.Geometry;
 import org.skyve.impl.metadata.view.widget.bound.input.GeometryInputType;
 import org.skyve.impl.metadata.view.widget.bound.input.GeometryMap;
@@ -164,12 +169,12 @@ import org.skyve.metadata.view.model.list.ListModel;
 import org.skyve.metadata.view.widget.FilterParameter;
 import org.skyve.metadata.view.widget.bound.Parameter;
 import org.skyve.report.ReportFormat;
-import org.skyve.util.BeanValidator;
 import org.skyve.util.Binder.TargetMetaData;
 import org.skyve.util.Icons;
-import org.skyve.util.Util;
 import org.skyve.web.WebAction;
 
+import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import jakarta.el.MethodExpression;
 import jakarta.el.ValueExpression;
 import jakarta.faces.component.UICommand;
@@ -178,9 +183,11 @@ import jakarta.faces.component.UIComponentBase;
 import jakarta.faces.component.UIInput;
 import jakarta.faces.component.UIOutput;
 import jakarta.faces.component.UIPanel;
+import jakarta.faces.component.UISelectBoolean;
 import jakarta.faces.component.UISelectItems;
 import jakarta.faces.component.html.HtmlInputHidden;
 import jakarta.faces.component.html.HtmlInputText;
+import jakarta.faces.component.html.HtmlOutputLabel;
 import jakarta.faces.component.html.HtmlOutputLink;
 import jakarta.faces.component.html.HtmlOutputText;
 import jakarta.faces.component.html.HtmlPanelGrid;
@@ -188,12 +195,127 @@ import jakarta.faces.component.html.HtmlPanelGroup;
 import jakarta.faces.component.html.HtmlSelectOneMenu;
 import jakarta.faces.convert.Converter;
 
+@SuppressWarnings("java:S1192") // Repeated literals are deliberate JSF component script/style fragments.
 public abstract class TabularComponentBuilder extends ComponentBuilder {
 	public static final String EMPTY_DATA_TABLE_CAN_ADD_MESSAGE = "No Items to show. Click <span class=\"" + Icons.FONT_ADD + " skyveEmptyListAddIcon\"></span> to add a new Item.";
 	public static final String EMPTY_DATA_TABLE_MESSAGE = "No Items to show.";
 	public static final String SINGLE_ACTION_COLUMN_WIDTH = "60";
 	public static final Integer SINGLE_ACTION_COLUMN_WIDTH_INTEGER = Integer.valueOf(60);
 	public static final String DOUBLE_ACTION_COLUMN_WIDTH = "95";
+
+	private static final String UPLOAD_CAPTURE_PROPERTY_NAME = "capture";
+	private static final String FULL_SCREEN_DIALOG_WIDTH = "96vw";
+	private static final String FULL_SCREEN_DIALOG_HEIGHT = "96vh";
+	private static final String FULL_SCREEN_DIALOG_STYLE = "max-width:100vw;max-height:100vh;";
+	private static final String FULL_SCREEN_IFRAME_ATTRIBUTES = " loading=\"eager\" scrolling=\"no\" style=\"display:block;width:100%;height:100%;border:none;overflow:hidden\"";
+	private static final String LOCK_PAGE_SCROLL_SCRIPT = "SKYVE.PF.lockPageScroll()";
+	private static final String UNLOCK_PAGE_SCROLL_SCRIPT = "SKYVE.PF.unlockPageScroll()";
+	
+	// 2:1 aspect ratio that will fit 95% of phone CSS widths
+	private static final Integer DEFAULT_SIGNATURE_PIXEL_WIDTH = Integer.valueOf(350);
+	private static final Integer DEFAULT_SIGNATURE_PIXEL_HEIGHT = Integer.valueOf(175);
+
+	/**
+	 * Creates a PrimeFaces dialog configured for Skyve full-screen iframe tools.
+	 *
+	 * <p>Side effects: creates a JSF component, assigns it a generated id, and
+	 * applies the shared full-screen viewport sizing and dialog behaviour.
+	 *
+	 * @param header dialog header text; must not be {@code null}
+	 * @return configured full-screen dialog; never {@code null}
+	 */
+	private Dialog createFullScreenDialog(@Nonnull String header) {
+		Dialog result = (Dialog) a.createComponent(Dialog.COMPONENT_TYPE);
+		setId(result, null);
+		result.setModal(true);
+		result.setResponsive(true);
+		result.setFitViewport(true);
+		result.setResizable(false);
+		result.setCloseOnEscape(true);
+		result.setWidth(FULL_SCREEN_DIALOG_WIDTH);
+		result.setHeight(FULL_SCREEN_DIALOG_HEIGHT);
+		result.setStyle(FULL_SCREEN_DIALOG_STYLE);
+		result.setHeader(header);
+		result.setAppendTo("@(body)"); // append to <body/> so dialog can always pop (didn't work in tabs)
+		return result;
+	}
+
+	/**
+	 * Creates an iframe markup component with the supplied DOM id and attributes.
+	 *
+	 * <p>Side effects: creates a JSF component, assigns it a generated id, and
+	 * stores raw iframe markup in the component value.
+	 *
+	 * @param iframeId iframe DOM id; must not be {@code null}
+	 * @param iframeAttributes raw iframe attributes including any leading space; must not be {@code null}
+	 * @return output text component containing the iframe markup; never {@code null}
+	 */
+	private HtmlOutputText createIframe(@Nonnull String iframeId, @Nonnull String iframeAttributes) {
+		HtmlOutputText result = (HtmlOutputText) a.createComponent(HtmlOutputText.COMPONENT_TYPE);
+		result.setEscape(false);
+		result.setValue(String.format("<iframe id=\"%s\" src=\"\"%s></iframe>", iframeId, iframeAttributes));
+		setId(result, null);
+		return result;
+	}
+
+	/**
+	 * Builds the JavaScript statement that opens a PrimeFaces widget.
+	 *
+	 * @param widgetVar PrimeFaces widget variable; must not be {@code null}
+	 * @return script fragment without a trailing semicolon; never {@code null}
+	 */
+	private static @Nonnull String createPfShowScript(@Nonnull String widgetVar) {
+		return "PF('" + widgetVar + "').show()";
+	}
+
+	/**
+	 * Builds the JavaScript used by button/menu onclick handlers that only open a
+	 * PrimeFaces widget.
+	 *
+	 * @param widgetVar PrimeFaces widget variable; must not be {@code null}
+	 * @return script fragment that opens the widget and returns {@code false}; never {@code null}
+	 */
+	private static @Nonnull String createPfShowReturnFalseScript(@Nonnull String widgetVar) {
+		return createPfShowScript(widgetVar) + ";return false";
+	}
+
+	/**
+	 * Builds the default content overlay hide script.
+	 *
+	 * @param id generated content or panel id; must not be {@code null}
+	 * @return script fragment without a trailing semicolon; never {@code null}
+	 */
+	private static @Nonnull String createContentOverlayOnHideScript(@Nonnull String id) {
+		return "SKYVE.PF.contentOverlayOnHide('" + id + "')";
+	}
+
+	/**
+	 * Builds the content overlay hide script with explicit iframe-preservation and
+	 * scroll-unlock flags.
+	 *
+	 * @param id generated content or panel id; must not be {@code null}
+	 * @param preserveIframeSrc whether the existing iframe source should be retained
+	 * @param unlockScroll whether the shared full-screen scroll lock should be released
+	 * @return script fragment without a trailing semicolon; never {@code null}
+	 */
+	private static @Nonnull String createContentOverlayOnHideScript(@Nonnull String id,
+																		boolean preserveIframeSrc,
+																		boolean unlockScroll) {
+		return String.format("SKYVE.PF.contentOverlayOnHide('%s',%s,%s)",
+								id,
+								Boolean.toString(preserveIframeSrc),
+								Boolean.toString(unlockScroll));
+	}
+
+	/**
+	 * Builds the mark-up dialog hide script and guarantees page scroll is unlocked.
+	 *
+	 * @param id generated content id; must not be {@code null}
+	 * @return script fragment without a trailing semicolon; never {@code null}
+	 */
+	private static @Nonnull String createContentMarkupOnHideAndUnlockScript(@Nonnull String id) {
+		return "try{SKYVE.PF.contentMarkupOnHide('" + id + "')}finally{" + UNLOCK_PAGE_SCROLL_SCRIPT + "}";
+	}
 
 	@Override
 	public UIComponent view(UIComponent component, boolean createView) {
@@ -203,7 +325,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		HtmlPanelGroup result = panelGroup(true, false, false, null, null);
 
-		// Don't render the view if there is no bean selected as 
+		// Don't render the view if there is no bean selected as
 		// it'll cause a cascade of stack traces as the EL is evaluated
 		StringBuilder rendered = new StringBuilder(64);
 		rendered.append('(').append(managedBeanName).append(".currentBean ne null) and (");
@@ -230,6 +352,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		Toolbar toolbar = (Toolbar) a.createComponent(Toolbar.COMPONENT_TYPE);
 		setId(toolbar, widgetId);
 		toolbar.setStyle("width:100%");
+		toolbar.setStyleClass(ACTION_BAR_STYLE_CLASS);
 
 		List<UIComponent> result = new ArrayList<>(1);
 		result.add(toolbar);
@@ -255,7 +378,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		String selectedTabIndexBinding = tabPane.getSelectedTabIndexBinding();
 		if (selectedTabIndexBinding != null) {
 			result.setValueExpression("activeIndex", createValueExpressionFromFragment(selectedTabIndexBinding, true, null, Number.class, false, Sanitisation.none));
-			
+
 			// Set display on based on whether there is a tab index defined
 			expr.append("#{empty ").append(managedBeanName).append(".currentBean['").append(selectedTabIndexBinding).append("'] ? 'display:none' : ''}");
 			result.setValueExpression("style", ef.createValueExpression(elc, expr.toString(), String.class));
@@ -263,7 +386,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		else {
 			result.setStyle("display:none");
 		}
-		
+
 		result.setWidgetVar(id); // for subsequent tab script to work
 
 		expr.setLength(0);
@@ -273,6 +396,20 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return result;
 	}
 
+	/**
+	 * Creates a PrimeFaces tab whose metadata title is rendered through a
+	 * {@code title} facet.
+	 *
+	 * <p>Side effects: creates and IDs a tab component, optionally attaches a
+	 * title-facet output component, and applies disabled/rendered expressions.
+	 * {@code null} and {@code Boolean.TRUE} title escape flags escape at the facet
+	 * boundary; only {@code Boolean.FALSE} allows trusted title markup.
+	 *
+	 * @param component existing component to reuse; when non-{@code null}, returned unchanged
+	 * @param title raw resolved title or title expression fragment; may be {@code null}
+	 * @param tab tab metadata carrying escape, disabled, and invisible settings
+	 * @return existing component or configured tab; never {@code null} when a new tab is created
+	 */
 	@Override
 	public UIComponent tab(UIComponent component, String title, org.skyve.impl.metadata.view.container.Tab tab) {
 		if (component != null) {
@@ -280,7 +417,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		}
 
 		Tab result = (Tab) a.createComponent(Tab.COMPONENT_TYPE);
-		setValueOrValueExpression(title, result::setTitle, "title", result);
+		putOutputTextFacetValueOrValueExpression(result, "title", title, ViewRenderer.shouldEscape(tab.getEscapeTitle()));
 		setDisabled(result, tab.getDisabledConditionName(), null);
 		setInvisible(result, tab.getInvisibleConditionName(), null);
 		setId(result, null);
@@ -304,7 +441,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		expr.append(moduleName).append('_').append(documentName).append('_').append(tabPaneComponentId);
 		expr.append(":0);});}</script>");
 		result.setValue(expr.toString());
-		
+
 		String selectedTabIndexBinding = tabPane.getSelectedTabIndexBinding();
 		if (selectedTabIndexBinding != null) {
 			// Set script conditional rendering based on whether there is a tab index defined
@@ -312,30 +449,30 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			expr.append("#{empty ").append(managedBeanName).append(".currentBean['").append(selectedTabIndexBinding).append("']}");
 			result.setValueExpression("rendered", ef.createValueExpression(elc, expr.toString(), Boolean.class));
 		}
-		
+
 		return result;
 	}
-	
+
 	@Override
 	public UIComponent sidebarScript(UIComponent component,
 										Sidebar sidebar,
 										boolean createView,
 										String sidebarComponentId) {
 		String width = "360px";
-		
+
 		Integer pixel = sidebar.getPixelWidth();
 		Integer responsive = sidebar.getResponsiveWidth();
 		Integer percentage = sidebar.getPercentageWidth();
 		if (pixel != null) {
 			width = pixel.toString() + "px";
-		} 
+		}
 		else if (responsive != null) {
 			width = LayoutUtil.responsiveWidthToPercentageWidth(responsive.doubleValue()) + "%";
 		}
 		else if (percentage != null) {
 			width = percentage.toString() + "%";
 		}
-		
+
 		StringBuilder expr = new StringBuilder(128);
 		expr.append("<script type=\"text/javascript\">SKYVE.PF.sidebar('");
 		expr.append(sidebarComponentId).append("','").append(width).append("',");
@@ -352,10 +489,10 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		UIOutput result = new UIOutput();
 		result.setValue(expr.toString());
-		
+
 		return result;
 	}
-	
+
 	@Override
 	public UIComponent border(UIComponent component,
 								String borderTitle,
@@ -395,10 +532,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		CommandButton result = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
 
 		result.setValue(label);
+		result.setEscape(! Boolean.FALSE.equals(zoomIn.getEscapeDisplayName()));
 		result.setIcon(iconStyleClass);
-		result.setTitle(toolTip);
+		result.setTitle(sanitiseFacesText(toolTip));
 
-		setSizeAndTextAlignStyle(result, null, null, zoomIn.getPixelWidth(), null, null, zoomIn.getPixelHeight(), null, null, null);
+		setSizeAndTextAlignStyle(result, null, zoomIn.getPixelWidth(), null, null, zoomIn.getPixelHeight(), null, null);
 		setInvisible(result, zoomIn.getInvisibleConditionName(), null);
 		setDisabled(result, zoomIn.getDisabledConditionName(), formDisabledConditionName);
 		setId(result, null);
@@ -437,9 +575,9 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		}
 
 		Map<String, String> properties = button.getProperties();
-		return actionButton(label,
+		return actionButton(actionDisplayName(label, action),
 								iconStyleClass,
-				                toolTip,
+				                actionToolTip(toolTip),
 				                action.getImplicitName(),
 				                action.getName(),
 				                false,
@@ -447,8 +585,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 				                dataWidgetVar,
 				                button.getPixelWidth(),
 				                button.getPixelHeight(),
-				                action.getClientValidation(),
-				                confirmationText,
+				                actionConfirmation(confirmationText, action),
 				                action.getDisabledConditionName(),
 				                formDisabledConditionName,
 				                action.getInvisibleConditionName(),
@@ -470,14 +607,14 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			return component;
 		}
 
-		return reportButton(label,
+		return reportButton(actionDisplayName(label, action),
 								iconStyleClass,
-								toolTip,
+								actionToolTip(toolTip),
 								action.getParameters(),
 								button.getPixelWidth(),
 								button.getPixelHeight(),
 								action.getClientValidation(),
-								confirmationText,
+								actionConfirmation(confirmationText, action),
 								action.getDisabledConditionName(),
 								formDisabledConditionName,
 								action.getInvisibleConditionName());
@@ -500,15 +637,15 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		Map<String, String> properties = action.getProperties();
 
-		return downloadButton(label,
+		return downloadButton(actionDisplayName(label, action),
 								iconStyleClass,
-								toolTip,
+								actionToolTip(toolTip),
 								dataWidgetBinding,
 								dataWidgetVar,
 								action.getName(),
 								button.getPixelWidth(),
 								button.getPixelHeight(),
-								confirmationText,
+								actionConfirmation(confirmationText, action),
 								action.getDisabledConditionName(),
 								formDisabledConditionName,
 								action.getInvisibleConditionName(),
@@ -529,18 +666,20 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			return component;
 		}
 
-		return uploadButton(label,
+		ContentCapture capture = resolveActionUploadCapture(action);
+		return uploadButton(actionDisplayName(label, action),
 								iconStyleClass,
-								toolTip,
+								actionToolTip(toolTip),
 								action.getName(),
 								button.getPixelWidth(),
 								button.getPixelHeight(),
 								action.getClientValidation(),
-								confirmationText,
+								actionConfirmation(confirmationText, action),
 								action.getDisabledConditionName(),
 								formDisabledConditionName,
 								action.getInvisibleConditionName(),
-								false);
+								capture,
+								useActionUploadDialog(capture));
 	}
 
 	@Override
@@ -561,7 +700,73 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 							blurb.getPixelHeight(),
 							blurb.getInvisibleConditionName(),
 							! Boolean.FALSE.equals(blurb.getEscape()),
-							blurb.getSanitise());
+							blurb.getSanitise(),
+							true);
+	}
+
+	/**
+	 * Creates a PrimeFaces command button for dialog-button metadata.
+	 *
+	 * <p>Side effects: creates and IDs a command button, assigns raw display text
+	 * and the metadata escape flag at the PrimeFaces output boundary, applies
+	 * disabled/invisible conditions, and marks the button as client-side only until
+	 * dialog invocation behaviour is implemented.
+	 *
+	 * @param component existing component to reuse; when non-{@code null}, returned unchanged
+	 * @param label raw button label and nullable escape flag
+	 * @param button dialog-button metadata
+	 * @param formDisabledConditionName optional form-level disabled condition
+	 * @return existing component or configured command button; never {@code null} when newly created
+	 */
+	@Override
+	public UIComponent dialogButton(UIComponent component,
+										EscapableText label,
+										DialogButton button,
+										String formDisabledConditionName) {
+		if (component != null) {
+			return component;
+		}
+
+		CommandButton result = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
+		setCommandButtonText(result, label);
+		result.setType("button");
+		setDisabled(result, button.getDisabledConditionName(), formDisabledConditionName);
+		setInvisible(result, button.getInvisibleConditionName(), null);
+		setId(result, null);
+		return result;
+	}
+
+	/**
+	 * Returns raw action display text with its metadata escape decision.
+	 *
+	 * @param value resolved action display text; may be {@code null}
+	 * @param action action metadata supplying the nullable escape flag; must not be {@code null}
+	 * @return raw display text paired with its escape decision; never {@code null}
+	 */
+	private static EscapableText actionDisplayName(String value, Action action) {
+		return EscapableText.of(value, ViewRenderer.shouldEscape(action.getEscapeDisplayName()));
+	}
+
+	/**
+	 * Returns plain action tooltip text for assignment to JSF/PrimeFaces browser
+	 * title attributes.
+	 *
+	 * @param value resolved action tooltip text; may be {@code null}
+	 * @return markup-stripped tooltip text, or {@code null}
+	 */
+	private static String actionToolTip(String value) {
+		return sanitiseFacesText(value);
+	}
+
+	/**
+	 * Returns raw action confirmation text with its metadata escape decision.
+	 *
+	 * @param value resolved confirmation text; may be {@code null}
+	 * @param action action metadata supplying the nullable escape flag; must not be {@code null}
+	 * @return raw confirmation text paired with its escape decision; never {@code null}
+	 */
+	private static EscapableText actionConfirmation(String value, Action action) {
+		return EscapableText.of(value, ViewRenderer.shouldEscape(action.getEscapeConfirm()));
 	}
 
 	@Override
@@ -582,26 +787,34 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 							label.getPixelHeight(),
 							label.getInvisibleConditionName(),
 							! Boolean.FALSE.equals(label.getEscape()),
-							label.getSanitise());
+							label.getSanitise(),
+							false);
 	}
 
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	private HtmlOutputText outputText(String dataWidgetVar,
 										String value,
 										String binding,
-										HorizontalAlignment textAlignment,
+										HorizontalAlignment alignment,
 										Integer pixelWidth,
 										Integer pixelHeight,
 										String invisibleConditionName,
 										boolean escape,
-										Sanitisation sanitise) {
+										Sanitisation sanitise,
+										boolean blurb) {
 		HtmlOutputText result = (HtmlOutputText) a.createComponent(HtmlOutputText.COMPONENT_TYPE);
 		setId(result, null);
+
+		// To implement horizontal alignment we use a table to wrap
+		String preAlign = (alignment == null) ? "" : "<table style=\"width:100%\"><tr><td align=\"" + alignment.toTextAlignmentString() + "\">";
+		String postAlign = (alignment == null) ? "" : "</td></tr></table>";
+
 		if (value != null) {
-			result.setValue(value);
+			result.setValue(preAlign + value + postAlign);
 		}
 		else {
 			// escape bindings with ' as \' as the binding could be for blurb expressions
-			String sanitisedBinding = ((binding.indexOf('\'') >= 0) ? binding.replace("'", "\\'") : binding);
+			String sanitisedBinding = preAlign + ((binding.indexOf('\'') >= 0) ? binding.replace("'", "\\'") : binding) + postAlign;
 			if (dataWidgetVar != null) {
 				result.setValueExpression("value", createValueExpressionFromFragment(dataWidgetVar, true, sanitisedBinding, true, null, Object.class, escape, sanitise));
 			}
@@ -611,23 +824,24 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		}
 		result.setEscape(false);
 
-		setTextAlign(result, textAlignment);
-		// Note No default percentage width of 100% so that horizontal alignment of labels and blurbs works in form items.
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, pixelHeight, null, null, null);
+		// Ensure the default width is 100% for blurbs (which could have a background style) or for labels or blurbs that have a text alignment attribute
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, pixelHeight, null, (blurb || (alignment != null)) ? ONE_HUNDRED : null);
 		setInvisible(result, invisibleConditionName, null);
 
 		return result;
 	}
 
 	private int columnPriority;
+	private int dataGridMinimumWidth;
 
 	@Override
-	public UIComponent dataGrid(UIComponent component, String dataWidgetVar, boolean ordered, String title, DataGrid grid) {
+	public UIComponent dataGrid(UIComponent component, String dataWidgetVar, boolean ordered, DataGrid grid) {
 		if (component != null) {
 			return component;
 		}
 
 		columnPriority = 1;
+		dataGridMinimumWidth = ordered ? 34 : 0;
 
 		String disabledConditionName = grid.getDisabledConditionName();
 		String disableZoomConditionName = grid.getDisableZoomConditionName();
@@ -641,7 +855,6 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		final DataTable dataTable = dataTable(grid.getBinding(),
 												dataWidgetVar,
-												title,
 												grid.getInvisibleConditionName(),
 												((! Boolean.TRUE.equals(grid.getInline())) &&
 														(! Boolean.FALSE.equals(grid.getShowZoom())) &&
@@ -651,6 +864,12 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 												grid.getSelectedActions(),
 												ordered,
 												grid.getWidgetId());
+		dataTable.setStyleClass("skyve-card-grid");
+		if (ordered) {
+			Column dragColumn = (Column) dataTable.getChildren().get(0);
+			dragColumn.setResponsivePriority(0);
+			dragColumn.setStyleClass("skyve-card-actions");
+		}
 
 		UIOutput emptyMessage = (UIOutput) a.createComponent(UIOutput.COMPONENT_TYPE);
 		if ((! Boolean.FALSE.equals(grid.getEditable())) && (! Boolean.FALSE.equals(grid.getShowAdd()))) {
@@ -671,7 +890,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 	 * Any bound columns are editable inline.
 	 */
 	@Override
-	public UIComponent dataRepeater(UIComponent component, String dataWidgetVar, String title, DataRepeater repeater) {
+	public UIComponent dataRepeater(UIComponent component, String dataWidgetVar, DataRepeater repeater) {
 		if (component != null) {
 			return component;
 		}
@@ -680,7 +899,6 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		DataTable result = dataTable(repeater.getBinding(),
 										dataWidgetVar,
-										title,
 										repeater.getInvisibleConditionName(),
 										false,
 										null,
@@ -696,6 +914,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // complexity OK
 	public UIComponent addDataGridBoundColumn(UIComponent component,
 												UIComponent current,
 												AbstractDataWidget widget,
@@ -713,20 +932,31 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		Column result = column(dataWidgetVar,
 								null,
 								columnTitle,
+								ViewRenderer.shouldEscape(column.getEscapeTitle()),
 								alignment,
 	                            false,
 	                            pixelWidth);
-		result.setResponsivePriority(columnPriority);
-		if (columnPriority < 6) {
-			columnPriority++;
+		if (widget instanceof DataGrid) {
+			result.setResponsivePriority(0);
+			result.setStyleClass("skyve-card-cell");
+			if (column.getPixelWidth() != null) {
+				result.setStyle(result.getStyle() + "--skyve-card-width:" + column.getPixelWidth() + "px;");
+				result.setStyleClass("skyve-card-cell skyve-card-fixed");
+			}
+			dataGridMinimumWidth += ((pixelWidth == null) ? 220 : pixelWidth.intValue()) + 24;
+		}
+		else {
+			result.setResponsivePriority(columnPriority);
+			if (columnPriority < 6) {
+				columnPriority++;
+			}
 		}
 		current.getChildren().add(result);
 
 		// Output the value as boilerplate text in the table column if
 		// this is not an inline grid or the column is not editable
-		boolean inline = (widget instanceof DataGrid) ?
-							Boolean.TRUE.equals(((DataGrid) widget).getInline()) :
-							false;
+		boolean inline = (widget instanceof DataGrid dataGrid) &&
+							Boolean.TRUE.equals(dataGrid.getInline());
 		if ((! inline) || Boolean.FALSE.equals(column.getEditable())) {
 	        gridColumnExpression.setLength(0);
 			FormatterName formatterName = column.getFormatterName();
@@ -755,49 +985,63 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 	}
 
 	@Override
-	public UIComponent addedDataGridBoundColumn(UIComponent component, UIComponent current) {
+	public UIComponent addedDataGridBoundColumn(UIComponent component,
+													UIComponent current,
+													HorizontalAlignment alignment) {
 		if (component != null) {
 			return component;
 		}
 
 		// Insert <p:message> before the contents of the data grid column
 		// and surround the lot with <div style="display:flex"></div>
-		// The flex div ensures controls are laid out to availabel column width correctly (think combos)
+		// The flex div ensures controls are laid out to available column width correctly (think combos)
 		List<UIComponent> currentChildren = current.getChildren();
+		String inputId = null;
 		if (! currentChildren.isEmpty()) {
 			UIComponent contents = currentChildren.get(0);
 			String forId = contents.getId();
-
-			// If we have an input control in the column, surround it with the div
-			HtmlPanelGroup div = null;
 			if (contents instanceof UIInput) {
-				div = panelGroup(true, true, true, null, null);
-				div.setStyle("display:flex");
+				inputId = forId;
 			}
 
 			// The message to the left
 			Message message = message(forId);
 			message.setStyle("float:left");
 
-			// If a div was not required (no input control), insert the message into the column
-			if (div == null) {
-				currentChildren.add(0, message);
-			}
-			else {
-				// Add the message to the div
+			// We have an input control in the column, surround it with the div
+			if (contents instanceof UIInput) {
+				HtmlPanelGroup div = panelGroup(true, true, true, null, null);
+				div.setStyle("display:flex");
+
 				List<UIComponent> divChildren = div.getChildren();
 				divChildren.add(message);
 
-				// Set the width of the input component to 100%
-				UIComponent firstComponent = currentChildren.get(0);
-				firstComponent.setValueExpression("style", ef.createValueExpression(elc, "width:100%", String.class));
+				// Set the width of the input component to 100%, unless it is a check box
+				// Note Ultima will display its "focus ring" over the 100% width div if we set the checkbox width to 100%
+				// And justify the checkbox since its not 100% width
+				if ((contents instanceof UISelectBoolean) || (contents instanceof TriStateCheckboxBase)) {
+					StringBuilder flexbox = new StringBuilder(32);
+					flexbox.append("display:flex");
+					flexbox.append(";justify-content:").append(alignment.toFlexAlignmentString());
+					div.setStyle(flexbox.toString());
+				}
+				else {
+					contents.setValueExpression("style", ef.createValueExpression(elc, "width:100%", String.class));
+				}
 
-				// add all the children column children to the div and add the div to the column
-				divChildren.addAll(currentChildren);
-				currentChildren.clear();
+				// add all the column children to the div and add the div to the column
+				while (! currentChildren.isEmpty()) {
+					UIComponent child = currentChildren.remove(0);
+					divChildren.add(child);
+				}
 				currentChildren.add(div);
 			}
+			// If a div is not required (no input control), insert the message into the column
+			else {
+				currentChildren.add(0, message);
+			}
 		}
+		addDataGridCardLabel(current, inputId);
 
 		return current.getParent(); // move from column to table
 	}
@@ -816,12 +1060,25 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		Column col = column(widget.getBinding(),
 								null,
 								title,
+								ViewRenderer.shouldEscape(column.getEscapeTitle()),
 								alignment,
 				                false,
 				                column.getPixelWidth());
-		col.setResponsivePriority(columnPriority);
-		if (columnPriority < 6) {
-			columnPriority++;
+		if (widget instanceof DataGrid) {
+			col.setResponsivePriority(0);
+			col.setStyleClass("skyve-card-cell");
+			Integer columnWidth = column.getPixelWidth();
+			if (columnWidth != null) {
+				col.setStyle(col.getStyle() + "--skyve-card-width:" + columnWidth + "px;");
+				col.setStyleClass("skyve-card-cell skyve-card-fixed");
+			}
+			dataGridMinimumWidth += ((columnWidth == null) ? 220 : columnWidth.intValue()) + 24;
+		}
+		else {
+			col.setResponsivePriority(columnPriority);
+			if (columnPriority < 6) {
+				columnPriority++;
+			}
 		}
 		current.getChildren().add(col);
 		return col;
@@ -833,10 +1090,49 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			return component;
 		}
 
+		addDataGridCardLabel(current, null);
 		return current.getParent(); // move from column to table
 	}
 
+	/** Adds the resolved column header as a visible label in card layout. */
+	private void addDataGridCardLabel(UIComponent current, String inputId) {
+		if (! (current instanceof Column column)) {
+			return;
+		}
+		String styleClass = column.getStyleClass();
+		if ((styleClass == null) || (! styleClass.contains("skyve-card-cell"))) {
+			return;
+		}
+		UIComponent header = column.getFacet("header");
+		if (! (header instanceof HtmlOutputText headerText)) {
+			return;
+		}
+
+		UIOutput label;
+		if (inputId == null) {
+			HtmlOutputText text = (HtmlOutputText) a.createComponent(HtmlOutputText.COMPONENT_TYPE);
+			text.setEscape(headerText.isEscape());
+			label = text;
+		}
+		else {
+			HtmlOutputLabel outputLabel = (HtmlOutputLabel) a.createComponent(HtmlOutputLabel.COMPONENT_TYPE);
+			outputLabel.setFor(inputId);
+			label = outputLabel;
+		}
+		setId(label, null);
+		label.getAttributes().put("styleClass", "skyve-card-cell-label");
+		ValueExpression valueExpression = headerText.getValueExpression("value");
+		if (valueExpression == null) {
+			label.setValue(headerText.getValue());
+		}
+		else {
+			label.setValueExpression("value", valueExpression);
+		}
+		column.getChildren().add(0, label);
+	}
+
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public UIComponent addDataGridActionColumn(UIComponent component,
 												UIComponent current,
 												DataGrid grid,
@@ -854,13 +1150,16 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		if (! Boolean.FALSE.equals(grid.getEditable())) {
 			String dataWidgetBinding = grid.getBinding();
 
-			Column col = column(null,
-									null,
-									"",
+				Column col = column(null,
+										null,
+										"",
+										true,
 									HorizontalAlignment.centre,
 					                true,
 					                SINGLE_ACTION_COLUMN_WIDTH_INTEGER);
-			col.setResponsivePriority(1);
+			col.setResponsivePriority(0);
+			col.setStyleClass("skyve-card-actions" +
+					((canCreate && (! Boolean.FALSE.equals(grid.getShowAdd()))) ? " skyve-card-toolbar" : ""));
 			List<UIComponent> children = col.getChildren();
 
 			String disabledConditionName = grid.getDisabledConditionName();
@@ -891,15 +1190,24 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 				children.add(button);
 			}
 
-			if (! children.isEmpty()) {
+			// If any of the 'add','remove' or 'zoom' controls were added to the row
+			// or header above, add the control column to the grid component
+			if (! children.isEmpty() || !columnHeader.getChildren().isEmpty()) {
 				if (children.size() > 1) {
 					col.setWidth(DOUBLE_ACTION_COLUMN_WIDTH);
 					col.setStyle("text-align:center !important");
 				}
 				current.getChildren().add(col);
+				dataGridMinimumWidth += (children.size() > 1) ?
+						Integer.parseInt(DOUBLE_ACTION_COLUMN_WIDTH) : SINGLE_ACTION_COLUMN_WIDTH_INTEGER.intValue();
 			}
 		}
 
+		if (current instanceof DataTable dataTable) {
+			String style = dataTable.getStyle();
+			dataTable.setStyle(((style == null) ? "" : style + ';') +
+					"--skyve-card-breakpoint:" + Math.max(480, dataGridMinimumWidth + 32) + "px");
+		}
 		return current;
 	}
 
@@ -922,7 +1230,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		CommandButton result = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
 		setId(result, null);
 		result.setValue(null);
-		result.setTitle("Add a new " + singularDocumentAlias);
+		result.setTitle(sanitiseFacesText("Add a new " + singularDocumentAlias));
 		result.setIcon(Icons.FONT_ADD);
 		action(result, ImplicitActionName.Add, null, dataWidgetBinding, dataWidgetVar, inline, null);
 		result.setProcess(process);
@@ -945,7 +1253,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		if (disabled != null) {
 			result.setValueExpression("disabled", disabled);
 		}
-		
+
 		return result;
 	}
 
@@ -953,7 +1261,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		CommandButton result = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
 		setId(result, null);
 		result.setValue(null);
-		result.setTitle("Remove this " + singularDocumentAlias);
+		result.setTitle(sanitiseFacesText("Remove this " + singularDocumentAlias));
 		result.setIcon(Icons.FONT_REMOVE);
 		result.setProcess(process);
 		// We cannot just update the data table ever when removing a row as
@@ -981,7 +1289,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		CommandButton result = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
 		setId(result, null);
 		result.setValue(null);
-		result.setTitle("Edit this " + singularDocumentAlias);
+		result.setTitle(sanitiseFacesText("Edit this " + singularDocumentAlias));
 		result.setIcon(Icons.FONT_ZOOM_IN);
 		result.setProcess(process);
 		result.setUpdate(update);
@@ -1057,18 +1365,17 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		setId(result, null);
 
 		Integer pixelHeight = widget.getPixelHeight();
-		if (pixelHeight == null) {
+		Integer percentageHeight = widget.getPercentageHeight();
+		if ((pixelHeight == null) && (percentageHeight == null)) {
 			pixelHeight = Integer.valueOf(300);
 		}
 		setSizeAndTextAlignStyle(result,
-									null,
 									null,
 									widget.getPixelWidth(),
 									widget.getResponsiveWidth(),
 									widget.getPercentageWidth(),
 									pixelHeight,
-									widget.getPercentageHeight(),
-									null,
+									percentageHeight,
 									null);
 
 		HtmlPanelGroup mapDiv = (HtmlPanelGroup) a.createComponent(HtmlPanelGroup.COMPONENT_TYPE);
@@ -1086,7 +1393,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											Geometry geometry,
 											String formDisabledConditionName,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											HorizontalAlignment textAlignment) {
 		if (component != null) {
 			return component;
@@ -1111,7 +1418,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		InputText textField = textField(dataWidgetVar,
 											geometry.getBinding(),
 											title,
-											required,
+											requiredMessage,
 											textAlignment,
 											false,
 											geometry.getDisabledConditionName(),
@@ -1161,34 +1468,63 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		mapButton.setType("button"); // no process or update required
 		setDisabled(mapButton, disabledConditionName, formDisabledConditionName);
 		// for admin theme
-		setSizeAndTextAlignStyle(mapButton, null, null, Integer.valueOf(30), null, null, Integer.valueOf(30), null, null, null);
+		setSizeAndTextAlignStyle(mapButton, null, Integer.valueOf(30), null, null, Integer.valueOf(30), null, null);
 		toAddTo.add(mapButton);
 
-		OverlayPanel overlay = (OverlayPanel) a.createComponent(OverlayPanel.COMPONENT_TYPE);
-		setId(overlay, null);
-		overlay.setFor(mapButtonId);
-		overlay.setDynamic(false);
-		overlay.setShowCloseIcon(true);
-		overlay.setModal(false); // modal on PF8 causes the transparent modal mask to sit over the top of the overlay panel
-		overlay.setStyle("width:50%;height:310px");
+		UIPanel panel = null;
+		if (useGeometryDialog()) {
+			Dialog dialog = createFullScreenDialog("Map");
+			String dialogVar = dialog.getId() + "Dialog";
+			dialog.setWidgetVar(dialogVar);
+			dialog.setOnHide(UNLOCK_PAGE_SCROLL_SCRIPT);
+			mapButton.setOnclick(createPfShowReturnFalseScript(dialogVar));
+			panel = dialog;
+		}
+		else {
+			OverlayPanel overlay = (OverlayPanel) a.createComponent(OverlayPanel.COMPONENT_TYPE);
+			setId(overlay, null);
+			overlay.setFor(mapButtonId);
+			overlay.setDynamic(false);
+			overlay.setShowCloseIcon(true);
+			overlay.setModal(false); // modal on PF8 causes the transparent modal mask to sit over the top of the overlay panel
+			overlay.setStyle("width:50%;height:310px");
+			panel = overlay;
+		}
 
 		MapDisplay display = new MapDisplay();
-		display.setPixelHeight(Integer.valueOf(280));
+		if (panel instanceof Dialog) {
+			display.setPercentageHeight(Integer.valueOf(100));
+		}
+		else {
+			display.setPixelHeight(Integer.valueOf(280));
+		}
 		HtmlPanelGroup mapDivs = mapDiv(display);
 		UIComponent mapDiv = mapDivs.getChildren().get(0);
 		mapDiv.setId(id);
-		overlay.getChildren().add(mapDivs);
+		panel.getChildren().add(mapDivs);
 
-		toAddTo.add(overlay);
+		toAddTo.add(panel);
 
 		// Add the event once mapDiv.getClientId() can be determined as it is added to the component tree
-		overlay.setValueExpression("onShow", generateMapScriptExpression(mapDiv.getClientId(),
+		panel.setValueExpression("onShow", generateMapScriptExpression(mapDiv.getClientId(),
 																			binding,
 																			type,
 																			disabledConditionName,
 																			formDisabledConditionName,
-																			false));
+																			false,
+																			panel instanceof Dialog));
 
+	}
+
+	/**
+	 * Indicates whether editable geometry should use a dialog instead of an
+	 * overlay panel.
+	 *
+	 * @return {@code true} to render the geometry map picker as a dialog
+	 */
+	@SuppressWarnings("static-method") // Extension hook overridden by responsive builders.
+	protected boolean useGeometryDialog() {
+		return false;
 	}
 
 	@Override
@@ -1196,7 +1532,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 												GeometryMap geometry,
 												String formDisabledConditionName,
 												String title,
-												boolean required) {
+												@Nullable String requiredMessage) {
 		if (component != null) {
 			return component;
 		}
@@ -1207,7 +1543,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		UIComponent mapDiv = result.getChildren().get(0);
 
 		// We use an input text here as there is no change event allowed on HtmlInputHidden
-		HtmlInputText hidden = (HtmlInputText) input(HtmlInputText.COMPONENT_TYPE, null, binding, null, false, null, null);
+		HtmlInputText hidden = (HtmlInputText) input(HtmlInputText.COMPONENT_TYPE, null, binding, null, requiredMessage, null, null);
 		setId(hidden, mapDiv.getId() + "_value");
 		hidden.setStyle("display:none");
 		result.getChildren().add(hidden);
@@ -1230,8 +1566,28 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 															String disabledConditionName,
 															String formDisabledConditionName,
 															boolean includeScriptTag) {
+		return generateMapScriptExpression(mapDivClientId,
+											geometryBinding,
+											type,
+											disabledConditionName,
+											formDisabledConditionName,
+											includeScriptTag,
+											false);
+	}
+
+	private ValueExpression generateMapScriptExpression(String mapDivClientId,
+															String geometryBinding,
+															GeometryInputType type,
+															String disabledConditionName,
+															String formDisabledConditionName,
+															boolean includeScriptTag,
+															boolean lockScroll) {
 		StringBuilder value = new StringBuilder(128);
-		value.append("#{").append(managedBeanName).append(".getMapScript('").append(mapDivClientId);
+		value.append("#{");
+		if (lockScroll) {
+			value.append('\'').append(LOCK_PAGE_SCROLL_SCRIPT).append(";'.concat(");
+		}
+		value.append(managedBeanName).append(".getMapScript('").append(mapDivClientId);
 		value.append("', null, null, '").append(geometryBinding).append("', null, 'eager', null, null,");
 		if (type == null) {
 			value.append("null, ");
@@ -1256,6 +1612,9 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			}
 		}
 		value.append(", ").append(includeScriptTag).append(")}");
+		if (lockScroll) {
+			value.insert(value.length() - 1, ')');
+		}
 		return ef.createValueExpression(elc, value.toString(), String.class);
 	}
 
@@ -1267,15 +1626,13 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		UIComponent result = null;
 		ChartType type = chart.getType();
 		switch (type) {
-		case bar:
-		case horizontalBar:
+		case bar, horizontalBar:
 			result = a.createComponent(BarChart.COMPONENT_TYPE);
 			break;
 		case doughnut:
 			result = a.createComponent(DonutChart.COMPONENT_TYPE);
 			break;
-		case line:
-		case lineArea:
+		case line, lineArea:
 			result = a.createComponent(LineChart.COMPONENT_TYPE);
 			break;
 		case pie:
@@ -1315,13 +1672,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		}
 		setSizeAndTextAlignStyle(result,
 									null,
-									null,
 									chart.getPixelWidth(),
 									chart.getResponsiveWidth(),
 									chart.getPercentageWidth(),
 									pixelHeight,
 									percentageHeight,
-									null,
 									null);
 
 
@@ -1354,6 +1709,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		</p:dataTable>
 	*/
 	@Override
+	@SuppressWarnings({"java:S3776", "java:S6541"}) // complexity OK
 	public UIComponent listGrid(UIComponent component,
 									String moduleName,
 									String modelDocumentName,
@@ -1361,8 +1717,8 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 									String uxui,
 									ListModel<Bean> model,
 									Document owningDocument,
-									String title,
 									ListGrid grid,
+									String stickyHeaderAnchorSelector,
 									boolean aggregateQuery) {
 		if (component != null) {
 			return component;
@@ -1399,7 +1755,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
         result.setVar("row");
         result.setLazy(true);
     	result.setRows(50);
-    	
+		if (stickyHeaderAnchorSelector != null) {
+			result.setStickyHeader(true);
+			result.setStickyTopAt(stickyHeaderAnchorSelector);
+		}
+
 
 		UIOutput emptyMessage = (UIOutput) a.createComponent(UIOutput.COMPONENT_TYPE);
         emptyMessage.setValue((canCreateDocument && createRendered) ? EMPTY_DATA_TABLE_CAN_ADD_MESSAGE : EMPTY_DATA_TABLE_MESSAGE);
@@ -1467,7 +1827,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 							if (owningDocument != null) {
 								Module m = customer.getModule(owningDocument.getOwningModuleName());
 								TargetMetaData target = BindUtil.getMetaDataForBinding(customer, m, owningDocument, binding);
-								targetAttribute = (target != null) ? target.getAttribute() : null;
+								targetAttribute = target.getAttribute();
 							}
 						}
 						catch (@SuppressWarnings("unused") MetaDataException e) {
@@ -1505,7 +1865,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 						Attribute targetAttribute = null;
 						try {
 							TargetMetaData target = BindUtil.getMetaDataForBinding(customer, owningModule, drivingDocument, binding);
-							targetAttribute = (target != null) ? target.getAttribute() : null;
+							targetAttribute = target.getAttribute();
 						}
 						catch (@SuppressWarnings("unused") MetaDataException e) {
 							// binding is not an attribute
@@ -1538,10 +1898,6 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		result.setValueExpression("value", ef.createValueExpression(elc, modelExpression.toString(), SkyveLazyDataModel.class));
 
-		if (title != null) {
-			addListGridHeader(title, result);
-		}
-
 		boolean showFilter = (! Boolean.FALSE.equals(grid.getShowFilter()));
 		if (showFilter) {
 			result.setFilterDelay(500);
@@ -1563,10 +1919,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 																			grid.getProperties());
 			children.add(actionColumn);
         }
-        
+
     	return result;
 	}
 
+	@SuppressWarnings("java:S3776") // Complexity OK
 	protected void addDataTableSelection(DataTable table,
 										String selectedIdBinding,
 										List<EventAction> selectedActions,
@@ -1608,13 +1965,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
         table.addClientBehavior("rowSelect", ajax);
 	}
 
-	protected void addListGridHeader(String title,
-									UIComponent componentToAddTo) {
-		UIOutput heading = (UIOutput) a.createComponent(UIOutput.COMPONENT_TYPE);
-        heading.setValue(title);
-		componentToAddTo.getFacets().put("header", heading);
-	}
-
+	@SuppressWarnings("java:S3776") // Complexity OK
 	protected void addListGridDataColumns(ListModel<? extends Bean> model,
 											List<UIComponent> componentChildrenToAddTo,
 											boolean showFilter,
@@ -1628,8 +1979,8 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		columnPriority = 1;
 
 		for (MetaDataQueryColumn queryColumn : model.getColumns()) {
-			MetaDataQueryProjectedColumn projectedQueryColumn = (queryColumn instanceof MetaDataQueryProjectedColumn) ?
-																	(MetaDataQueryProjectedColumn) queryColumn :
+			MetaDataQueryProjectedColumn projectedQueryColumn = (queryColumn instanceof MetaDataQueryProjectedColumn projected) ?
+																	projected :
 																	null;
 			if (queryColumn.isHidden() ||
 					((projectedQueryColumn != null) && (! projectedQueryColumn.isProjected()))) {
@@ -1641,7 +1992,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			// Sort out a display name and filter facet
 			String displayName = model.determineColumnTitle(queryColumn);
 			UIComponent specialFilterComponent = null;
-			AttributeType attributeType = null;
+			AttributeType attributeType = AttributeType.text;
 			DomainType domainType = null;
 			if (binding != null) {
 				TargetMetaData target = BindUtil.getMetaDataForBinding(customer, module, document, binding);
@@ -1664,7 +2015,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			// Create the column
 			Column column = (Column) a.createComponent(Column.COMPONENT_TYPE);
 			setId(column, null);
-			column.setHeaderText(displayName);
+			putOutputTextFacetValueOrValueExpression(column, "header", displayName, true);
 			column.setResponsivePriority(columnPriority);
 			column.setStyleClass("hiddenFilter");
 			if (columnPriority < 6) {
@@ -1704,6 +2055,10 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			Integer pixelWidth = queryColumn.getPixelWidth();
 			if (pixelWidth == null) {
 				pixelWidth = customisations.determineDefaultColumnWidth(uxui, attributeType);
+			}
+			HorizontalAlignment alignment = queryColumn.getAlignment();
+			if (alignment == null) {
+				alignment = customisations.determineDefaultColumnTextAlignment(uxui, attributeType);
 			}
 
 			String value = null;
@@ -1783,16 +2138,9 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			if (pixelWidth != null) {
 				style.append("width:").append(pixelWidth).append("px;");
 			}
-			HorizontalAlignment alignment = queryColumn.getAlignment();
-			if (alignment == null) {
-				alignment = customisations.determineDefaultTextAlignment(uxui, attributeType);
-			} 
-			
-			if (alignment != null) {	
-				style.append("text-align:").append(alignment.toAlignmentString()).append(" !important;");
-			} 
-			
-			if (style.length() > 0) {
+			style.append("text-align:").append(alignment.toTextAlignmentString()).append(" !important;");
+
+			if (! style.isEmpty()) {
 				column.setStyle(style.toString());
 			}
 
@@ -1815,7 +2163,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		UIComponent result = null;
 
 		if (DomainType.constant.equals(columnAttribute.getDomainType())) {
-			HtmlSelectOneMenu s = selectOneMenu(null, null, null, false, null, null, null);
+			HtmlSelectOneMenu s = selectOneMenu(null, null, null, null, null, null, null);
 			s.setStyle("width:100%");
 			s.setOnchange(String.format("PF('%s').filter()", tableVar));
 			UISelectItems i = selectItems(modelDrivingDocument.getOwningModuleName(),
@@ -1829,7 +2177,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		else {
 			AttributeType type = columnAttribute.getAttributeType();
 			if (AttributeType.bool.equals(type)) {
-				TriStateCheckbox cb = (TriStateCheckbox) checkbox(null, null, null, false, null, null, true);
+				TriStateCheckbox cb = (TriStateCheckbox) checkBoxInput(null, null, null, null, null, null, true);
 				cb.setOnchange(String.format("PF('%s').filter()", tableVar));
 				result = cb;
 			}
@@ -1838,6 +2186,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return result;
 	}
 
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	protected UIComponent createListGridActionColumn(String moduleName,
 													   String documentName,
 													   boolean canCreateDocument,
@@ -1853,7 +2202,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		column.setResponsivePriority(1);
 		column.setWidth(SINGLE_ACTION_COLUMN_WIDTH);
 		column.setStyle("text-align:center !important");
-		
+
 		// column header is a vertical flex with a little bit of space between the 2 buttons if needed
 		final HtmlPanelGroup columnHeader = (HtmlPanelGroup) a.createComponent(HtmlPanelGroup.COMPONENT_TYPE);
 		columnHeader.setLayout("block");
@@ -1865,7 +2214,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			final UIComponent filterToggle = createDataTableFilterToggle(parentId);
 			columnHeaderChildren.add(filterToggle);
 		}
-			
+
 		if (canCreateDocument && createRendered) {
 			CommandButton button = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
 			setId(button, null);
@@ -1899,12 +2248,12 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		else {
 			column.setHeaderText("");
 		}
-		
+
 		if (zoomRendered) {
 			final UIComponent button = createListGridZoomButton(zoomDisabledConditionName, properties);
 			column.getChildren().add(button);
 		}
-		
+
 		return column;
 	}
 
@@ -1937,7 +2286,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		}
 
 		StringBuilder script = new StringBuilder();
-		
+
 		// create context menu
 		ContextMenu result = (ContextMenu) a.createComponent(ContextMenu.COMPONENT_TYPE);
 		result.setFor(listGridId); // Set the target DataTable
@@ -1963,7 +2312,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			item.setValueExpression("disabled", disableZoom);
 		}
 		items.add(item);
-		
+
 		// Add zoom In New Tab menu item
 		item = (UIMenuItem) a.createComponent(UIMenuItem.COMPONENT_TYPE);
 		item.setValue("Popout Detail");
@@ -1982,7 +2331,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		return result;
 	}
-	
+
 	/*
 	 * List Repeater is just like a list grid - a data table but...
 	 * The grid column headers can be turned off (uses prime.css)
@@ -1993,6 +2342,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 	 * No CRUD.
 	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public UIComponent listRepeater(UIComponent component,
 										String modelDocumentName,
 										String modelName,
@@ -2000,7 +2350,6 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 										ListModel<Bean> model,
 										List<FilterParameter> filterParameters,
 										List<Parameter> parameters,
-										String title,
 										boolean showColumnHeaders,
 										boolean showGrid) {
 		if (component != null) {
@@ -2026,8 +2375,8 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
         setId(result, null);
     	result.setWidgetVar(result.getId());
-    	
-    	
+
+
         // Write out getLazyDataModel call as the value
         StringBuilder value = new StringBuilder(64);
 		value.append("#{").append(managedBeanName).append(".getLazyDataModel('").append(moduleName).append("','");
@@ -2077,9 +2426,6 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		result.setValueExpression("value", ef.createValueExpression(elc, value.toString(), SkyveLazyDataModel.class));
 
-		if (title != null) {
-			addListGridHeader(title, result);
-		}
         List<UIComponent> children = result.getChildren();
         addListGridDataColumns(model, children, false, result.getWidgetVar(), uxui);
 
@@ -2107,10 +2453,24 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return result.toString();
 	}
 
+	/**
+	 * Creates a PrimeFaces pick-list with source and target caption facets.
+	 *
+	 * <p>Side effects: creates and IDs the pick-list and caption components, binds
+	 * pick-list value/item expressions, and mutates the pick-list facet map.
+	 * Caption metadata remains raw until each caption output component applies its
+	 * escape flag; omitted captions use renderer-owned fallback text.
+	 *
+	 * @param component existing wrapper component to reuse; when non-{@code null}, returned unchanged
+	 * @param candidatesHeading raw candidates-list heading and nullable escape flag; may be {@code null}
+	 * @param membersHeading raw members-list heading and nullable escape flag; may be {@code null}
+	 * @param membership list-membership metadata
+	 * @return existing wrapper or configured pick-list wrapper; never {@code null} when newly created
+	 */
 	@Override
 	public EventSourceComponent listMembership(EventSourceComponent component,
-												String candidatesHeading,
-												String membersHeading,
+												EscapableText candidatesHeading,
+												EscapableText membersHeading,
 												ListMembership membership) {
 		if (component != null) {
 			return component;
@@ -2135,13 +2495,9 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
         result.setValueExpression("itemLabel", ef.createValueExpression(elc, "#{item.localisedDescription}", String.class));
 
         Map<String, UIComponent> facets = result.getFacets();
-		UIOutput text = (UIOutput) a.createComponent(UIOutput.COMPONENT_TYPE);
-		text.setValue((candidatesHeading == null) ? "Candidates" : candidatesHeading);
-		setId(text, null);
+		UIOutput text = outputText(defaultedCaption(candidatesHeading, "Candidates"));
 		facets.put("sourceCaption", text);
-		text = (UIOutput) a.createComponent(UIOutput.COMPONENT_TYPE);
-		text.setValue((membersHeading == null) ? "Members" : membersHeading);
-		setId(text, null);
+		text = outputText(defaultedCaption(membersHeading, "Members"));
 		facets.put("targetCaption", text);
 		return new EventSourceComponent(result, result);
 	}
@@ -2152,15 +2508,15 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											CheckBox checkBox,
 											String formDisabledConditionName,
 											String title,
-											boolean required) {
+											@Nullable String requiredMessage) {
 		if (component != null) {
 			return component;
 		}
 
-		UIInput result = checkbox(dataWidgetVar,
+		UIInput result = checkBoxInput(dataWidgetVar,
 									checkBox.getBinding(),
 									title,
-									required,
+									requiredMessage,
 									checkBox.getDisabledConditionName(),
 									formDisabledConditionName,
 									! Boolean.FALSE.equals(checkBox.getTriState()));
@@ -2173,7 +2529,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 												ColourPicker colour,
 												String formDisabledConditionName,
 												String title,
-												boolean required,
+												@Nullable String requiredMessage,
 												HorizontalAlignment textAlignment) {
 		if (component != null) {
 			return component;
@@ -2182,7 +2538,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		ColorPicker result = colourPicker(dataWidgetVar,
 											colour.getBinding(),
 											title,
-											required,
+											requiredMessage,
 											textAlignment,
 											colour.getDisabledConditionName(),
 											formDisabledConditionName,
@@ -2196,7 +2552,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 										Combo combo,
 										String formDisabledConditionName,
 										String title,
-										boolean required) {
+										@Nullable String requiredMessage) {
 		if (component != null) {
 			return component;
 		}
@@ -2205,7 +2561,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		HtmlSelectOneMenu result = selectOneMenu(dataWidgetVar,
 													binding,
 									                title,
-									                required,
+									                requiredMessage,
 									                combo.getDisabledConditionName(),
 									                formDisabledConditionName,
 									                null);
@@ -2215,98 +2571,286 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return new EventSourceComponent(result, result);
 	}
 
-	@Override
-	public UIComponent contentImage(UIComponent component,
-										String dataWidgetVar,
-										ContentImage image,
-										String formDisabledConditionName,
-										String title,
-										boolean required) {
-		if (component != null) {
-			return component;
-		}
-
-		HtmlPanelGrid result = (HtmlPanelGrid) a.createComponent(HtmlPanelGrid.COMPONENT_TYPE);
-		setId(result, null);
-		boolean showMarkup = (! Boolean.FALSE.equals(image.getShowMarkup()));
-		result.setColumns(showMarkup ? 6 : 5);
-		String id = result.getId();
-		List<UIComponent> toAddTo = result.getChildren();
-
-		String binding = image.getBinding();
-		String sanitisedBinding = BindUtil.sanitiseBinding(binding);
-		Integer pixelWidth = image.getPixelWidth();
-		Integer pixelHeight = image.getPixelHeight();
-		HtmlPanelGroup contentImage = contentGraphicImage((pixelWidth == null) ? ONE_HUNDRED : pixelWidth,
-															null,
-															null,
-															(pixelHeight == null) ? ONE_HUNDRED : pixelHeight,
-															null,
-															binding);
-		// Set the id of the inner image element
-		contentImage.getChildren().get(0).setId(String.format("%s_%s_image", id, sanitisedBinding));
-		toAddTo.add(contentImage);
-		if (! Boolean.FALSE.equals(image.getEditable())) {
-			editableContent(toAddTo,
-								id,
-								binding,
-								sanitisedBinding,
-								image.getDisabledConditionName(),
-								formDisabledConditionName,
-								true,
-								showMarkup);
-		}
-
-		return result;
-	}
-
 	/**
-	 * Content link in faces looks like...
-	 * 				<h:outputLink href="SHITE">shiter</p:link>
-	 * 				... then the buttons etc ...
+	 * Creates the PrimeFaces component tree for a unified content widget.
+	 *
+	 * <p>Side effects: creates JSF components, value expressions, and upload/markup
+	 * menu actions. Auto display mode renders one link, image, and video candidate
+	 * and lets server-classified media-kind expressions choose which candidate is
+	 * visible.
+	 *
+	 * @param component existing component to preserve, or {@code null}
+	 * @param dataWidgetVar data widget variable, or {@code null}
+	 * @param content content widget metadata; must not be {@code null}
+	 * @param formDisabledConditionName form disabled condition, or {@code null}
+	 * @param title field title, or {@code null}
+	 * @param requiredMessage optional required-field message, or {@code null}
+	 * @param textAlignment text alignment, or {@code null}
+	 * @param formContext whether the widget is rendered in a form rather than a grid
+	 * @param imageUpload whether uploads should use the image upload route during
+	 *        the Phase 3 legacy upload-page seam
+	 * @return the existing component when supplied, otherwise a new panel grid; never
+	 *         {@code null}
 	 */
 	@Override
-	public UIComponent contentLink(UIComponent component,
-									String dataWidgetVar,
-									ContentLink link,
-									String formDisabledConditionName,
-									String title,
-									boolean required,
-									HorizontalAlignment textAlignment) {
+	@SuppressWarnings("java:S3776") // Complexity OK
+	public @Nonnull UIComponent content(@Nullable UIComponent component,
+											@Nullable String dataWidgetVar,
+											@Nonnull ContentUpload content,
+											@Nullable String formDisabledConditionName,
+											@Nullable String title,
+											@Nullable String requiredMessage,
+											@Nullable HorizontalAlignment textAlignment,
+											boolean formContext,
+											boolean imageUpload) {
 		if (component != null) {
 			return component;
 		}
 
 		HtmlPanelGrid result = (HtmlPanelGrid) a.createComponent(HtmlPanelGrid.COMPONENT_TYPE);
 		setId(result, null);
-		result.setColumns(5);
+		boolean editable = (! Boolean.FALSE.equals(content.getEditable()));
+		boolean phoneResponsiveMedia = content.getPixelWidth() == null && content.getPixelHeight() == null;
+		result.setColumns(editable ? 2 : 1);
+		if (phoneResponsiveMedia) {
+			result.setStyleClass("skyveContentPhoneResponsive");
+		}
 		String id = result.getId();
 		List<UIComponent> toAddTo = result.getChildren();
 
-		String binding = link.getBinding();
-		String sanitisedBinding = BindUtil.sanitiseBinding(binding);
-		HtmlOutputLink contentLink = contentLink(link.getPixelWidth(), textAlignment, binding);
-		contentLink.setId(String.format("%s_%s_link", id, sanitisedBinding));
-		toAddTo.add(contentLink);
-		if (! Boolean.FALSE.equals(link.getEditable())) {
+		@Nonnull String binding = content.getBinding();
+		@Nonnull String sanitisedBinding = Objects.requireNonNull(BindUtil.sanitiseBinding(binding), "sanitised binding");
+		ContentDisplay display = content.getResolvedDisplay();
+		boolean auto = ContentDisplay.auto.equals(display);
+		boolean showMarkup = isContentMarkupAllowed(content, display);
+		String disabledConditionName = content.getDisabledConditionName();
+		List<UIComponent> mediaChildren = toAddTo;
+		if (auto) {
+			HtmlPanelGroup mediaGroup = (HtmlPanelGroup) a.createComponent(HtmlPanelGroup.COMPONENT_TYPE);
+			setId(mediaGroup, null);
+			toAddTo.add(mediaGroup);
+			mediaChildren = mediaGroup.getChildren();
+		}
+
+		ContentCapture capture = content.getResolvedCapture();
+		boolean fullUploadDialog = editable && useContentUploadDialog(imageUpload, display, capture);
+		String uploadOnclick = editable ? createDisabledAwareOnclick(createContentUploadOnclick(id,
+																									sanitisedBinding,
+																									id + "_" + sanitisedBinding + "Overlay",
+																									display,
+																									capture,
+																									auto ? companionFieldName(binding) : null,
+																									dataWidgetVar,
+																									fullUploadDialog),
+																		disabledConditionName,
+																		formDisabledConditionName)
+										: null;
+
+		if (ContentDisplay.link.equals(display) || auto) {
+			HtmlOutputLink link = contentLink(content.getPixelWidth(), textAlignment, dataWidgetVar, binding, uploadOnclick);
+			link.setId(String.format("%s_%s_link", id, sanitisedBinding));
+			if (auto) {
+				setAutoContentVisibleStyleClass(link, dataWidgetVar, binding, "link");
+			}
+			mediaChildren.add(link);
+		}
+		String placeholderUploadOnclick = null;
+		if (editable && (ContentDisplay.image.equals(display) || auto)) {
+			placeholderUploadOnclick = uploadOnclick;
+		}
+		if (ContentDisplay.image.equals(display) || auto) {
+			HtmlPanelGroup image = contentGraphicImage(resolveImageWidth(content),
+														null,
+														null,
+														resolveImageHeight(content),
+														null,
+														binding,
+														dataWidgetVar,
+														phoneResponsiveMedia ? "skyveContentResponsiveImage" : null,
+														placeholderUploadOnclick);
+			image.getChildren().get(0).setId(String.format("%s_%s_image", id, sanitisedBinding));
+			if (auto) {
+				setAutoContentVisibleStyleClass(image, dataWidgetVar, binding, "image");
+			}
+			mediaChildren.add(image);
+		}
+		if (ContentDisplay.video.equals(display) || auto) {
+			String placeholderVideoUploadOnclick = editable ? uploadOnclick : null;
+			String videoId = String.format("%s_%s_video", id, sanitisedBinding);
+			HtmlOutputText video = contentVideo(resolveVideoWidth(content),
+												resolveVideoHeight(content),
+												binding,
+												dataWidgetVar,
+												videoId,
+												phoneResponsiveMedia,
+												placeholderVideoUploadOnclick);
+			if (auto) {
+				setAutoContentVisibleStyleClass(video, dataWidgetVar, binding, "video");
+			}
+			mediaChildren.add(video);
+		}
+		if (editable) {
 			editableContent(toAddTo,
 								id,
+								dataWidgetVar,
 								binding,
 								sanitisedBinding,
-								link.getDisabledConditionName(),
+								requiredMessage,
+								disabledConditionName,
 								formDisabledConditionName,
-								false,
-								false);
+								imageUpload,
+								showMarkup,
+								auto,
+								display,
+								capture);
 		}
 
 		return result;
 	}
 
 	/**
-	 *				<h:panelGrid id="one" columns="2">
-	 *					<p:signature id="one_signature" style="width:400px;height:200px" rendered="#{empty skyve.currentBean['image']}" />
-	 *					<p:graphicImage id="one_image" style="width:400px;height:200px;border:1px gray" rendered="#{not empty skyve.currentBean['image']}" />
-	 *					<h:panelGrid columns="1">
+	 * Returns the configured image width.
+	 *
+	 * @param content content widget metadata; must not be {@code null}
+	 * @return image width in pixels, or {@code null} for fluid sizing
+	 */
+	private static @Nullable Integer resolveImageWidth(@Nonnull ContentUpload content) {
+		return content.getPixelWidth();
+	}
+
+	/**
+	 * Returns the configured image height.
+	 *
+	 * @param content content widget metadata; must not be {@code null}
+	 * @return image height in pixels, or {@code null} for fluid sizing
+	 */
+	private static @Nullable Integer resolveImageHeight(@Nonnull ContentUpload content) {
+		return content.getPixelHeight();
+	}
+
+	/**
+	 * Returns the configured video width.
+	 *
+	 * @param content content widget metadata; must not be {@code null}
+	 * @return video width in pixels, or {@code null} for fluid sizing
+	 */
+	private static @Nullable Integer resolveVideoWidth(@Nonnull ContentUpload content) {
+		return content.getPixelWidth();
+	}
+
+	/**
+	 * Returns the configured video height.
+	 *
+	 * @param content content widget metadata; must not be {@code null}
+	 * @return video height in pixels, or {@code null} for fluid sizing
+	 */
+	private static @Nullable Integer resolveVideoHeight(@Nonnull ContentUpload content) {
+		return content.getPixelHeight();
+	}
+
+	/**
+	 * Adds the media-kind visibility expression used by auto display mode.
+	 *
+	 * @param component component to guard; must not be {@code null}
+	 * @param binding content binding; must not be {@code null}
+	 * @param mediaKind expected media kind name; must not be {@code null}
+	 */
+	private void setAutoContentVisibleStyleClass(@Nonnull UIComponent component,
+													@Nullable String dataWidgetVar,
+													@Nonnull String binding,
+													@Nonnull String mediaKind) {
+		String mediaKindExpression = contentMediaKindExpression(dataWidgetVar, binding);
+		String expression;
+		if ("link".equals(mediaKind)) {
+			expression = String.format("#{(empty %s or %s eq 'link') ? '' : 'skyveContentHidden'}", mediaKindExpression, mediaKindExpression);
+		}
+		else {
+			expression = String.format("#{%s eq '%s' ? '' : 'skyveContentHidden'}", mediaKindExpression, mediaKind);
+		}
+		component.setValueExpression("styleClass", ef.createValueExpression(elc, expression, String.class));
+	}
+
+	private @Nonnull String contentMediaKindExpression(@Nullable String dataWidgetVar, @Nonnull String binding) {
+		if (dataWidgetVar == null) {
+			return String.format("%s.getContentMediaKind('%s')", managedBeanName, binding);
+		}
+		return String.format("%s.getContentMediaKind(%s,'%s')", managedBeanName, dataWidgetVar, binding);
+	}
+
+	private @Nonnull String contentUrlExpression(@Nullable String dataWidgetVar, @Nonnull String binding, boolean image) {
+		if (dataWidgetVar == null) {
+			return String.format("%s.getContentUrl('%s', %s)", managedBeanName, binding, Boolean.toString(image));
+		}
+		return String.format("%s.getContentUrl(%s,'%s', %s)", managedBeanName, dataWidgetVar, binding, Boolean.toString(image));
+	}
+
+	private @Nonnull String contentValueExpression(@Nullable String dataWidgetVar, @Nonnull String binding) {
+		if (dataWidgetVar == null) {
+			return String.format("%s.currentBean['%s']", managedBeanName, binding);
+		}
+		return String.format("%s['%s']", dataWidgetVar, binding);
+	}
+
+	/**
+	 * Creates a native-video output fragment bound to the protected content URL.
+	 *
+	 * @param pixelWidth video width in pixels, or {@code null} for fluid sizing
+	 * @param pixelHeight video height in pixels, or {@code null} for fluid sizing
+	 * @param binding content binding; must not be {@code null}
+	 * @param videoId stable DOM id for callback refresh; must not be {@code null}
+	 * @return output text containing the video markup expression; never {@code null}
+	 */
+	private @Nonnull HtmlOutputText contentVideo(@Nullable Integer pixelWidth,
+													@Nullable Integer pixelHeight,
+													@Nonnull String binding,
+													@Nullable String dataWidgetVar,
+													@Nonnull String videoId,
+													boolean phoneResponsiveMedia,
+													@Nullable String placeholderUploadOnclick) {
+		HtmlOutputText result = (HtmlOutputText) a.createComponent(HtmlOutputText.COMPONENT_TYPE);
+		result.setEscape(false);
+		StringBuilder expression = new StringBuilder(192);
+		expression.append("<div id=\"").append(videoId).append('"');
+		String previewClass = phoneResponsiveMedia ? "skyveContentPreview skyveContentResponsiveVideo" : "skyveContentPreview";
+		String emptyClass = previewClass + " skyveContentEmpty skyveContentVideoEmpty";
+		expression.append(" class=\"#{(empty ").append(contentValueExpression(dataWidgetVar, binding)).append(") ? '");
+		expression.append(emptyClass).append("' : '").append(previewClass).append("'}\"");
+		if (placeholderUploadOnclick != null) {
+			expression.append(" onclick=\"").append(createContentLinkOnclick(dataWidgetVar, binding, placeholderUploadOnclick)).append('"');
+		}
+		expression.append(" style=\"");
+		if (pixelWidth != null) {
+			expression.append("width:").append(pixelWidth).append("px;");
+		}
+		if (pixelHeight != null) {
+			expression.append("height:").append(pixelHeight).append("px;");
+		}
+		expression.append("border:1px solid #d6dee8;position:relative;overflow:hidden;\">");
+		expression.append("#{empty ").append(contentValueExpression(dataWidgetVar, binding));
+		expression.append(" ? '' : '<video controls preload=\"metadata\" style=\"width:100%;height:100%;object-fit:contain\" src=\"'.concat(");
+		expression.append(contentUrlExpression(dataWidgetVar, binding, true));
+		expression.append(").concat('\"></video>')}</div>");
+		result.setValueExpression("value", ef.createValueExpression(elc, expression.toString(), String.class));
+		result.setId(videoId + "_output");
+		return result;
+	}
+
+	/**
+	 * Returns the auto media-kind companion field name for a content binding.
+	 *
+	 * @param binding content binding; must not be {@code null}
+	 * @return companion field name using Skyve binding sanitisation; never
+	 *         {@code null}
+	 */
+	private static @Nonnull String companionFieldName(@Nonnull String binding) {
+		return BindUtil.sanitiseBinding(binding) + "_media";
+	}
+
+	/**
+	 *				<h:panelGrid id="one" columns="1">
+	 *					<p:signature id="one_signature" style="width:350px;height:175px" rendered="#{empty skyve.currentBean['image']}" />
+	 *					<p:graphicImage id="one_image" style="width:350px;height:175px;border:1px gray" rendered="#{not empty skyve.currentBean['image']}" />
+	 *					<h:panelGrid columns="2" style="margin-left:auto">
 	 *						<p:commandButton id="one_sign" value="Sign" icon="fa-solid fa-upload" title="Submit Signature" style="width:75px" action="#{skyve.sign('one', 'image')}" process="@this" update="one" rendered="#{empty skyve.currentBean['image']}" />
 	 *						<p:commandButton id="one_client" value="Clear" icon="fa-solid fa-trash" title="Clear Signature" style="width:75px"  type="button" onclick="SKYVE.PF.getById('one_signature').signature('clear')" rendered="#{empty skyve.currentBean['image']}" />
 	 *						<p:commandButton id="one_server" value="Clear" icon="fa-solid fa-trash" title="Clear Signature" style="width:75px" action="#{skyve.clear('image')}" process="@this" update="one" rendered="#{not empty skyve.currentBean['image']}" />
@@ -2320,7 +2864,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											ContentSignature signature,
 											String formDisabledConditionName,
 											String title,
-											boolean required) {
+											@Nullable String requiredMessage) {
 		if (component != null) {
 			return component;
 		}
@@ -2328,11 +2872,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		String binding = signature.getBinding();
 		Integer pixelWidth = signature.getPixelWidth();
 		if (pixelWidth == null) {
-			pixelWidth = Integer.valueOf(400);
+			pixelWidth = DEFAULT_SIGNATURE_PIXEL_WIDTH;
 		}
 		Integer pixelHeight = signature.getPixelHeight();
 		if (pixelHeight == null) {
-			pixelHeight = Integer.valueOf(200);
+			pixelHeight = DEFAULT_SIGNATURE_PIXEL_HEIGHT;
 		}
 
 		String id = layout.getId();
@@ -2340,7 +2884,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		List<UIComponent> toAddTo = layout.getChildren();
 
 		// Signature
-		Signature signatureComponent = (Signature) input(Signature.COMPONENT_TYPE, null, binding, title, required, null, null);
+		Signature signatureComponent = (Signature) input(Signature.COMPONENT_TYPE, null, binding, title, requiredMessage, null, null);
 		signatureComponent.setValueExpression("value", null);
 		setId(signatureComponent, id + "_signature");
 		signatureComponent.setGuideline(false);
@@ -2373,9 +2917,9 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		}
 
 		toAddTo.add(signatureComponent);
-		
+
 		// Image
-		HtmlPanelGroup contentImage = contentGraphicImage(pixelWidth, null, null, pixelHeight, null, binding);
+		HtmlPanelGroup contentImage = contentGraphicImage(pixelWidth, null, null, pixelHeight, null, binding, null, null, null);
 
 		// Set image rendered
 		sb.setLength(0);
@@ -2383,11 +2927,12 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		contentImage.setValueExpression("rendered", ef.createValueExpression(elc, sb.toString(), Boolean.class));
 
 		toAddTo.add(contentImage);
-		
+
 		// The buttons
 		HtmlPanelGrid grid = (HtmlPanelGrid) a.createComponent(HtmlPanelGrid.COMPONENT_TYPE);
 		setId(grid, null);
-		grid.setColumns(1);
+		grid.setColumns(2);
+		grid.setStyle("margin-left:auto");
 		toAddTo.add(grid);
 		toAddTo = grid.getChildren();
 
@@ -2428,7 +2973,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		sb.setLength(0);
 		sb.append("if(SKYVE.PF.getById('").append(clientId).append("_signature').signature('isEmpty')){SKYVE.PF.onPushMessage([{type:'g',severity:'error',message:'Create your signature first'}]);return false}");
 		button.setOnstart(sb.toString());
-		
+
 		toAddTo.add(button);
 
 		// client-side clear button if we have no content sitting in the server state
@@ -2471,7 +3016,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		button.setValueExpression("rendered", ef.createValueExpression(elc, sb.toString(), Boolean.class));
 
 		toAddTo.add(button);
-		
+
 		// This is only returned to short circuit any component builder chains
 		return signatureComponent;
 	}
@@ -2492,139 +3037,374 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 	 * @param toAddTo
 	 * @param binding
 	 */
+	@SuppressWarnings({"java:S107", "java:S3776"}) // Long parameter list and cognitive compleity OK
 	private void editableContent(List<UIComponent> toAddTo,
 									String id,
-									String binding,
+									@Nullable String dataWidgetVar,
+									@Nonnull String binding,
 									String sanitisedBinding,
+									@Nullable String requiredMessage,
 									String disabledConditionName,
 									String formDisabledConditionName,
 									boolean image,
-									boolean showMarkup) {
-		HtmlInputHidden hidden = (HtmlInputHidden) input(HtmlInputHidden.COMPONENT_TYPE, null, binding, null, false, null, null);
+									boolean showMarkup,
+									boolean auto,
+									ContentDisplay display,
+									ContentCapture capture) {
+		HtmlInputHidden hidden = (HtmlInputHidden) input(HtmlInputHidden.COMPONENT_TYPE, dataWidgetVar, binding, null, requiredMessage, null, null);
 		setId(hidden, String.format("%s_%s_hidden", id, sanitisedBinding));
-		toAddTo.add(hidden);
 
-		CommandButton uploadButton = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
-		setId(uploadButton, null);
-		String uploadButtonId = uploadButton.getId();
-		uploadButton.setIcon(Icons.FONT_UPLOAD);
-		uploadButton.setTitle(image ? "Upload Image" : "Upload Content");
-		uploadButton.setValue(null);
-		uploadButton.setType("button"); // no process or update required
-		setDisabled(uploadButton, disabledConditionName, formDisabledConditionName);
-		// for admin theme
-		setSizeAndTextAlignStyle(uploadButton, null, null, Integer.valueOf(30), null, null, Integer.valueOf(30), null, null, null);
-		toAddTo.add(uploadButton);
+		HtmlPanelGroup actionGroup = (HtmlPanelGroup) a.createComponent(HtmlPanelGroup.COMPONENT_TYPE);
+		setId(actionGroup, null);
+		toAddTo.add(actionGroup);
+		List<UIComponent> actionGroupChildren = actionGroup.getChildren();
+		actionGroupChildren.add(hidden);
+		if (auto) {
+			String mediaKind = (dataWidgetVar == null) ? managedBean.getContentMediaKind(binding) : null;
+			if ((mediaKind != null) && mediaKind.trim().isEmpty()) {
+				mediaKind = null;
+			}
+			HtmlOutputText companion = (HtmlOutputText) a.createComponent(HtmlOutputText.COMPONENT_TYPE);
+			companion.setEscape(false);
+			companion.setValue(String.format("<input type=\"hidden\" id=\"%s_%s_hidden\" value=\"%s\">",
+												id,
+												companionFieldName(binding),
+												mediaKind == null ? "" : mediaKind));
+			setId(companion, null);
+			actionGroupChildren.add(companion);
+		}
 
-		String var = sanitisedBinding + "Overlay";
-		if (image) {
-			uploadButton.setOnclick("PF('" + var + "').show();PF('" + var + "').toggleMaximize()");
+		MenuButton actionButton = (MenuButton) a.createComponent(MenuButton.COMPONENT_TYPE);
+		setId(actionButton, null);
+		String actionButtonId = actionButton.getId();
+		String contentActionNoun = contentActionNoun(display, capture, image);
+		actionButton.setIcon("fa-solid fa-ellipsis-vertical");
+		actionButton.setTitle(contentActionNoun + " Actions");
+		actionButton.setAriaLabel(contentActionNoun + " Actions");
+		actionButton.setValue(null);
+		actionButton.setButtonStyle("width:30px;height:30px;text-align:center");
+		actionButton.setButtonStyleClass("skyveContentActionButton");
+		actionButton.setMenuStyleClass("skyveContentActionMenu");
+		setDisabled(actionButton, disabledConditionName, formDisabledConditionName);
+		actionGroupChildren.add(actionButton);
+		List<UIComponent> actionItems = actionButton.getChildren();
+
+		UIMenuItem uploadItem = createContentMenuItem("Upload " + contentActionNoun,
+														Icons.FONT_UPLOAD,
+														null,
+														disabledConditionName,
+														formDisabledConditionName);
+		actionItems.add(uploadItem);
+
+		String overlayVar = id + "_" + sanitisedBinding + "Overlay";
+		boolean fullUploadDialog = useContentUploadDialog(image, display, capture);
+		if (fullUploadDialog) {
+			setContentUploadDialogOnclick(uploadItem,
+											id,
+											sanitisedBinding,
+											overlayVar,
+											display,
+											capture,
+											auto ? companionFieldName(binding) : null,
+											dataWidgetVar);
 		}
 
 		UIPanel panel = null;
-		if (image) {
-			Dialog dialog = (Dialog) a.createComponent(Dialog.COMPONENT_TYPE);
-			setId(dialog, null);
-			dialog.setWidgetVar(var);
-			dialog.setModal(true);
-			dialog.setResponsive(true);
-			dialog.setFitViewport(true);
-			dialog.setHeader("Image Upload");
-			dialog.setAppendTo("@(body)"); // append to <body/> so dialog can always pop (didn't work in tabs)
+		if (fullUploadDialog) {
+			Dialog dialog = createFullScreenDialog(contentActionNoun + " Upload");
+			dialog.setWidgetVar(overlayVar);
 			// clear the iframe src on hide so there is no flash next open
-			dialog.setOnHide("SKYVE.PF.contentOverlayOnHide('" + id + "');PF('" + var + "').toggleMaximize()");
+			dialog.setOnHide(createContentOverlayOnHideScript(id, true, true));
 			panel = dialog;
 		}
 		else {
 			OverlayPanel overlay = (OverlayPanel) a.createComponent(OverlayPanel.COMPONENT_TYPE);
 			setId(overlay, null);
-			overlay.setWidgetVar(sanitisedBinding + "Overlay");
-			overlay.setFor(uploadButtonId);
+			overlay.setWidgetVar(overlayVar);
+			overlay.setFor(actionButtonId);
+			overlay.setShowEvent("skyveContentUpload");
+			overlay.setHideEvent("skyveContentUpload");
 			overlay.setDynamic(false);
 			overlay.setShowCloseIcon(true);
 			overlay.setModal(false); // modal on PF8 causes the transparent modal mask to sit over the top of the overlay panel
-			overlay.setStyle("width:50%;height:310px");
+			overlay.setStyle("width:50%;height:330px");
 			overlay.setAppendTo("@(body)"); // append to <body/> so overlay can always pop
 			// clear the iframe src on hide so there is no flash next open
-			overlay.setOnHide(String.format("SKYVE.PF.contentOverlayOnHide('%s')", id));
+			overlay.setOnHide(createContentOverlayOnHideScript(id));
 			panel = overlay;
 		}
 
-		// $(PrimeFaces.escapeClientId('<id>')).attr('src', '<url>')
 		StringBuilder value = new StringBuilder(64);
-		value.append("#{'SKYVE.PF.contentOverlayOnShow(\\'").append(id).append("\\',\\''.concat(");
-		value.append(managedBeanName).append(".getContentUploadUrl('").append(sanitisedBinding).append("',");
-		value.append(image).append(")).concat('\\')')}");
-		panel.setValueExpression("onShow", ef.createValueExpression(elc, value.toString(), String.class));
-		toAddTo.add(panel);
+		if (! fullUploadDialog) {
+			// $(PrimeFaces.escapeClientId('<id>')).attr('src', '<url>')
+			value.append("#{'SKYVE.PF.contentOverlayOnShow(\\'").append(id).append("\\',\\''.concat(");
+			appendContentUploadUrlExpression(value, sanitisedBinding, display, capture, auto ? companionFieldName(binding) : null, dataWidgetVar);
+			value.append(").concat('\\')')}");
+			panel.setValueExpression("onShow", ef.createValueExpression(elc, value.toString(), String.class));
+			uploadItem.setOnclick(createPfShowReturnFalseScript(overlayVar));
+		}
+		actionGroupChildren.add(panel);
 
 		// <iframe id="s06" src="" style="width:100%;height:280px;border:none"></iframe>
-		HtmlOutputText iframe = (HtmlOutputText) a.createComponent(HtmlOutputText.COMPONENT_TYPE);
-		iframe.setEscape(false);
-		iframe.setValue(String.format("<iframe id=\"%s_overlayiframe\" src=\"\" style=\"width:100%%;height:%s;border:none\"></iframe>", id, image ? "100%" : "285px"));
-		setId(iframe, null);
+		String iframeAttributes = fullUploadDialog ? FULL_SCREEN_IFRAME_ATTRIBUTES
+													: " loading=\"eager\" style=\"width:100%;height:300px;border:none\"";
+		HtmlOutputText iframe = createIframe(id + "_overlayiframe", iframeAttributes);
 		panel.getChildren().add(iframe);
 
-		CommandButton clearButton = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
-		setId(clearButton, null);
-		clearButton.setIcon(Icons.FONT_CLEAR);
-		clearButton.setTitle("Clear Content");
-		clearButton.setValue(null);
-		clearButton.setType("button"); // no process or update required
-		if (image) {
-			clearButton.setOnclick(String.format("SKYVE.PF.clearContentImage('%s')", sanitisedBinding));
+		UIMenuItem clearItem = createContentMenuItem("Clear " + contentActionNoun,
+														Icons.FONT_CLEAR,
+														null,
+														disabledConditionName,
+														formDisabledConditionName);
+		if (auto) {
+			clearItem.setOnclick(String.format("SKYVE.PF.clearContent('%s','%s','%s');return false",
+												sanitisedBinding,
+												id,
+												companionFieldName(binding)));
+		}
+		else if (image) {
+			clearItem.setOnclick(String.format("SKYVE.PF.clearContentImage('%s','%s');return false", sanitisedBinding, id));
 		}
 		else {
-			clearButton.setOnclick(String.format("SKYVE.PF.clearContentLink('%s')", sanitisedBinding));
+			clearItem.setOnclick(String.format("SKYVE.PF.clearContentLink('%s','%s');return false", sanitisedBinding, id));
 		}
-		setDisabled(clearButton, disabledConditionName, formDisabledConditionName);
-		// for admin theme
-		setSizeAndTextAlignStyle(clearButton, null, null, Integer.valueOf(30), null, null, Integer.valueOf(30), null, null, null);
-		toAddTo.add(clearButton);
-		
-		// Markup button (if required)
-		if (showMarkup) {
-			CommandButton markupButton = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
-			setId(markupButton, null);
-			markupButton.setIcon(Icons.FONT_EDIT);
-			markupButton.setTitle("Mark Up Image");
-			markupButton.setValue(null);
-			markupButton.setType("button"); // no process or update required
-			setDisabled(markupButton, disabledConditionName, formDisabledConditionName);
-			// for admin theme
-			setSizeAndTextAlignStyle(markupButton, null, null, Integer.valueOf(30), null, null, Integer.valueOf(30), null, null, null);
-			toAddTo.add(markupButton);
-	
-			var = sanitisedBinding + "Markup";
+			actionItems.add(clearItem);
+
+			// Markup button (if required)
+			if (showMarkup) {
+				UIMenuItem markupItem = createContentMenuItem("Mark Up Image",
+																Icons.FONT_EDIT,
+																null,
+																disabledConditionName,
+																formDisabledConditionName);
+				StringBuilder markupStyleClass = new StringBuilder(64);
+				markupStyleClass.append("skyveContentMarkupAction skyveContentMarkupAction-").append(id).append('_').append(sanitisedBinding);
+				if (! isContentMarkupInitiallyVisible(display, dataWidgetVar, binding)) {
+					markupStyleClass.append(" skyveContentHidden");
+				}
+				markupItem.setContainerStyleClass(markupStyleClass.toString());
+				actionItems.add(markupItem);
+
+			overlayVar = id + "_" + sanitisedBinding + "Markup";
 			value.setLength(0);
-			value.append("if($('[id$=\"_").append(sanitisedBinding).append("_hidden\"]').val().length==0){return false}else{PF('" + var + "').show();PF('" + var + "').toggleMaximize()}"); 
-			markupButton.setOnclick(value.toString());
-	
-			Dialog dialog = (Dialog) a.createComponent(Dialog.COMPONENT_TYPE);
-			setId(dialog, null);
-			dialog.setWidgetVar(var);
-			dialog.setModal(true);
-			dialog.setResponsive(true);
-			dialog.setFitViewport(true);
-			dialog.setHeader("Mark Up Image");
-			dialog.setAppendTo("@(body)"); // append to <body/> so dialog can always pop (didn't work in tabs)
+			value.append("var contentId=$('[id$=\"").append(id).append('_').append(sanitisedBinding);
+			value.append("_hidden\"]').val();if(!contentId){return false}");
+			if (auto) {
+				value.append("var mediaKind=$('[id$=\"").append(id).append('_').append(companionFieldName(binding));
+				value.append("_hidden\"]').val();if(mediaKind!=='image'){return false}");
+			}
+			value.append(createPfShowScript(overlayVar)).append(';');
+			value.append("return false");
+			markupItem.setOnclick(value.toString());
+
+			Dialog dialog = createFullScreenDialog("Mark Up Image");
+			dialog.setWidgetVar(overlayVar);
 			// clear the iframe src on hide so there is no flash next open
-			dialog.setOnHide("SKYVE.PF.contentMarkupOnHide('" + id + "');PF('" + var + "').toggleMaximize()");
-			
+			dialog.setOnHide(createContentMarkupOnHideAndUnlockScript(id));
+
 			// $(PrimeFaces.escapeClientId('<id>')).attr('src', '<url>')
 			value.setLength(0);
-			value.append("#{'SKYVE.PF.contentMarkupOnShow(\\'").append(id).append("\\',\\'").append(sanitisedBinding).append("\\',\\''.concat(");
-			value.append(managedBeanName).append(".getContentMarkupUrl('").append(sanitisedBinding).append("')).concat('\\')')}");
+			value.append("#{'");
+			value.append(LOCK_PAGE_SCROLL_SCRIPT).append(";SKYVE.PF.contentMarkupOnShow(\\'").append(id).append("\\',\\'").append(sanitisedBinding).append("\\',\\''.concat(");
+			value.append(managedBeanName).append(".getContentMarkupUrl('").append(sanitisedBinding).append("')).concat('\\')");
+			if (auto) {
+				value.append(",\\'").append(companionFieldName(binding)).append("\\'");
+			}
+			value.append("')}");
 			dialog.setValueExpression("onShow", ef.createValueExpression(elc, value.toString(), String.class));
-			toAddTo.add(dialog);
+			actionGroupChildren.add(dialog);
 
 			// <iframe id="s06" src="" style="width:100%;height:280px;border:none"></iframe>
-			iframe = (HtmlOutputText) a.createComponent(HtmlOutputText.COMPONENT_TYPE);
-			iframe.setEscape(false);
-			iframe.setValue("<iframe id=\"" + id + "_markupiframe\" src=\"\" style=\"width:100%;height:calc(100% - 10px);border:none\"></iframe>");
-			setId(iframe, null);
+			iframe = createIframe(id + "_markupiframe", FULL_SCREEN_IFRAME_ATTRIBUTES);
 			dialog.getChildren().add(iframe);
 		}
+	}
+
+	private UIMenuItem createContentMenuItem(String value,
+												String icon,
+												@Nullable String onclick,
+												String disabledConditionName,
+												String formDisabledConditionName) {
+		UIMenuItem result = (UIMenuItem) a.createComponent(UIMenuItem.COMPONENT_TYPE);
+		setId(result, null);
+		result.setValue(value);
+		result.setIcon(icon);
+		result.setUrl("javascript:void(0)");
+		result.setAjax(false);
+		if (onclick != null) {
+			result.setOnclick(onclick);
+		}
+		setDisabled(result, disabledConditionName, formDisabledConditionName);
+		return result;
+	}
+
+	private static @Nonnull String contentActionNoun(@Nonnull ContentDisplay display, @Nonnull ContentCapture capture, boolean image) {
+		if (ContentDisplay.video.equals(display) || ContentCapture.video.equals(capture)) {
+			return "Video";
+		}
+		if (image || ContentDisplay.image.equals(display) || ContentCapture.camera.equals(capture)) {
+			return "Image";
+		}
+		return "Content";
+	}
+
+	/**
+	 * Indicates whether the upload route can expose the camera capture button.
+	 *
+	 * @param display content display mode; must not be {@code null}
+	 * @param capture content capture mode; must not be {@code null}
+	 * @return {@code true} when the upload dialog should include camera capture
+	 */
+	private static boolean isCameraAffordanceAllowed(@Nonnull ContentDisplay display, @Nonnull ContentCapture capture) {
+		return (ContentCapture.camera.equals(capture) || ContentCapture.all.equals(capture)) &&
+				! ContentDisplay.video.equals(display);
+	}
+
+	/**
+	 * Indicates whether editable content upload should use a full dialog rather
+	 * than an overlay panel.
+	 *
+	 * @param image whether the upload route targets images
+	 * @param display content display mode; must not be {@code null}
+	 * @param capture content capture affordance; must not be {@code null}
+	 * @return {@code true} to render the content upload action as a dialog
+	 */
+	@SuppressWarnings("static-method") // Extension hook overridden by responsive builders.
+	protected boolean useContentUploadDialog(boolean image, @Nonnull ContentDisplay display, @Nonnull ContentCapture capture) {
+		return image || isCameraAffordanceAllowed(display, capture);
+	}
+
+	/**
+	 * Indicates whether the mark-up action should be available for this content.
+	 *
+	 * @param content content widget metadata; must not be {@code null}
+	 * @param display content display mode; must not be {@code null}
+	 * @return {@code true} when metadata permits mark-up and the widget can hold image content
+	 */
+	private static boolean isContentMarkupAllowed(@Nonnull ContentUpload content, @Nonnull ContentDisplay display) {
+		if (Boolean.FALSE.equals(content.getShowMarkup())) {
+			return false;
+		}
+		return ! ContentDisplay.video.equals(display);
+	}
+
+	/**
+	 * Indicates whether the mark-up action should be visible when the page first renders.
+	 *
+	 * @param display content display mode; must not be {@code null}
+	 * @param binding content binding; must not be {@code null}
+	 * @return {@code true} when the current content is image-like in this display mode
+	 */
+	private boolean isContentMarkupInitiallyVisible(@Nonnull ContentDisplay display,
+														@Nullable String dataWidgetVar,
+														@Nonnull String binding) {
+		if (ContentDisplay.image.equals(display)) {
+			return true;
+		}
+		if (dataWidgetVar != null) {
+			return false;
+		}
+		return "image".equals(managedBean.getContentMediaKind(binding));
+	}
+
+	/**
+	 * Configures the image upload menu item to open the unified bound upload page in
+	 * a full-screen dialog.
+	 *
+	 * <p>Side effects: sets a JSF value expression on {@code item}.
+	 *
+	 * @param item upload menu item to configure; must not be {@code null}
+	 * @param id generated content component id; must not be {@code null}
+	 * @param sanitisedBinding sanitised content binding; must not be {@code null}
+	 * @param widgetVar PrimeFaces widget variable for the dialog; must not be {@code null}
+	 * @param display content display mode; must not be {@code null}
+	 * @param capture content capture mode; must not be {@code null}
+	 * @param companionBinding optional auto-mode media-kind companion field
+	 */
+	@SuppressWarnings("java:S107") // Long parameter list OK
+	private void setContentUploadDialogOnclick(@Nonnull UIMenuItem item,
+												@Nonnull String id,
+												@Nonnull String sanitisedBinding,
+												@Nonnull String widgetVar,
+												@Nonnull ContentDisplay display,
+												@Nonnull ContentCapture capture,
+												@Nullable String companionBinding,
+												@Nullable String dataWidgetVar) {
+		item.setValueExpression("onclick",
+								ef.createValueExpression(elc,
+															createContentUploadOnclick(id,
+																						sanitisedBinding,
+																						widgetVar,
+																						display,
+																						capture,
+																						companionBinding,
+																						dataWidgetVar,
+																						true),
+															String.class));
+	}
+
+	@SuppressWarnings("java:S107") // Long parameter list OK
+	private @Nonnull String createContentUploadOnclick(@Nonnull String id,
+														@Nonnull String sanitisedBinding,
+														@Nonnull String widgetVar,
+														@Nonnull ContentDisplay display,
+														@Nonnull ContentCapture capture,
+														@Nullable String companionBinding,
+														@Nullable String dataWidgetVar,
+														boolean fullUploadDialog) {
+		StringBuilder value = new StringBuilder(192);
+		if (fullUploadDialog) {
+			value.append("#{'SKYVE.PF.contentOverlayOnShow(\\'").append(id).append("\\',\\''.concat(");
+			appendContentUploadUrlExpression(value, sanitisedBinding, display, capture, companionBinding, dataWidgetVar);
+			value.append(".concat('\\',true);PF(\\'").append(widgetVar);
+			value.append("\\').show();");
+			value.append("return false'))}");
+		}
+		else {
+			value.append("PF('").append(widgetVar).append("').show();return false");
+		}
+		return value.toString();
+	}
+
+	/**
+	 * Appends a JSF EL call to {@code FacesView.getContentUploadUrl(...)} for a
+	 * bound content upload route.
+	 *
+	 * <p>Side effects: mutates {@code value}. The appended expression includes
+	 * display, capture, and optional auto companion route state for {@code upload.xhtml}.
+	 *
+	 * @param value expression buffer to append to; must not be {@code null}
+	 * @param sanitisedBinding sanitised content binding; must not be {@code null}
+	 * @param display content display mode; must not be {@code null}
+	 * @param capture content capture mode; must not be {@code null}
+	 * @param companionBinding optional auto-mode media-kind companion field
+	 */
+	private void appendContentUploadUrlExpression(@Nonnull StringBuilder value,
+													@Nonnull String sanitisedBinding,
+													@Nonnull ContentDisplay display,
+													@Nonnull ContentCapture capture,
+													@Nullable String companionBinding,
+													@Nullable String dataWidgetVar) {
+		value.append(managedBeanName).append(".getContentUploadUrl('").append(sanitisedBinding).append("',");
+		value.append('\'').append(display.name()).append("','").append(capture.name()).append("',");
+		if (companionBinding == null) {
+			value.append("null");
+		}
+		else {
+			value.append("'").append(companionBinding).append('\'');
+		}
+		if (dataWidgetVar != null) {
+			value.append(",'").append(dataWidgetVarToDataWidgetBinding(dataWidgetVar)).append("',");
+			value.append(dataWidgetVar).append("['").append(Bean.DOCUMENT_ID).append("']");
+		}
+		value.append(')');
+	}
+
+	private static @Nonnull String dataWidgetVarToDataWidgetBinding(@Nonnull String dataWidgetVar) {
+		if (dataWidgetVar.endsWith("Row")) {
+			return dataWidgetVar.substring(0, dataWidgetVar.length() - 3);
+		}
+		return dataWidgetVar;
 	}
 
 	@Override
@@ -2633,7 +3413,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 								HTML html,
 								String formDisabledConditionName,
 								String title,
-								boolean required) {
+								@Nullable String requiredMessage) {
 		if (component != null) {
 			return component;
 		}
@@ -2641,7 +3421,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return editor(dataWidgetVar,
 						html.getBinding(),
 						title,
-						required,
+						requiredMessage,
 						html.getDisabledConditionName(),
 						formDisabledConditionName,
 						html.getSanitise());
@@ -2653,7 +3433,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 													LookupDescription lookup,
 													String formDisabledConditionName,
 													String title,
-													boolean required,
+													@Nullable String requiredMessage,
 													HorizontalAlignment textAlignment,
 													String displayBinding,
 													QueryDefinition query) {
@@ -2664,7 +3444,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		AutoComplete result = lookupDescription(dataWidgetVar,
 													lookup.getBinding(),
 													title,
-													required,
+													requiredMessage,
 													textAlignment,
 													lookup.getDisabledConditionName(),
 													formDisabledConditionName,
@@ -2683,7 +3463,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											org.skyve.impl.metadata.view.widget.bound.input.Password password,
 											String formDisabledConditionName,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											HorizontalAlignment textAlignment) {
 		if (component != null) {
 			return component;
@@ -2692,7 +3472,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		Password result = password(dataWidgetVar,
 									password.getBinding(),
 					                title,
-					                required,
+					                requiredMessage,
 					                textAlignment,
 					                password.getDisabledConditionName(),
 					                formDisabledConditionName,
@@ -2707,7 +3487,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 										Radio radio,
 										String formDisabledConditionName,
 										String title,
-										boolean required) {
+										@Nullable String requiredMessage) {
 		if (component != null) {
 			return component;
 		}
@@ -2716,7 +3496,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
         SelectOneRadio result = selectOneRadio(dataWidgetVar,
 												binding,
 				                                title,
-				                                required,
+				                                requiredMessage,
 				                                radio.getDisabledConditionName(),
 				                                formDisabledConditionName,
 				                                Boolean.FALSE.equals(radio.getVertical()));
@@ -2732,7 +3512,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											RichText text,
 											String formDisabledConditionName,
 											String title,
-											boolean required) {
+											@Nullable String requiredMessage) {
 		if (component != null) {
 			return component;
 		}
@@ -2740,7 +3520,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		TextEditor result = editor(dataWidgetVar,
 									text.getBinding(),
 									title,
-									required,
+									requiredMessage,
 									text.getDisabledConditionName(),
 									formDisabledConditionName,
 									text.getSanitise());
@@ -2753,7 +3533,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											org.skyve.impl.metadata.view.widget.bound.input.Spinner spinner,
 											String formDisabledConditionName,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											HorizontalAlignment textAlignment,
 											Converter<?> facesConverter) {
 		if (component != null) {
@@ -2763,7 +3543,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		Spinner result = spinner(dataWidgetVar,
 									spinner.getBinding(),
 									title,
-									required,
+									requiredMessage,
 									textAlignment,
 									spinner.getKeyboardType(),
 									spinner.getMin(),
@@ -2782,14 +3562,14 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											org.skyve.impl.metadata.view.widget.bound.input.Slider slider,
 											String formDisabledConditionName,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											Converter<?> facesConverter) {
 		if (component != null) {
 			return component;
 		}
 
 		boolean vertical = Boolean.TRUE.equals(slider.getVertical());
-		
+
 		// Table to hold it all
 		HtmlPanelGrid result = (HtmlPanelGrid) a.createComponent(HtmlPanelGrid.COMPONENT_TYPE);
 		setId(result, null);
@@ -2799,11 +3579,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			result.setStyle("width:100%");
 		}
 		List<UIComponent> toAddTo = result.getChildren();
-		
+
 		// Hidden component bound to data
-		HtmlInputHidden hidden = (HtmlInputHidden) input(HtmlInputHidden.COMPONENT_TYPE, null, slider.getBinding(), null, false, null, null);
+		HtmlInputHidden hidden = (HtmlInputHidden) input(HtmlInputHidden.COMPONENT_TYPE, null, slider.getBinding(), null, requiredMessage, null, null);
 		toAddTo.add(hidden);
-		
+
 		// Display value
 		HtmlOutputText display = (HtmlOutputText) a.createComponent(HtmlOutputText.COMPONENT_TYPE);
 		setId(display, null);
@@ -2814,7 +3594,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 										dataWidgetVar,
 										slider.getBinding(),
 										title,
-										required,
+										requiredMessage,
 										slider.getDisabledConditionName(),
 										formDisabledConditionName);
 		sliderComponent.setFor(hidden.getId());
@@ -2839,7 +3619,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			double range = max.doubleValue() - min.doubleValue();
 			double step = range / numberOfDiscreteValues.doubleValue();
 			if (precision != null) {
-				step = new BigDecimal(step).setScale(precision.intValue(), RoundingMode.HALF_UP).doubleValue();
+				step = BigDecimal.valueOf(step).setScale(precision.intValue(), RoundingMode.HALF_UP).doubleValue();
 			}
 			sliderComponent.setStep(step);
 		}
@@ -2851,7 +3631,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			sliderComponent.setConverter(facesConverter);
 		}
 		// NB Text alignment set with a style class
-		setSizeAndTextAlignStyle(sliderComponent, null, null, slider.getPixelWidth(), null, null, slider.getPixelHeight(), null, null, null);
+		setSizeAndTextAlignStyle(sliderComponent, null, slider.getPixelWidth(), null, null, slider.getPixelHeight(), null, null);
 
 		// TODO - slider.getChangedActions() - there is 1 ajax event called slide end
 		// <p:ajax event="slideEnd" listener="#{sliderBean.onSlideEnd}" update="@form" />
@@ -2869,7 +3649,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			toAddTo.add(spacer);
 		}
 		toAddTo.add(display);
-		
+
 		return new EventSourceComponent(result, sliderComponent);
 	}
 
@@ -2879,7 +3659,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											TextArea text,
 											String formDisabledConditionName,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											HorizontalAlignment textAlignment,
 											Integer length) {
 		if (component != null) {
@@ -2889,7 +3669,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		InputTextarea result = textArea(dataWidgetVar,
 											text.getBinding(),
 											title,
-											required,
+											requiredMessage,
 											textAlignment,
 											Boolean.FALSE.equals(text.getEditable()),
 											text.getDisabledConditionName(),
@@ -2911,7 +3691,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 										TextField text,
 										String formDisabledConditionName,
 										String title,
-										boolean required,
+										@Nullable String requiredMessage,
 										HorizontalAlignment textAlignment,
 										Integer length,
 										org.skyve.domain.types.converters.Converter<?> converter,
@@ -2942,7 +3722,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
             result = datePicker(dataWidgetVar,
 		            				text.getBinding(),
 		                            title,
-		                            required,
+		                            requiredMessage,
 		                            textAlignment,
 		                            text.getPixelWidth(),
 		                            false,
@@ -2954,7 +3734,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
             result = maskField(dataWidgetVar,
 								text.getBinding(),
 								title,
-								required,
+								requiredMessage,
 								textAlignment,
 								Boolean.FALSE.equals(text.getEditable()),
 								text.getDisabledConditionName(),
@@ -2969,7 +3749,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
         	result = complete(dataWidgetVar,
 	        					text.getBinding(),
 	        					title,
-	        					required,
+	        					requiredMessage,
 	        					textAlignment,
 	        					text.getDisabledConditionName(),
 	        					length,
@@ -2982,7 +3762,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
         	result = textField(dataWidgetVar,
 								text.getBinding(),
 								title,
-								required,
+								requiredMessage,
 								textAlignment,
 								Boolean.FALSE.equals(text.getEditable()),
 								text.getDisabledConditionName(),
@@ -3015,13 +3795,13 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		ImplicitActionName name = action.getImplicitName();
 		if (ImplicitActionName.Download.equals(name)) {
-			return downloadLink(value,
-									toolTip,
+			return downloadLink(EscapableText.of(value, ViewRenderer.shouldEscape(link.getEscapeValue())),
+									actionToolTip(toolTip),
 									action.getName(),
 									dataWidgetBinding,
 									dataWidgetVar,
 									link.getPixelWidth(),
-									confirmationText,
+									actionConfirmation(confirmationText, action),
 									action.getDisabledConditionName(),
 									null,
 									action.getInvisibleConditionName(),
@@ -3029,8 +3809,8 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 									properties.get(UPDATE_KEY));
 		}
 
-		return actionLink(value,
-							toolTip,
+		return actionLink(EscapableText.of(value, ViewRenderer.shouldEscape(link.getEscapeValue())),
+							actionToolTip(toolTip),
 							null,
 							action.getName(),
 							false,
@@ -3039,7 +3819,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 							link.getPixelWidth(),
 							null,
 							action.getClientValidation(),
-							confirmationText,
+							actionConfirmation(confirmationText, action),
 							action.getDisabledConditionName(),
 							null,
 							action.getInvisibleConditionName(),
@@ -3058,14 +3838,14 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			return component;
 		}
 
-		return reportButton(label,
+		return reportButton(actionDisplayName(label, action),
 								iconStyleClass,
-								toolTip,
+								actionToolTip(toolTip),
 								action.getParameters(),
 								null,
 								null,
 								action.getClientValidation(),
-								confirmationText,
+								actionConfirmation(confirmationText, action),
 								action.getDisabledConditionName(),
 								null,
 								action.getInvisibleConditionName());
@@ -3086,15 +3866,15 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		Map<String, String> properties = action.getProperties();
 
-		return downloadButton(label,
+		return downloadButton(actionDisplayName(label, action),
 								iconStyleClass,
-								toolTip,
+								actionToolTip(toolTip),
 								dataWidgetBinding,
 								dataWidgetVar,
 								action.getName(),
 								null,
 								null,
-								confirmationText,
+								actionConfirmation(confirmationText, action),
 								action.getDisabledConditionName(),
 								null,
 								action.getInvisibleConditionName(),
@@ -3103,7 +3883,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 	}
 
 	@Override
-	public UIComponent upload(UIComponent component, 
+	public UIComponent upload(UIComponent component,
 								String label,
 								String iconStyleClass,
 								String toolTip,
@@ -3113,18 +3893,20 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			return component;
 		}
 
-		return uploadButton(label,
+		ContentCapture capture = resolveActionUploadCapture(action);
+		return uploadButton(actionDisplayName(label, action),
 								iconStyleClass,
-								toolTip,
+								actionToolTip(toolTip),
 								action.getName(),
 								null,
 								null,
 								action.getClientValidation(),
-								confirmationText,
+								actionConfirmation(confirmationText, action),
 								action.getDisabledConditionName(),
 								null,
 								action.getInvisibleConditionName(),
-								false);
+								capture,
+								useActionUploadDialog(capture));
 	}
 
 	@Override
@@ -3140,9 +3922,9 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		}
 
 		Map<String, String> properties = action.getProperties();
-		return actionButton(label,
+		return actionButton(actionDisplayName(label, action),
 								iconStyleClass,
-								toolTip,
+								actionToolTip(toolTip),
 								ImplicitActionName.Remove,
 								action.getName(),
 								false,
@@ -3150,8 +3932,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 								null,
 								null,
 								null,
-								action.getClientValidation(),
-								confirmationText,
+								actionConfirmation(confirmationText, action),
 								action.getDisabledConditionName(),
 								null,
 								action.getInvisibleConditionName(),
@@ -3159,7 +3940,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 								properties.get(UPDATE_KEY),
 								canDelete);
 	}
-	
+
 	@Override
 	public UIComponent action(UIComponent component,
 								String dataWidgetBinding,
@@ -3175,9 +3956,9 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		}
 
 		Map<String, String> properties = action.getProperties();
-		return actionButton(label,
+		return actionButton(actionDisplayName(label, action),
 								iconStyleClass,
-								toolTip,
+								actionToolTip(toolTip),
 								name,
 								action.getName(),
 								false,
@@ -3185,8 +3966,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 								dataWidgetVar,
 								null,
 								null,
-								action.getClientValidation(),
-								confirmationText,
+								actionConfirmation(confirmationText, action),
 								action.getDisabledConditionName(),
 								null,
 								action.getInvisibleConditionName(),
@@ -3195,15 +3975,32 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 								false);
 	}
 
+	/**
+	 * Creates a PrimeFaces panel for bordered metadata containers.
+	 *
+	 * <p>Side effects: creates and IDs a panel, optionally attaches a header-facet
+	 * output component, applies visibility/style settings, and attaches a toggle
+	 * behaviour for collapsible panels. {@code null} and {@code Boolean.TRUE} escape
+	 * flags escape the header at the facet boundary; only {@code Boolean.FALSE}
+	 * allows trusted header markup.
+	 *
+	 * @param title raw resolved border title; may be {@code null}
+	 * @param invisible optional invisible condition
+	 * @param pixelWidth optional fixed width in pixels
+	 * @param collapsible optional collapsible state
+	 * @param widgetId optional component id
+	 * @return configured panel; never {@code null}
+	 */
 	protected Panel panel(String title, String invisible, Integer pixelWidth, Collapsible collapsible, String widgetId) {
 		Panel result = (Panel) a.createComponent(Panel.COMPONENT_TYPE);
-		setValueOrValueExpression(title, result::setHeader, "header", result);
+		putOutputTextFacetValueOrValueExpression(result, "header", title, getCurrentInputTitleEscape());
 		setInvisible(result, invisible, null);
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, null, null, null, null);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, null, null, null);
 		setId(result, widgetId);
-		
+
 		if (collapsible != null) {
 			result.setToggleable(true);
+			result.setToggleableHeader(true);
 			result.setCollapsed(Collapsible.closed.equals(collapsible));
 			AjaxBehavior ajax = (AjaxBehavior) a.createBehavior(AjaxBehavior.BEHAVIOR_ID);
 			ajax.setProcess("@this");
@@ -3212,36 +4009,38 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			ajax.addAjaxBehaviorListener(new AjaxBehaviorListenerImpl(me, me));
 			result.addClientBehavior("toggle", ajax);
 		}
-		
+
 		return result;
 	}
-	
+
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	protected Password password(String dataWidgetVar,
 									String binding,
 									String title,
-									boolean required,
+									@Nullable String requiredMessage,
 									HorizontalAlignment textAlignment,
 									String disabled,
 									String formDisabled,
 									Integer pixelWidth) {
-		Password result = (Password) input(Password.COMPONENT_TYPE, dataWidgetVar, binding, title, required, disabled, formDisabled);
+		Password result = (Password) input(Password.COMPONENT_TYPE, dataWidgetVar, binding, title, requiredMessage, disabled, formDisabled);
 		result.setId(result.getId() + "password"); // ensures that the password field value is not logged in the request parameters on the server
-		
+
 		// Security settings
 		result.setAutocomplete("off");
 		Map<String, Object> passThroughAttributes = result.getPassThroughAttributes();
 		passThroughAttributes.put("spellcheck", "false");
 		passThroughAttributes.put("autocapitalize", "none");
 		passThroughAttributes.put("autocorrect", "none");
-		
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, null, null, null, textAlignment);
+
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, null, null, null, textAlignment, null, null);
 		return result;
 	}
 
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	protected InputText textField(String dataWidgetVar,
 									String binding,
 									String title,
-									boolean required,
+									@Nullable String requiredMessage,
 									HorizontalAlignment textAlignment,
 									boolean readonly,
 									String disabled,
@@ -3255,7 +4054,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 												dataWidgetVar,
 												binding,
 												title,
-												required,
+												requiredMessage,
 												disabled,
 												formDisabled);
 		if (readonly) {
@@ -3272,14 +4071,15 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			passThroughAttributes.put("inputmode", keyboardType.toString());
 		}
 		String existingStyle = determineTextTransformStyle(textCase);
-		setSizeAndTextAlignStyle(result, null, existingStyle, pixelWidth, null, null, null, null, null, textAlignment);
+		setSizeAndTextAlignStyle(result, existingStyle, pixelWidth, null, null, null, null, null, textAlignment, null, null);
 		return result;
 	}
 
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	private InputMask maskField(String dataWidgetVar,
 									String binding,
 									String title,
-									boolean required,
+									@Nullable String requiredMessage,
 									HorizontalAlignment textAlignment,
 									boolean readonly,
 									String disabled,
@@ -3293,7 +4093,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 												dataWidgetVar,
 												binding,
 												title,
-												required,
+												requiredMessage,
 												disabled,
 												formDisabled);
 		if (maxLength != null) {
@@ -3311,7 +4111,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			Map<String, Object> passThroughAttributes = result.getPassThroughAttributes();
 			passThroughAttributes.put("inputmode", keyboardType.toString());
 		}
-		setSizeAndTextAlignStyle(result, null, existingStyle, pixelWidth, null, null, null, null, null, textAlignment);
+		setSizeAndTextAlignStyle(result, existingStyle, pixelWidth, null, null, null, null, null, textAlignment, null, null);
 		return result;
 	}
 
@@ -3372,10 +4172,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return result;
 	}
 
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	private Spinner spinner(String dataWidgetVar,
 								String binding,
 								String title,
-								boolean required,
+								@Nullable String requiredMessage,
 								HorizontalAlignment textAlignment,
 								KeyboardType keyboardType,
 								Double min,
@@ -3385,7 +4186,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 								String formDisabled,
 								Converter<?> converter,
 								Integer pixelWidth) {
-		Spinner result = (Spinner) input(Spinner.COMPONENT_TYPE, dataWidgetVar, binding, title, required, disabled, formDisabled);
+		Spinner result = (Spinner) input(Spinner.COMPONENT_TYPE, dataWidgetVar, binding, title, requiredMessage, disabled, formDisabled);
 
 		if (keyboardType != null) {
 			Map<String, Object> passThroughAttributes = result.getPassThroughAttributes();
@@ -3404,24 +4205,25 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			result.setConverter(converter);
 		}
 		// NB Text alignment set with a style class
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, null, null, null, null);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, null, null, null);
 		if (textAlignment != null) {
-			result.setValueExpression("styleClass", ef.createValueExpression("text-" + textAlignment.toAlignmentString(), String.class));
+			result.setValueExpression("styleClass", ef.createValueExpression("text-" + textAlignment.toTextAlignmentString(), String.class));
 		}
 		return result;
 	}
 
+	@SuppressWarnings({"java:S107", "java:S3776"}) // Long parameter list preserves the existing framework/API contract; complexity OK.
 	private DatePicker datePicker(String dataWidgetVar,
 									String binding,
 									String title,
-									boolean required,
+									@Nullable String requiredMessage,
 									HorizontalAlignment textAlignment,
 									Integer pixelWidth,
 									boolean mobile,
 									String disabled,
 									String formDisabled,
 									Converter<?> converter) {
-		DatePicker result = (DatePicker) input(DatePicker.COMPONENT_TYPE, dataWidgetVar, binding, title, required, disabled, formDisabled);
+		DatePicker result = (DatePicker) input(DatePicker.COMPONENT_TYPE, dataWidgetVar, binding, title, requiredMessage, disabled, formDisabled);
 		if (! mobile) {
 			result.setShowIcon(true);
 			result.setShowOnFocus(false);
@@ -3432,7 +4234,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		// prime docs (not faces) talks about using "-20:+20" for 20 years each side of current date for result.setYearRange()
 		// but this doesn't work.
 		// Using absolute range like "1900:2050" works but this isn't very useful.
-		
+
 		String converterName = converter.getClass().getSimpleName();
 		if (DD_MM_YYYY.class.getSimpleName().equals(converterName)) {
 			result.setPattern(DD_MM_YYYY.PATTERN);
@@ -3656,15 +4458,16 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		result.setConverter(converter);
 
 		// NB inputStyle attribute styles the text field
-		setSizeAndTextAlignStyle(result, "inputStyle", null, pixelWidth, null, null, null, null, null, textAlignment);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, null, null, null, textAlignment, "inputStyle", "0.5rem");
 
 		return result;
 	}
 
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	protected InputTextarea textArea(String dataWidgetVar,
 										String binding,
 										String title,
-										boolean required,
+										@Nullable String requiredMessage,
 										HorizontalAlignment textAlignment,
 										boolean readonly,
 										String disabled,
@@ -3676,7 +4479,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 														dataWidgetVar,
 														binding,
 														title,
-														required,
+														requiredMessage,
 														disabled,
 														formDisabled);
 		if (readonly) {
@@ -3685,11 +4488,42 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		if (maxLength != null) {
 			result.setMaxlength(maxLength.intValue());
 		}
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, pixelHeight, null, null, textAlignment);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, pixelHeight, null, null, textAlignment, null, null);
 		return result;
 	}
 
-	protected CommandButton actionButton(String title,
+	/**
+	 * Creates a PrimeFaces command button for action metadata.
+	 *
+	 * <p>Side effects: creates and configures a command button, assigns action,
+	 * rendered/disabled/process/update expressions, and attaches a confirmation
+	 * behaviour when confirmation text is present. {@code title} and
+	 * {@code confirmationText} remain raw until the PrimeFaces renderer or
+	 * behaviour applies the paired escape flag; {@code null} and
+	 * {@code Boolean.TRUE} escape, and only {@code Boolean.FALSE} allows trusted
+	 * markup. {@code tooltip} is assigned raw to the component title property.
+	 *
+	 * @param title raw button text and nullable escape flag; may be {@code null}
+	 * @param iconStyleClass optional icon style class
+	 * @param tooltip optional raw tooltip/title property value
+	 * @param implicitActionName optional implicit action name
+	 * @param actionName action name used in the action expression; may be {@code null}
+	 * @param inline whether the action is rendered inside an inline collection
+	 * @param dataWidgetBinding optional data-widget binding
+	 * @param dataWidgetVar optional data-widget variable
+	 * @param pixelWidth optional button width in pixels
+	 * @param pixelHeight optional button height in pixels
+	 * @param confirmationText raw confirmation text and nullable escape flag; may be {@code null}
+	 * @param disabled optional disabled condition
+	 * @param formDisabled optional form-level disabled condition
+	 * @param invisible optional invisible condition
+	 * @param processOverride optional PrimeFaces process expression
+	 * @param updateOverride optional PrimeFaces update expression
+	 * @param canDelete whether remove/delete actions are permitted for the current row
+	 * @return configured command button; never {@code null}
+	 */
+	@SuppressWarnings({"java:S107", "java:S3776"}) // Long parameter list preserves the existing framework/API contract; complexity OK.
+	protected CommandButton actionButton(EscapableText title,
 											String iconStyleClass,
 											String tooltip,
 											ImplicitActionName implicitActionName,
@@ -3699,8 +4533,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											String dataWidgetVar,
 											Integer pixelWidth,
 											Integer pixelHeight,
-											Boolean clientValidation,
-											String confirmationText,
+											EscapableText confirmationText,
 											String disabled,
 											String formDisabled,
 											String invisible,
@@ -3709,12 +4542,12 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											boolean canDelete) {
 		CommandButton result = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
 
-		result.setValue(title);
+		setCommandButtonText(result, title);
 		result.setIcon(iconStyleClass);
-		result.setTitle(tooltip);
+		result.setTitle(sanitiseFacesText(tooltip));
 
 		action(result, implicitActionName, actionName, dataWidgetBinding, dataWidgetVar, inline, null);
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, pixelHeight, null, null, null);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, pixelHeight, null, null);
 		setDisabled(result, disabled, formDisabled);
 		setConfirmation(result, confirmationText);
 		setId(result, null);
@@ -3722,51 +4555,21 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		// set a default icon if not already set and client Validation (immediate)
 		if (implicitActionName != null) {
 			switch (implicitActionName) {
-				case OK:
-					result.setImmediate(Boolean.FALSE.equals(clientValidation)); // switch validation
-					break;
-				case Save:
-					result.setImmediate(Boolean.FALSE.equals(clientValidation)); // switch validation
-					break;
 				case Delete:
-					result.setImmediate(Boolean.FALSE.equals(clientValidation)); // switch validation
 					// Add the standard confirmation text if none exists
-					if (confirmationText == null) {
-						setConfirmation(result, "Do you want to delete this data?");
+					if ((confirmationText == null) || (confirmationText.getValue() == null)) {
+						setConfirmation(result, EscapableText.of("Do you want to delete this data?", true));
 					}
-					break;
-				case Add:
-				case New:
-					break;
-				case ZoomOut:
-					result.setImmediate(Boolean.FALSE.equals(clientValidation)); // switch validation
 					break;
 				case Cancel:
 					result.setType("button"); // stop the post
 					result.setOnclick("SKYVE.PF.popHistory(true)");
 					break;
 				case Remove:
-					result.setImmediate(true);
 					// Add the standard confirmation text if none exists
-					if (confirmationText == null) {
-						setConfirmation(result, "Do you want to remove this data?");
+					if ((confirmationText == null) || (confirmationText.getValue() == null)) {
+						setConfirmation(result, EscapableText.of("Do you want to remove this data?", true));
 					}
-					break;
-				case Edit:
-					break;
-				case Report:
-					break;
-				case BizImport:
-					result.setImmediate(Boolean.FALSE.equals(clientValidation)); // switch validation
-					break;
-				case BizExport:
-					result.setImmediate(Boolean.FALSE.equals(clientValidation)); // switch validation
-					break;
-				case Download:
-					result.setImmediate(Boolean.FALSE.equals(clientValidation)); // switch validation
-					break;
-				case Upload:
-					result.setImmediate(Boolean.FALSE.equals(clientValidation)); // switch validation
 					break;
 				default:
 					break;
@@ -3841,18 +4644,39 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 	}
 
 	/**
-	 * Create a button with a href URL that looks like...
-	 * http://localhost:8080/skyve/report/Bum.html?_f=html&_c=<webId>&_id=<id>&wee=poo&_n=Bum&_mod=<module>&_doc=<document>
+	 * Creates a report link button with a generated report URL.
+	 *
+	 * <p>Side effects: creates and configures a PrimeFaces link button, including
+	 * its generated href expression. {@code title} remains raw until PrimeFaces
+	 * applies its button escape flag; {@code null} and {@code Boolean.TRUE} escape,
+	 * and only {@code Boolean.FALSE} allows trusted markup. {@code tooltip} is
+	 * assigned raw to the component title property. Confirmation text is accepted
+	 * for API symmetry but cannot be attached because this PrimeFaces link button
+	 * is not confirmable.
+	 *
+	 * @param title raw button text and nullable escape flag; may be {@code null}
+	 * @param iconStyleClass optional icon style class
+	 * @param tooltip optional raw tooltip/title property value
+	 * @param parameters report parameters used to build the href; must not be {@code null}
+	 * @param pixelWidth optional button width in pixels
+	 * @param pixelHeight optional button height in pixels
+	 * @param clientValidation currently unused validation flag
+	 * @param confirmationText raw confirmation text and nullable escape flag; ignored
+	 * @param disabled optional disabled condition
+	 * @param formDisabled optional form-level disabled condition
+	 * @param invisible optional invisible condition
+	 * @return configured report link button; never {@code null}
 	 */
-	private Button reportButton(String title,
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
+	private Button reportButton(EscapableText title,
 									String iconStyleClass,
 									String tooltip,
 									List<Parameter> parameters,
 									Integer pixelWidth,
 									Integer pixelHeight,
-									@SuppressWarnings("unused") Boolean clientValidation, // TODO not implemented
+									Boolean clientValidation, // TODO not implemented
 									// TODO LinkButton is not a Confirmable. ConfirmBehavior can only be attached to components that implement org.primefaces.component.api.Confirmable interface
-									@SuppressWarnings("unused") String confirmationText,
+									EscapableText confirmationText,
 									String disabled,
 									String formDisabled,
 									String invisible) {
@@ -3909,10 +4733,34 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 	}
 
 	/**
-	 * Create a command button that redirects to a URL that looks like...
-	 * http://localhost:8080/skyve/download?_n=<downloadAction>&_doc=<module>.<document>&_c=<webId>&_b=<form binding>&_ctim=<currentTimeInMillis>
+	 * Creates a command button that performs a download action.
+	 *
+	 * <p>Side effects: creates and configures a command button, assigns the
+	 * download action expression, process/update values, disabled/rendered
+	 * expressions, and an optional confirmation behaviour. {@code title} and
+	 * {@code confirmationText} remain raw until their PrimeFaces output boundary;
+	 * {@code null} and {@code Boolean.TRUE} escape, and only {@code Boolean.FALSE}
+	 * allows trusted markup. {@code tooltip} is assigned raw to the component title
+	 * property.
+	 *
+	 * @param title raw button text and nullable escape flag; may be {@code null}
+	 * @param iconStyleClass optional icon style class
+	 * @param tooltip optional raw tooltip/title property value
+	 * @param dataWidgetBinding optional data-widget binding
+	 * @param dataWidgetVar optional data-widget variable
+	 * @param downloadActionName download action name; must not be {@code null}
+	 * @param pixelWidth optional button width in pixels
+	 * @param pixelHeight optional button height in pixels
+	 * @param confirmationText raw confirmation text and nullable escape flag; may be {@code null}
+	 * @param disabled optional disabled condition
+	 * @param formDisabled optional form-level disabled condition
+	 * @param invisible optional invisible condition
+	 * @param processOverride optional PrimeFaces process expression
+	 * @param updateOverride optional PrimeFaces update expression
+	 * @return configured command button; never {@code null}
 	 */
-	private CommandButton downloadButton(String title,
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
+	private CommandButton downloadButton(EscapableText title,
 											String iconStyleClass,
 											String tooltip,
 											String dataWidgetBinding,
@@ -3920,7 +4768,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											String downloadActionName,
 											Integer pixelWidth,
 											Integer pixelHeight,
-											String confirmationText,
+											EscapableText confirmationText,
 											String disabled,
 											String formDisabled,
 											String invisible,
@@ -3928,11 +4776,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 											String updateOverride) {
 		CommandButton result = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
 
-		result.setValue(title);
+		setCommandButtonText(result, title);
 		result.setIcon(iconStyleClass);
-		result.setTitle(tooltip);
+		result.setTitle(sanitiseFacesText(tooltip));
 
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, pixelHeight, null, null, null);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, pixelHeight, null, null);
 		setInvisible(result, invisible, null);
 		setDisabled(result, disabled, formDisabled);
 		setConfirmation(result, confirmationText);
@@ -3948,22 +4796,44 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 	/**
 	 * Add the buttons and overlay
-	 *			    <p:commandButton id="s03" icon="fa-solid fa-upload" title="Upload Content" type="button" onclick="$(PrimeFaces.escapeClientId('s06')).attr('src', '/skyve/contentUpload.xhtml')" />
+	 *			    <p:commandButton id="s03" icon="fa-solid fa-upload" title="Upload Content" type="button" onclick="$(PrimeFaces.escapeClientId('s06')).attr('src', '/skyve/upload.xhtml')" />
 	 *			    <p:overlayPanel id="s04" for="s03" hideEffect="fade" dynamic="true" showCloseIcon="true" modal="true" style="width:50%;height:310px">
-	 *					<iframe id="s01_overlayiframe" src="/skyve/contentUpload.xhtml" style="width:100%;height:280px;border:none"></iframe>
+	 *					<iframe id="s01_overlayiframe" src="/skyve/upload.xhtml" style="width:100%;height:280px;border:none"></iframe>
 	 *			    </p:overlayPanel>
+	 *
+	 * <p>{@code title} and {@code confirmationText} remain raw until their
+	 * PrimeFaces output boundary; {@code null} and {@code Boolean.TRUE} escape, and
+	 * only {@code Boolean.FALSE} allows trusted markup. {@code tooltip} is assigned
+	 * raw to the component title property.
+	 *
+	 * @param title raw button text and nullable escape flag; may be {@code null}
+	 * @param iconStyleClass optional icon style class
+	 * @param tooltip optional tooltip text
+	 * @param actionName action name used by the upload route; must not be {@code null}
+	 * @param pixelWidth optional button width in pixels
+	 * @param pixelHeight optional button height in pixels
+	 * @param clientValidation currently unused upload action validation flag
+	 * @param confirmationText raw confirmation text and nullable escape flag; may be {@code null}
+	 * @param disabled optional disabled condition
+	 * @param formDisabled optional form disabled condition
+	 * @param invisible optional invisible condition
+	 * @param capture upload capture affordance; must not be {@code null}
+	 * @param useDialog whether to use a dialog instead of an overlay panel
+	 * @return upload button component; never {@code null}
 	 */
-	protected UIComponent uploadButton(String title,
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
+	protected UIComponent uploadButton(EscapableText title,
 										String iconStyleClass,
 										String tooltip,
 										String actionName,
 										Integer pixelWidth,
 										Integer pixelHeight,
-										@SuppressWarnings("unused") Boolean clientValidation, // TODO not implemented
-										String confirmationText,
+										Boolean clientValidation, // TODO not implemented
+										EscapableText confirmationText,
 										String disabled,
 										String formDisabled,
 										String invisible,
+										ContentCapture capture,
 										boolean useDialog) {
 		// A span as the top item so it can flow correctly in the action panel
 		HtmlPanelGroup result = panelGroup(false, false, false, invisible, null);
@@ -3983,11 +4853,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		CommandButton uploadButton = (CommandButton) a.createComponent(CommandButton.COMPONENT_TYPE);
 		setId(uploadButton, null);
 		String uploadButtonId = uploadButton.getId();
-		uploadButton.setValue(title);
+		setCommandButtonText(uploadButton, title);
 		uploadButton.setIcon((iconStyleClass == null) ? Icons.FONT_UPLOAD : iconStyleClass);
-		uploadButton.setTitle(tooltip);
+		uploadButton.setTitle(sanitiseFacesText(tooltip));
 		uploadButton.setType("button"); // no process or update required
-		setSizeAndTextAlignStyle(uploadButton, null, null, pixelWidth, null, null, pixelHeight, null, null, null);
+		setSizeAndTextAlignStyle(uploadButton, null, pixelWidth, null, null, pixelHeight, null, null);
 		setDisabled(uploadButton, disabled, formDisabled);
 		setConfirmation(uploadButton, confirmationText);
 		children.add(uploadButton);
@@ -3996,21 +4866,15 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		String panelId = null;
 		if (useDialog) {
 			// Dialog attached to the upload button that houses the iframe
-			Dialog dialog = (Dialog) a.createComponent(Dialog.COMPONENT_TYPE);
-			setId(dialog, null);
+			Dialog dialog = createFullScreenDialog("Upload");
 			panelId = dialog.getId();
-			String var = panelId + "Dialog";
-			dialog.setWidgetVar(var);
-			dialog.setModal(true);
-			dialog.setResponsive(true);
-			dialog.setFitViewport(true);
-			dialog.setHeader("Upload");
-			dialog.setAppendTo("@(body)"); // append to <body/> so dialog can always pop (didn't work in tabs)
+			String widgetVar = panelId + "Dialog";
+			dialog.setWidgetVar(widgetVar);
 			// clear the iframe src on hide so there is no flash next open, and call the refresh remote command
-			dialog.setOnHide(String.format("SKYVE.PF.contentOverlayOnHide('%s');%s()", panelId, refreshId));
+			dialog.setOnHide(createContentOverlayOnHideScript(panelId, false, true) + ';' + refreshId + "()");
 			panel = dialog;
 
-			uploadButton.setOnclick("PF('" + var + "').show();PF('" + var + "').toggleMaximize()");
+			uploadButton.setOnclick(createPfShowScript(widgetVar));
 		} else {
 			// Overlay panel attached to the upload button that houses the iframe
 			OverlayPanel overlay = (OverlayPanel) a.createComponent(OverlayPanel.COMPONENT_TYPE);
@@ -4023,35 +4887,136 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			overlay.setModal(false); // modal on PF8 causes the opaque mask to sit over the top of the overlay panel
 			overlay.setStyle("width:50%;height:310px");
 			// clear the iframe src on hide so there is no flash next open, and call the refresh remote command
-			overlay.setOnHide(String.format("SKYVE.PF.contentOverlayOnHide('%s');%s()", panelId, refreshId));
+			overlay.setOnHide(createContentOverlayOnHideScript(panelId) + ';' + refreshId + "()");
 			panel = overlay;
 		}
 
-		// show the overlay, reset the fileUpload.xhtml iframe
+		// show the overlay, reset the upload.xhtml iframe
 		StringBuilder value = new StringBuilder(64);
 		value.append("#{'SKYVE.PF.contentOverlayOnShow(\\'").append(panelId).append("\\',\\''.concat(");
-		value.append(managedBeanName).append(".getFileUploadUrl('").append(actionName).append("')).concat('\\')')}");
+		value.append(managedBeanName).append(".getFileUploadUrl('").append(actionName).append("','");
+		value.append(capture.name()).append("'))");
+		value.append(useDialog ? ".concat('\\',true)')}" : ".concat('\\')')}");
 		panel.setValueExpression("onShow", ef.createValueExpression(elc, value.toString(), String.class));
 
 		children.add(panel);
 
 		// <iframe id="s01_overlayiframe" src="" style="width:100%;height:280px;border:none"></iframe>
-		HtmlOutputText iframe = (HtmlOutputText) a.createComponent(HtmlOutputText.COMPONENT_TYPE);
-		iframe.setEscape(false);
-		iframe.setValue(String.format("<iframe id=\"%s_overlayiframe\" src=\"\" style=\"width:100%%;height:285px;border:none\"></iframe>", panelId));
-		setId(iframe, null);
+		String iframeAttributes = useDialog ? FULL_SCREEN_IFRAME_ATTRIBUTES
+											: " style=\"width:100%;height:285px;border:none\"";
+		HtmlOutputText iframe = createIframe(panelId + "_overlayiframe", iframeAttributes);
 		panel.getChildren().add(iframe);
 
 		return result;
 	}
 
-	protected CommandLink downloadLink(String title,
+	/**
+	 * Builds an action-upload button using the default generic file chooser.
+	 *
+	 * <p>{@code title} and {@code confirmationText} remain raw until their
+	 * PrimeFaces output boundary; {@code null} and {@code Boolean.TRUE} escape, and
+	 * only {@code Boolean.FALSE} allows trusted markup. {@code tooltip} is assigned
+	 * raw to the component title property.
+	 *
+	 * @param title raw button text and nullable escape flag; may be {@code null}
+	 * @param iconStyleClass optional icon style class
+	 * @param tooltip optional tooltip text
+	 * @param actionName action name used by the upload route; must not be {@code null}
+	 * @param pixelWidth optional button width in pixels
+	 * @param pixelHeight optional button height in pixels
+	 * @param clientValidation currently unused upload action validation flag
+	 * @param confirmationText raw confirmation text and nullable escape flag; may be {@code null}
+	 * @param disabled optional disabled condition
+	 * @param formDisabled optional form disabled condition
+	 * @param invisible optional invisible condition
+	 * @param useDialog whether to use a dialog instead of an overlay panel
+	 * @return upload button component; never {@code null}
+	 */
+	@SuppressWarnings("java:S107") // Backward-compatible helper for existing builder specialisations and tests.
+	protected UIComponent uploadButton(EscapableText title,
+										String iconStyleClass,
+										String tooltip,
+										String actionName,
+										Integer pixelWidth,
+										Integer pixelHeight,
+										Boolean clientValidation,
+										EscapableText confirmationText,
+										String disabled,
+										String formDisabled,
+										String invisible,
+										boolean useDialog) {
+		return uploadButton(title,
+								iconStyleClass,
+								tooltip,
+								actionName,
+								pixelWidth,
+								pixelHeight,
+								clientValidation,
+								confirmationText,
+								disabled,
+								formDisabled,
+								invisible,
+								ContentCapture.none,
+								useDialog);
+	}
+
+	/**
+	 * Resolves an action upload capture property stored during metadata conversion.
+	 *
+	 * @param action runtime action metadata; must not be {@code null}
+	 * @return configured capture affordance, or {@link ContentCapture#none} when unset
+	 * @throws IllegalArgumentException if the stored property is not a {@link ContentCapture} name
+	 */
+	protected static @Nonnull ContentCapture resolveActionUploadCapture(@Nonnull Action action) {
+		String capture = action.getProperties().get(UPLOAD_CAPTURE_PROPERTY_NAME);
+		if ((capture == null) || capture.trim().isEmpty()) {
+			return ContentCapture.none;
+		}
+		return ContentCapture.valueOf(capture.trim());
+	}
+
+	/**
+	 * Determine if we need upload dialog or overlay.
+	 * @param capture	The capture type
+	 * @return	true for dialog, false for overlay
+	 */
+	protected static boolean useActionUploadDialog(@Nonnull ContentCapture capture) {
+		return ContentCapture.camera.equals(capture) || ContentCapture.all.equals(capture);
+	}
+
+	/**
+	 * Creates a command link that performs a download action.
+	 *
+	 * <p>Side effects: creates and configures a command link, adds child output
+	 * text for the visible label, assigns the download action expression,
+	 * disabled/rendered/process/update values, and an optional confirmation
+	 * behaviour. {@code title} and {@code confirmationText} remain raw until their
+	 * output boundaries; {@code null} and {@code Boolean.TRUE} escape, and only
+	 * {@code Boolean.FALSE} allows trusted markup. {@code tooltip} is assigned raw
+	 * to the component title property.
+	 *
+	 * @param title raw link text and nullable escape flag; may be {@code null}
+	 * @param tooltip optional raw tooltip/title property value
+	 * @param actionName download action name; must not be {@code null}
+	 * @param dataWidgetBinding optional data-widget binding
+	 * @param dataWidgetVar optional data-widget variable
+	 * @param pixelWidth optional link width in pixels
+	 * @param confirmationText raw confirmation text and nullable escape flag; may be {@code null}
+	 * @param disabled optional disabled condition
+	 * @param formDisabled optional form-level disabled condition
+	 * @param invisible optional invisible condition
+	 * @param processOverride optional PrimeFaces process expression
+	 * @param updateOverride optional PrimeFaces update expression
+	 * @return configured command link; never {@code null}
+	 */
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
+	protected CommandLink downloadLink(EscapableText title,
 										String tooltip,
 										String actionName,
 										String dataWidgetBinding,
 										String dataWidgetVar,
 										Integer pixelWidth,
-										String confirmationText,
+										EscapableText confirmationText,
 										String disabled,
 										String formDisabled,
 										String invisible,
@@ -4059,10 +5024,10 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 										String updateOverride) {
 		CommandLink result = (CommandLink) a.createComponent(CommandLink.COMPONENT_TYPE);
 
-		result.setValue(title);
-		result.setTitle(tooltip);
+		addCommandLinkText(result, title);
+		result.setTitle(sanitiseFacesText(tooltip));
 
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, null, null, null, null);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, null, null, null);
 		setDisabled(result, disabled, formDisabled);
 		setInvisible(result, dataWidgetVar, invisible, null);
 		setConfirmation(result, confirmationText);
@@ -4076,7 +5041,37 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return result;
 	}
 
-	protected CommandLink actionLink(String title,
+	/**
+	 * Creates a command link for an implicit or explicit action.
+	 *
+	 * <p>Side effects: creates and configures a command link, adds child output
+	 * text for the visible label, assigns the action expression, disabled/rendered
+	 * and optional process/update values, and an optional confirmation behaviour.
+	 * {@code title} and {@code confirmationText} remain raw until their output
+	 * boundaries; {@code null} and {@code Boolean.TRUE} escape, and only
+	 * {@code Boolean.FALSE} allows trusted markup. {@code tooltip} is assigned raw
+	 * to the component title property.
+	 *
+	 * @param title raw link text and nullable escape flag; may be {@code null}
+	 * @param tooltip optional raw tooltip/title property value
+	 * @param implicitActionName optional implicit action name
+	 * @param actionName action name used in the action expression; may be {@code null}
+	 * @param inline whether the action is rendered inside an inline collection
+	 * @param dataWidgetBinding optional data-widget binding
+	 * @param dataWidgetVar optional data-widget variable
+	 * @param pixelWidth optional link width in pixels
+	 * @param pixelHeight optional link height in pixels
+	 * @param clientValidation currently unused validation flag
+	 * @param confirmationText raw confirmation text and nullable escape flag; may be {@code null}
+	 * @param disabled optional disabled condition
+	 * @param formDisabled optional form-level disabled condition
+	 * @param invisible optional invisible condition
+	 * @param processOverride optional PrimeFaces process expression
+	 * @param updateOverride optional PrimeFaces update expression
+	 * @return configured command link; never {@code null}
+	 */
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
+	protected CommandLink actionLink(EscapableText title,
 										String tooltip,
 										ImplicitActionName implicitActionName,
 										String actionName,
@@ -4085,8 +5080,8 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 										String dataWidgetVar,
 										Integer pixelWidth,
 										Integer pixelHeight,
-										@SuppressWarnings("unused") Boolean clientValidation,
-										String confirmationText,
+										Boolean clientValidation,
+										EscapableText confirmationText,
 										String disabled,
 										String formDisabled,
 										String invisible,
@@ -4094,12 +5089,12 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 										String updateOverride) {
 		CommandLink result = (CommandLink) a.createComponent(CommandLink.COMPONENT_TYPE);
 
-		result.setValue(title);
-		result.setTitle(tooltip);
+		addCommandLinkText(result, title);
+		result.setTitle(sanitiseFacesText(tooltip));
 
 		action(result, implicitActionName, actionName, dataWidgetBinding, dataWidgetVar, inline, null);
 
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, pixelHeight, null, null, null);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, pixelHeight, null, null);
 		setDisabled(result, disabled, formDisabled);
 		setInvisible(result, dataWidgetVar, invisible, null);
 		setConfirmation(result, confirmationText);
@@ -4129,11 +5124,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		if ((eventHandlerActions != null) && (! eventHandlerActions.isEmpty())) {
 			eventHandlerActionNames = new ArrayList<>(eventHandlerActions.size());
 			for (EventAction eventAction : eventHandlerActions) {
-				if (eventAction instanceof ServerSideActionEventAction) {
-					eventHandlerActionNames.add(((ServerSideActionEventAction) eventAction).getActionName());
+				if (eventAction instanceof ServerSideActionEventAction server) {
+					eventHandlerActionNames.add(server.getActionName());
 				}
-				else if (eventAction instanceof RerenderEventAction) {
-					if (Boolean.FALSE.equals(((RerenderEventAction) eventAction).getClientValidation())) {
+				else if (eventAction instanceof RerenderEventAction rerender) {
+					if (Boolean.FALSE.equals(rerender.getClientValidation())) {
 						eventHandlerActionNames.add(Boolean.FALSE.toString());
 					}
 					else {
@@ -4145,10 +5140,35 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		command.setActionExpression(methodExpressionForAction(implicitActionName, actionName, collectionBinding, dataWidgetVar, inline, eventHandlerActionNames));
 	}
 
+	/**
+	 * Creates a PrimeFaces link button with raw visible text and a generated href.
+	 *
+	 * <p>Side effects: creates and configures a link button, assigns a value
+	 * expression for {@code href}, and applies disabled/rendered/style settings.
+	 * {@code value} remains raw until PrimeFaces applies the button escape flag;
+	 * {@code null} and {@code Boolean.TRUE} escape, and only {@code Boolean.FALSE}
+	 * allows trusted markup. {@code title} is assigned raw to the component title
+	 * property.
+	 *
+	 * @param icon optional icon style class
+	 * @param styleClass optional style class
+	 * @param style optional inline style
+	 * @param value raw button text and nullable escape flag; may be {@code null}
+	 * @param title optional raw tooltip/title property value
+	 * @param href link destination expression; must not be {@code null}
+	 * @param pixelWidth optional button width in pixels
+	 * @param pixelHeight optional button height in pixels
+	 * @param disabled optional disabled condition
+	 * @param formDisabled optional form-level disabled condition
+	 * @param invisible optional invisible condition
+	 * @param target optional link target
+	 * @return configured link button; never {@code null}
+	 */
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	private Button linkButton(String icon,
 								String styleClass,
 								String style,
-								String value,
+								EscapableText value,
 								String title,
 								String href,
 								Integer pixelWidth,
@@ -4158,13 +5178,14 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 								String invisible,
 								String target) {
 		Button result = button(icon, styleClass, style);
-		result.setValue(value);
-		result.setTitle(title);
+		result.setValue((value == null) ? null : value.getValue());
+		result.setEscape((value == null) || value.shouldEscape());
+		result.setTitle(sanitiseFacesText(title));
 		result.setValueExpression("href", ef.createValueExpression(elc, href, String.class));
 		result.setTarget(target);
 
 		setId(result, null);
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, pixelHeight, null, null, null);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, pixelHeight, null, null);
 		setDisabled(result, disabled, formDisabled);
 		setInvisible(result, invisible, null);
 
@@ -4188,7 +5209,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		}
 
 		Spacer result = (Spacer) a.createComponent(Spacer.COMPONENT_TYPE);
-		setSizeAndTextAlignStyle(result, null, null, spacer.getPixelWidth(), null, null, spacer.getPixelHeight(), null, null, null);
+		setSizeAndTextAlignStyle(result, null, spacer.getPixelWidth(), null, null, spacer.getPixelHeight(), null, null);
 		setInvisible(result, spacer.getInvisibleConditionName(), null);
 		setId(result, null);
 
@@ -4205,13 +5226,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		result.setUrl(fileUrl);
 		setSizeAndTextAlignStyle(result,
 									null,
-									null,
 									image.getPixelWidth(),
 									image.getResponsiveWidth(),
 									image.getPercentageWidth(),
 									image.getPixelHeight(),
 									image.getPercentageHeight(),
-									null,
 									null);
 		setInvisible(result, image.getInvisibleConditionName(), null);
 		setId(result, null);
@@ -4247,14 +5266,12 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		result.setValueExpression("value", ef.createValueExpression(elc, expression.toString(), String.class));
 
 		setSizeAndTextAlignStyle(result,
-									null,
 									"border:1px solid gray;",
 									pixelWidth,
 									image.getResponsiveWidth(),
 									image.getPercentageWidth(),
 									pixelHeight,
 									image.getPercentageHeight(),
-									null,
 									null);
 		setInvisible(result, image.getInvisibleConditionName(), null);
 		setId(result, null);
@@ -4269,49 +5286,111 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 												Integer percentageWidth,
 												Integer pixelHeight,
 												Integer percentageHeight,
-												String binding) {
+												String binding,
+												@Nullable String dataWidgetVar,
+												String phoneResponsiveClass,
+												@Nullable String placeholderUploadOnclick) {
 		HtmlPanelGroup result = panelGroup(true, true, true, null, null);
 		setId(result, null);
-		setSizeAndTextAlignStyle(result, null, "border:1px solid gray;", pixelWidth, responsiveWidth, percentageWidth, pixelHeight, percentageHeight, null, null);
+		setSizeAndTextAlignStyle(result, "border:1px solid #d6dee8;position:relative;overflow:hidden;", pixelWidth, responsiveWidth, percentageWidth, pixelHeight, percentageHeight, null);
+		String previewClass = (phoneResponsiveClass == null) ? "skyveContentPreview" : "skyveContentPreview " + phoneResponsiveClass;
+		String emptyClass = (phoneResponsiveClass == null) ? "skyveContentPreview skyveContentEmpty" : "skyveContentPreview " + phoneResponsiveClass + " skyveContentEmpty";
+		String expression = String.format("#{(empty %s) ? '%s' : '%s'}", contentValueExpression(dataWidgetVar, binding), emptyClass, previewClass);
+		result.setValueExpression("styleClass", ef.createValueExpression(elc, expression, String.class));
+		if (placeholderUploadOnclick != null) {
+			if (placeholderUploadOnclick.startsWith("#{")) {
+				result.setValueExpression("onclick", ef.createValueExpression(elc, placeholderUploadOnclick, String.class));
+			}
+			else {
+				result.setOnclick(placeholderUploadOnclick);
+			}
+		}
 
 		GraphicImage image = (GraphicImage) a.createComponent(GraphicImage.COMPONENT_TYPE);
 		setId(image, null);
-		String expression = String.format("#{%s.getContentUrl('%s', true)}", managedBeanName, binding);
+		expression = String.format("#{%s}", contentUrlExpression(dataWidgetVar, binding, true));
 		image.setValueExpression("value", ef.createValueExpression(elc, expression, String.class));
 		image.setStyle("width:100%;height:100%;object-fit:contain;cursor:pointer");
-		image.setOnclick("window.open(this.src, '_blank')");
+		expression = String.format("#{(empty %s) ? 'skyveContentHidden' : ''}", contentValueExpression(dataWidgetVar, binding));
+		image.setValueExpression("styleClass", ef.createValueExpression(elc, expression, String.class));
+		image.setOnclick("window.open(this.src, '_blank');if(event){event.stopPropagation()}");
 		result.getChildren().add(image);
 
 		return result;
 	}
 
-	private HtmlOutputLink contentLink(Integer pixelWidth, HorizontalAlignment textAlignment, String binding) {
+	private HtmlOutputLink contentLink(Integer pixelWidth,
+										HorizontalAlignment textAlignment,
+										@Nullable String dataWidgetVar,
+										String binding,
+										@Nullable String emptyOnclick) {
 		HtmlOutputLink result = (HtmlOutputLink) a.createComponent(HtmlOutputLink.COMPONENT_TYPE);
 
-		String expression = String.format("#{%s.getContentUrl('%s', false)}", managedBeanName, binding);
+		String expression = String.format("#{%s}", contentUrlExpression(dataWidgetVar, binding, false));
 		result.setValueExpression("value", ef.createValueExpression(elc, expression, String.class));
 
-		expression = String.format("#{%s.getContentFileName('%s')}", managedBeanName, binding);
 		UIOutput outputText = (UIOutput) a.createComponent(UIOutput.COMPONENT_TYPE);
+		expression = String.format("#{(empty %s) ? '&lt;Empty&gt;' : 'Content'}", contentValueExpression(dataWidgetVar, binding));
 		outputText.setValueExpression("value", ef.createValueExpression(elc, expression, String.class));
 		result.getChildren().add(outputText);
 
-		expression = String.format("#{(empty %s.currentBean['%s']) ? 'return false' : null}", managedBeanName, binding);
+		expression = createContentLinkOnclick(dataWidgetVar, binding, emptyOnclick);
 		result.setValueExpression("onclick", ef.createValueExpression(elc, expression, String.class));
 
 		result.setTarget("_blank");
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, null, null, null, textAlignment);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, null, null, null, textAlignment, null, null);
 		setId(result, null);
 
 		return result;
 	}
 
+	private @Nonnull String createContentLinkOnclick(@Nullable String dataWidgetVar, @Nonnull String binding, @Nullable String emptyOnclick) {
+		String contentExpression = contentValueExpression(dataWidgetVar, binding);
+		if (emptyOnclick == null) {
+			return String.format("#{(empty %s) ? 'return false' : null}", contentExpression);
+		}
+		if (emptyOnclick.startsWith("#{") && emptyOnclick.endsWith("}")) {
+			String onclickBody = emptyOnclick.substring(2, emptyOnclick.length() - 1);
+			return String.format("#{(empty %s) ? (%s) : null}", contentExpression, onclickBody);
+		}
+		String escapedOnclick = emptyOnclick.replace("\\", "\\\\").replace("\"", "\\\"");
+		return String.format("#{(empty %s) ? \"%s\" : null}", contentExpression, escapedOnclick);
+	}
+
+	private @Nonnull String createDisabledAwareOnclick(@Nonnull String onclick,
+														@Nullable String disabledConditionName,
+														@Nullable String formDisabledConditionName) {
+		String disabledExpression = createDisabledExpression(disabledConditionName, formDisabledConditionName);
+		if (disabledExpression == null) {
+			return onclick;
+		}
+
+		String onclickBody = onclick;
+		if (onclick.startsWith("#{") && onclick.endsWith("}")) {
+			onclickBody = onclick.substring(2, onclick.length() - 1);
+		}
+		else {
+			onclickBody = "\"" + onclick.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+		}
+		return String.format("#{(%s) ? 'return false' : %s}", disabledExpression, onclickBody);
+	}
+
+	private @Nullable String createDisabledExpression(@Nullable String disabledConditionName, @Nullable String formDisabledConditionName) {
+		if (disabledConditionName == null) {
+			return (formDisabledConditionName == null) ? null : createOredValueExpressionFragmentFromConditions(new String[] {formDisabledConditionName});
+		}
+		if (formDisabledConditionName == null) {
+			return createOredValueExpressionFragmentFromConditions(new String[] {disabledConditionName});
+		}
+		return createOredValueExpressionFragmentFromConditions(new String[] {disabledConditionName, formDisabledConditionName});
+	}
+
 	// TODO do the grids
 
-	protected UIInput checkbox(String dataWidgetVar,
+	protected UIInput checkBoxInput(String dataWidgetVar,
 								String binding,
 								String title,
-								boolean required,
+								@Nullable String requiredMessage,
 								String disabled,
 								String formDisabled,
 								boolean triState) {
@@ -4320,20 +5399,21 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 																dataWidgetVar,
 																binding,
 																title,
-																required,
+																requiredMessage,
 																disabled,
 																formDisabled);
 			result.setConverter(new TriStateCheckboxBooleanConverter());
 			return result;
 		}
 
-		return input(SelectBooleanCheckbox.COMPONENT_TYPE, dataWidgetVar, binding, title, required, disabled, formDisabled);
+		return input(SelectBooleanCheckbox.COMPONENT_TYPE, dataWidgetVar, binding, title, requiredMessage, disabled, formDisabled);
 	}
 
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	protected ColorPicker colourPicker(String dataWidgetVar,
 										String binding,
 										String title,
-										boolean required,
+										@Nullable String requiredMessage,
 										HorizontalAlignment textAlignment,
 										String disabled,
 										String formDisabled,
@@ -4342,17 +5422,18 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 													dataWidgetVar,
 													binding,
 													title,
-													required,
+													requiredMessage,
 													disabled,
 													formDisabled);
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, null, null, null, textAlignment);
+		// NB Use "style" for textAlignStyleAttributeName so we get the right padding for the colour picker button
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, null, null, null, textAlignment, null, "2.5rem");
 		return result;
 	}
 
 	private SelectOneMenu selectOneMenu(String dataWidgetVar,
 											String binding,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											String disabled,
 											String formDisabled,
 											Integer pixelWidth) {
@@ -4360,13 +5441,16 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 														dataWidgetVar,
 														binding,
 														title,
-														required,
+														requiredMessage,
 														disabled,
 														formDisabled);
 		// Do not default pixel width to 100% as it causes renderering issues on the drop button on the end.
 		// The control sets its width by default based on the font metrics of the drop-down values.
 		// Note: We can't set text alignment of a selectOneMenu easily through inline styling
-		setSizeAndTextAlignStyle(result, null, null, pixelWidth, null, null, null, null, null, null);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, null, null, null);
+		result.setFilter(true);
+		result.setFilterMatchMode("contains");
+		result.setFilterPlaceholder("Search");
 		result.setConverter(new SelectItemsBeanConverter());
 		return result;
 	}
@@ -4374,7 +5458,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 	private SelectOneRadio selectOneRadio(String dataWidgetVar,
 											String binding,
 											String title,
-											boolean required,
+											@Nullable String requiredMessage,
 											String disabled,
 											String formDisabled,
 											boolean horizontal) {
@@ -4382,7 +5466,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 														dataWidgetVar,
 														binding,
 														title,
-														required,
+														requiredMessage,
 														disabled,
 														formDisabled);
 		result.setConverter(new SelectItemsBeanConverter());
@@ -4395,10 +5479,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return result;
 	}
 
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	protected AutoComplete lookupDescription(String dataWidgetVar,
 												String binding,
 												String title,
-												boolean required,
+												@Nullable String requiredMessage,
 												HorizontalAlignment textAlignment,
 												String disabled,
 												String formDisabled,
@@ -4412,7 +5497,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 													dataWidgetVar,
 													binding,
 													title,
-													required,
+													requiredMessage,
 													disabled,
 													formDisabled);
 		// Escaped here because the column can't escaped and sanitised in SkyveLazyDataModel,
@@ -4421,14 +5506,14 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		result.setEscape(true);
 		result.setForceSelection(true);
 		result.setDropdown(true);
-		String var = BindUtil.sanitiseBinding(binding) + "Row";
-		result.setVar(var);
+		String variable = BindUtil.sanitiseBinding(binding) + "Row";
+		result.setVar(variable);
 		StringBuilder expression = new StringBuilder(32);
 		// Sanitisation and escaping is done in the list model
 		result.setValueExpression("itemLabel",
-									createValueExpressionFromFragment(var, false, displayBinding, true, null, String.class, false, Sanitisation.none));
+									createValueExpressionFromFragment(variable, false, displayBinding, true, null, String.class, false, Sanitisation.none));
 		result.setValueExpression("itemValue",
-									createValueExpressionFromFragment(null, false, var, false, null, BeanMapAdapter.class, false, Sanitisation.none));
+									createValueExpressionFromFragment(null, false, variable, false, null, BeanMapAdapter.class, false, Sanitisation.none));
 		result.setConverter(new AssociationAutoCompleteConverter());
 		result.setScrollHeight(200);
 
@@ -4448,7 +5533,6 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		// NB inputStyle attribute styles the text field
 		setSizeAndTextAlignStyle(result,
-									"inputStyle",
 									dontDisplay ? "display:none" : null,
 									pixelWidth,
 									null,
@@ -4457,15 +5541,18 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 									null,
 									// width cannot be set correctly on this component when laid out in a table
 									null,
-									textAlignment);
-		
+									textAlignment,
+									"inputStyle",
+									"0.5rem");
+
 		return result;
 	}
 
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	protected AutoComplete complete(String dataWidgetVar,
 										String binding,
 										String title,
-										boolean required,
+										@Nullable String requiredMessage,
 										HorizontalAlignment textAlignment,
 										String disabled,
 										Integer length,
@@ -4477,7 +5564,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 													dataWidgetVar,
 													binding,
 													title,
-													required,
+													requiredMessage,
 													disabled,
 													formDisabled);
 		// Escaped here because Skyve doesn't have an option to escape or sanitise complete values
@@ -4509,7 +5596,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 
 		// NB width cannot be set correctly on this component when laid out in a table
 		// NB inputStyle attribute styles the text field
-		setSizeAndTextAlignStyle(result, "inputStyle", null, pixelWidth, null, null, null, null, null, textAlignment);
+		setSizeAndTextAlignStyle(result, null, pixelWidth, null, null, null, null, null, textAlignment, "inputStyle", "0.5rem");
 
 		return result;
 	}
@@ -4534,11 +5621,11 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 	private TextEditor editor(String dataWidgetVar,
 							String binding,
 							String title,
-							boolean required,
+							@Nullable String requiredMessage,
 							String disabled,
 							String formDisabled,
 							Sanitisation sanitise) {
-		TextEditor result = (TextEditor) input(TextEditor.COMPONENT_TYPE, dataWidgetVar, binding, title, required, disabled, formDisabled);
+		TextEditor result = (TextEditor) input(TextEditor.COMPONENT_TYPE, dataWidgetVar, binding, title, requiredMessage, disabled, formDisabled);
 		if (sanitise == Sanitisation.none) {
 			result.setSecure(false);
 		}
@@ -4566,9 +5653,9 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return result;
 	}
 
+	@SuppressWarnings("java:S107") // Long parameter list preserves the existing framework/API contract.
 	private DataTable dataTable(String binding,
 									String dataWidgetVar,
-									String title,
 									String invisible,
 									boolean clickToZoom,
 									String[] clickToZoomDisabledConditionNames,
@@ -4579,7 +5666,6 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		DataTable result = (DataTable) a.createComponent(DataTable.COMPONENT_TYPE);
 		setId(result, widgetId);
 		setInvisible(result, invisible, null);
-		addGridHeader(title, result);
 
 		result.setVar(dataWidgetVar);
 		result.setValueExpression("value", createValueExpressionFromFragment(binding, true, null, List.class, false, Sanitisation.none));
@@ -4607,7 +5693,7 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			MethodExpression me = ef.createMethodExpression(elc, expression.toString(), null, new Class[0]);
 			ajax.addAjaxBehaviorListener(new AjaxBehaviorListenerImpl(me, me));
 			ajax.setProcess(process);
-			
+
 			ValueExpression disabled = createOredValueExpressionFromConditions(clickToZoomDisabledConditionNames);
 			if (disabled != null) {
 				ajax.setValueExpression("disabled", disabled);
@@ -4638,26 +5724,15 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return result;
 	}
 
-	protected DataList dataList(String binding, String dataWidgetVar, String title, String invisible, String widgetId) {
+	protected DataList dataList(String binding, String dataWidgetVar, String invisible, String widgetId) {
 		DataList result = (DataList) a.createComponent(DataList.COMPONENT_TYPE);
 		setId(result, widgetId);
 		setInvisible(result, invisible, null);
-		addGridHeader(title, result);
 
 		result.setVar(dataWidgetVar);
 		result.setValueExpression("value", createValueExpressionFromFragment(binding, true, null, List.class, false, Sanitisation.none));
 
 		return result;
-	}
-
-	private void addGridHeader(String title,
-								UIComponent dataTableOrList) {
-		if (title != null) {
-			UIOutput text = (UIOutput) a.createComponent(UIOutput.COMPONENT_TYPE);
-			text.setValue(title);
-			setId(text, null);
-			dataTableOrList.getFacets().put("header", text);
-		}
 	}
 
 	protected AccordionPanel accordionPanel(String invisible, String widgetId) {
@@ -4667,16 +5742,41 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		return result;
 	}
 
+	/**
+	 * Creates a PrimeFaces table column with metadata title output in a header facet.
+	 *
+	 * <p>Side effects: creates and IDs a column, optionally attaches a header-facet
+	 * output component, applies sort/style settings, and increments no external
+	 * counters. Empty renderer-owned headers remain shortcut header text. For
+	 * metadata titles, {@code null} and {@code Boolean.TRUE} escape at the facet
+	 * boundary; only {@code Boolean.FALSE} allows trusted markup.
+	 *
+	 * @param dataWidgetVar row variable used by sort expressions
+	 * @param sortBinding optional sort binding
+	 * @param title raw resolved column title; may be {@code null}
+	 * @param escapeTitle {@code true} to escape at the component boundary;
+	 *        {@code false} to allow trusted title markup
+	 * @param alignment optional text alignment
+	 * @param noWrap whether cell text should avoid wrapping
+	 * @param pixelWidth optional fixed width in pixels
+	 * @return configured column; never {@code null}
+	 */
 	private Column column(String dataWidgetVar,
 							String sortBinding,
 							String title,
+							boolean escapeTitle,
 							HorizontalAlignment alignment,
 							boolean noWrap,
 							Integer pixelWidth) {
 		Column result = (Column) a.createComponent(Column.COMPONENT_TYPE);
 		setId(result, null);
 
-		result.setHeaderText(title);
+		if ("".equals(title)) {
+			result.setHeaderText("");
+		}
+		else {
+			putOutputTextFacetValueOrValueExpression(result, "header", title, escapeTitle);
+		}
 		if (sortBinding != null) {
 			result.setValueExpression("sortBy",
 										// NB no need to sanitise and escape here as the SkyveLazyDataModel does this to the underlying data
@@ -4689,13 +5789,13 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		}
 		if (noWrap) {
 			style.append("white-space:nowrap;");
-		} 
-		
+		}
+
 		if (alignment != null) {
-			style.append("text-align:").append(alignment.toAlignmentString()).append(" !important;");
-		} 
-		
-		if (style.length() > 0) {
+			style.append("text-align:").append(alignment.toTextAlignmentString()).append(" !important;");
+		}
+
+		if (! style.isEmpty()) {
 			result.setStyle(style.toString());
 		}
 
@@ -4737,9 +5837,10 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 							String dataWidgetVar,
 							String binding,
 							String title,
-							boolean required,
+							@Nullable String requiredMessage,
 							String disabled,
 							String formDisabled) {
+		boolean required = (requiredMessage != null);
 		UIInput result = (UIInput) a.createComponent(componentType);
 		setId(result, null);
 		if (binding != null) { // data table filter components don't set a binding
@@ -4752,8 +5853,9 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 			}
 		}
 		if (title != null) {
+			String escapedTitle = sanitiseFacesText(title);
 			result.setValueExpression("title",
-										ef.createValueExpression(elc, required ? title + " *" : title, String.class));
+										ef.createValueExpression(elc, required ? escapedTitle + " *" : escapedTitle, String.class));
 		}
 
 		// Cannot utilise the faces required attributes as some requests need to ignore required-ness.
@@ -4762,33 +5864,135 @@ public abstract class TabularComponentBuilder extends ComponentBuilder {
 		// result.setValueExpression("required", ef.createValueExpression(required ? "true" : "false", Boolean.class));
 		// So we use the requiredMessage to perform the check ourselves based on clientValidation attribute
 		if (required) {
-			if (title == null) {
-				result.setRequiredMessage(Util.i18n(BeanValidator.VALIDATION_REQUIRED_KEY, "Value"));
-			}
-			else {
-				result.setRequiredMessage(Util.i18n(BeanValidator.VALIDATION_REQUIRED_KEY, title));
-			}
+			result.setRequiredMessage(requiredMessage);
 		}
 		setDisabled(result, disabled, formDisabled);
 		return result;
 	}
 
-	private void setConfirmation(UIComponentBase component, String confirmationText) {
-		if (confirmationText != null) {
-			ConfirmBehavior confirm = (ConfirmBehavior) a.createBehavior(ConfirmBehavior.BEHAVIOR_ID);
-			confirm.setMessage(confirmationText);
-			confirm.setEscape(false);
-			component.addClientBehavior("click", confirm);
+	/**
+	 * Assigns raw metadata text and its escape decision to a PrimeFaces command
+	 * button.
+	 *
+	 * <p>Side effects: mutates {@code button} by assigning the value and escape flag.
+	 * the resolved escape decision controls the PrimeFaces renderer boundary.
+	 *
+	 * @param button command button receiving visible text; must not be {@code null}
+	 * @param text raw metadata text and resolved escape decision; may be {@code null}
+	 */
+	private static void setCommandButtonText(CommandButton button, EscapableText text) {
+		button.setValue((text == null) ? null : text.getValue());
+		button.setEscape((text == null) || text.shouldEscape());
+	}
+
+	/**
+	 * Adds raw metadata text to a command link through a child output component.
+	 *
+	 * <p>Side effects: mutates {@code link.getChildren()} when {@code text} has a
+	 * value. The resolved escape decision controls the child output-text boundary.
+	 *
+	 * @param link command link receiving visible child text; must not be {@code null}
+	 * @param text raw metadata text and resolved escape decision; may be {@code null}
+	 */
+	private void addCommandLinkText(CommandLink link, EscapableText text) {
+		if ((text != null) && (text.getValue() != null)) {
+			link.getChildren().add(outputText(text));
 		}
 	}
 
+	/**
+	 * Adds a PrimeFaces confirmation behaviour carrying raw text and the metadata
+	 * escape decision.
+	 *
+	 * <p>Side effects: mutates {@code component} by adding a {@code click}
+	 * confirmation behaviour when a message is present. The resolved escape
+	 * decision controls the PrimeFaces confirm boundary.
+	 *
+	 * @param component component receiving the behaviour; must not be {@code null}
+	 * @param confirmationText raw confirmation text and resolved escape decision; may be {@code null}
+	 */
+	private void setConfirmation(UIComponentBase component, EscapableText confirmationText) {
+		addConfirmBehavior(component, confirmationText);
+	}
+
 	protected void setValueOrValueExpression(String value, Consumer<String> valueSetter, String valueExpressionName, UIComponent component) {
+		setValueOrValueExpression(value, false, valueSetter, valueExpressionName, component);
+	}
+
+	/**
+	 * Adds an output-text facet for static metadata text or an expression-backed
+	 * metadata fragment.
+	 *
+	 * <p>Side effects: creates and IDs an {@code h:outputText} component and mutates
+	 * {@code component.getFacets()} when {@code value} is present. Expression-backed
+	 * values are resolved raw. The resolved escape decision controls the output-text
+	 * boundary.
+	 *
+	 * @param component component receiving the facet; must not be {@code null}
+	 * @param facetName facet key to add or replace; must not be {@code null}
+	 * @param value static text or binding fragment; may be {@code null}
+	 * @param escape {@code true} to escape at the component boundary; {@code false}
+	 *        to allow trusted markup
+	 * @return the added output-text facet, or {@code null} when no text value is present
+	 */
+	protected HtmlOutputText putOutputTextFacetValueOrValueExpression(UIComponent component, String facetName, String value, boolean escape) {
+		if (value == null) {
+			return null;
+		}
+
+		boolean expressionBacked = value.indexOf('{') > -1;
+		HtmlOutputText result = outputText(EscapableText.of(expressionBacked ? null : value, escape));
+		if (expressionBacked) {
+			String sanitisedBinding = (value.indexOf('\'') >= 0) ? value.replace("'", "\\'") : value;
+			result.setValueExpression("value", createValueExpressionFromFragment(sanitisedBinding,
+																					true,
+																					null,
+																					String.class,
+																					false,
+																					Sanitisation.none));
+		}
+		component.getFacets().put(facetName, result);
+		return result;
+	}
+
+	/**
+	 * Returns a caption with renderer-owned fallback text when metadata omits a
+	 * list-membership caption.
+	 *
+	 * @param caption raw metadata caption and resolved escape decision; may be {@code null}
+	 * @param fallback renderer-owned caption text used when the metadata value is {@code null}
+	 * @return caption text and escape decision; never {@code null}
+	 */
+	private static EscapableText defaultedCaption(EscapableText caption, String fallback) {
+		if ((caption == null) || (caption.getValue() == null)) {
+			return EscapableText.of(fallback, true);
+		}
+		return caption;
+	}
+
+	/**
+	 * Assigns static text or a binding expression to a component property after
+	 * applying metadata-controlled escaping.
+	 *
+	 * @param value resolved text or binding fragment
+	 * @param escape {@code true} to escape at the component boundary; {@code false}
+	 *        to allow trusted markup
+	 * @param valueSetter setter for static values
+	 * @param valueExpressionName component property name for expression values
+	 * @param component component receiving expression values
+	 */
+	protected void setValueOrValueExpression(String value, boolean escape, Consumer<String> valueSetter, String valueExpressionName, UIComponent component) {
 		if (value != null && value.indexOf('{') > -1) {
 			final String sanitisedBinding = ((value.indexOf('\'') >= 0) ? value.replace("'", "\\'") : value);
-			final ValueExpression ve = createValueExpressionFromFragment(sanitisedBinding, true, null, String.class, false, Sanitisation.text);
+			final ValueExpression ve = createValueExpressionFromFragment(sanitisedBinding,
+																			true,
+																			null,
+																			String.class,
+																			escape,
+																			Sanitisation.text);
 			component.setValueExpression(valueExpressionName, ve);
 		} else if (value != null) {
-			valueSetter.accept(value);
+			valueSetter.accept(escapeFacesText(value, escape));
 		}
 	}
 

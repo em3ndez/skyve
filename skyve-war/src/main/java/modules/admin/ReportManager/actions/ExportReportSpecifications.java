@@ -10,7 +10,10 @@ import org.skyve.util.BeanValidator;
 import org.skyve.util.FileUtil;
 import org.skyve.web.WebContext;
 
+import jakarta.inject.Inject;
 import modules.admin.ReportManager.ReportManagerExtension;
+import modules.admin.ReportManager.ReportManagerService;
+import modules.admin.ReportManager.ReportManagerUtil;
 import modules.admin.domain.ReportTemplate;
 
 /**
@@ -20,12 +23,18 @@ import modules.admin.domain.ReportTemplate;
  *
  */
 public class ExportReportSpecifications extends DownloadAction<ReportManagerExtension> {
+	@Inject
+	@SuppressWarnings("java:S6813") // allow member injection
+	private transient ReportManagerService reportManagerService;
+
 	/**
 	 * Prepare the zip for download
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @throws Exception if the operation fails
 	 */
 	@Override
 	public void prepare(ReportManagerExtension bean, WebContext webContext) throws Exception {
-
 		if (bean.getCurrentReports().size() == 0) {
 			throw new ValidationException(new Message("Please select at least one report to export"));
 		}
@@ -33,7 +42,7 @@ public class ExportReportSpecifications extends DownloadAction<ReportManagerExte
 		// validate all reports first
 		validateReports(bean);
 
-		File outdir = ReportManagerExtension.getTemporaryPreparationFolder();
+		File outdir = reportManagerService.getTemporaryPreparationFolder();
 		bean.setPathToZip(outdir.getAbsolutePath());
 
 		// write each ReportTemplate to a file within the folder
@@ -57,8 +66,9 @@ public class ExportReportSpecifications extends DownloadAction<ReportManagerExte
 				BeanValidator.validateBeanAgainstDocument(report);
 				BeanValidator.validateBeanAgainstBizlet(report);
 			} catch (@SuppressWarnings("unused") ValidationException veT) {
-				e.getMessages().add(new Message(
-						"The report " + report.getName() + " is not valid - ensure the report is valid before exporting"));
+				e.getMessages()
+						.add(new Message(
+								"The report " + report.getName() + " is not valid - ensure the report is valid before exporting"));
 			}
 		}
 
@@ -70,13 +80,16 @@ public class ExportReportSpecifications extends DownloadAction<ReportManagerExte
 	/**
 	 * Marshall a json version of each report
 	 * Save to a temporary folder and then zip and provide as a download
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @return the result
+	 * @throws Exception if the operation fails
 	 */
 	@Override
 	public Download download(ReportManagerExtension bean, WebContext webContext) throws Exception {
+		Download download = FileUtil.prepareZipDownload(bean.getPathToZip(), ReportManagerUtil.getZipName());
 
-		Download download = FileUtil.prepareZipDownload(bean.getPathToZip(), ReportManagerExtension.getZipName());
-
-		ReportManagerExtension.cleanUpTemporaryFiles();
+		reportManagerService.cleanUpTemporaryFiles();
 
 		return download;
 	}

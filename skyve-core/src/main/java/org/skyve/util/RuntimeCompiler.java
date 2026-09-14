@@ -26,13 +26,19 @@ import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 
 import org.skyve.domain.messages.DomainException;
+import org.slf4j.Logger;
+import org.skyve.util.logging.SkyveLoggerFactory;
 
 /**
  * Compile a java class definition String and load the class or write it to the file system.
  */
 public class RuntimeCompiler {
+    private static final Logger LOGGER = SkyveLoggerFactory.getLogger(RuntimeCompiler.class);
+
+    private static final String CLASS_PATH_OPTION = "-cp";
+
 	public static String COMPILE_PATH = Util.getContentDirectory() + "compile/";
-	
+
 	/**
 	 * Diagnostic Listener that will throw an exception when something goes wrong with compilation.
 	 */
@@ -49,7 +55,7 @@ public class RuntimeCompiler {
 			if (Diagnostic.Kind.ERROR.equals(diagnostic.getKind())) {
 				throw new DomainException(message);
 			}
-			Util.LOGGER.warning(message);
+			LOGGER.warn(message);
 		}
 	}
 
@@ -59,7 +65,7 @@ public class RuntimeCompiler {
 	private static class InMemoryJavaSourceFileObject extends SimpleJavaFileObject {
 		private String contents = null;
 
-		private InMemoryJavaSourceFileObject(String className, String contents) throws Exception {
+		private InMemoryJavaSourceFileObject(String className, String contents) {
 			super(URI.create("string:///" + className.replace('.', '/') + Kind.SOURCE.extension), Kind.SOURCE);
 			this.contents = contents;
 		}
@@ -120,7 +126,7 @@ public class RuntimeCompiler {
 		try {
 			result = new InMemoryJavaSourceFileObject(fullyQualifiedClassName, code);
 		} catch (Exception exception) {
-			exception.printStackTrace();
+			LOGGER.error(exception.getMessage(), exception);
 		}
 		return result;
 	}
@@ -133,7 +139,7 @@ public class RuntimeCompiler {
 		try {
 			result = new InMemoryJavaClassFileObject(fullyQualifiedClassName);
 		} catch (Exception exception) {
-			exception.printStackTrace();
+			LOGGER.error(exception.getMessage(), exception);
 		}
 		return result;
 	}
@@ -162,7 +168,7 @@ public class RuntimeCompiler {
 		ExceptionProducingDiagnosticListener diagnosticListener = new ExceptionProducingDiagnosticListener();
 		try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnosticListener, null, null)) {
 			// Specify classpath and classes output folder
-			Iterable<String> options = Arrays.asList("-d", classesFolder, "-cp", Arrays.asList(classPath).stream().collect(Collectors.joining(File.pathSeparator)));
+			Iterable<String> options = Arrays.asList("-d", classesFolder, CLASS_PATH_OPTION, Arrays.asList(classPath).stream().collect(Collectors.joining(File.pathSeparator)));
 			JavaCompiler.CompilationTask task = compiler.getTask(null, fileManager, diagnosticListener, options, null, sources);
 			return Boolean.TRUE.equals(task.call());
 		}
@@ -173,7 +179,7 @@ public class RuntimeCompiler {
 									String... classPath) {
 		JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
 		ExceptionProducingDiagnosticListener diagnosticListener = new ExceptionProducingDiagnosticListener();
-		Iterable<String> options = Arrays.asList("-sourcepath", sourceFolder, "-d", classesFolder, "-cp", Arrays.asList(classPath).stream().collect(Collectors.joining(File.pathSeparator)));
+		Iterable<String> options = Arrays.asList("-sourcepath", sourceFolder, "-d", classesFolder, CLASS_PATH_OPTION, Arrays.asList(classPath).stream().collect(Collectors.joining(File.pathSeparator)));
 		JavaCompiler.CompilationTask task = compiler.getTask(null, null, diagnosticListener, options, null, null);
 		return Boolean.TRUE.equals(task.call());
 		
@@ -234,7 +240,7 @@ public class RuntimeCompiler {
 			}) {
 
 				// Specify classpath and classes output folder
-				Iterable<String> options = Arrays.asList("-cp", Arrays.asList(classPath).stream().collect(Collectors.joining(File.pathSeparator)));
+				Iterable<String> options = Arrays.asList(CLASS_PATH_OPTION, Arrays.asList(classPath).stream().collect(Collectors.joining(File.pathSeparator)));
 				JavaCompiler.CompilationTask task = compiler.getTask(null, forwardingFileManager, diagnosticListener, options, null, sources);
 				if (Boolean.FALSE.equals(task.call())) {
 					throw new DomainException("Compilation was not successful");

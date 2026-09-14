@@ -1,6 +1,5 @@
 package org.skyve.impl.bind;
 
-import java.beans.FeatureDescriptor;
 import java.beans.PropertyDescriptor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -10,7 +9,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -51,6 +49,11 @@ import jakarta.el.PropertyNotFoundException;
 class ValidationELResolver extends ELResolver {
 	private static final Class<?> UNMODIFIABLE_LIST_CLASS = Collections.unmodifiableList(new ArrayList<>()).getClass();
 	private static final Class<?> UNMODIFIABLE_MAP_CLASS = Collections.unmodifiableMap(new HashMap<>()).getClass();
+	
+	private static final String CANNOT_GET_BEAN_CLASS_FOR_DOCUMENT = "Cannot get bean class for document ";
+	private static final String METHOD_PREFIX = "Method ";
+	private static final String ON_INFIX = " on ";
+	private static final String DOES_NOT_EXIST = " does not exist";
 	
 	private Customer customer;
 	
@@ -151,14 +154,14 @@ class ValidationELResolver extends ELResolver {
 	 * @param property
 	 * @return Document, List or Class
 	 */
+	@SuppressWarnings({"java:S6541", "java:S3776"}) // Not a brain method
 	private Object getClassOrDocument(Object base, Object property) {
 		Object object = base;
 		final String propertyName = property.toString();
 
 		// Possible Collection or InverseMany
 		// If so, return the single element in the list which is the related document
-		if (object instanceof List<?>) {
-			List<?> list = (List<?>) object;
+		if (object instanceof List<?> list) {
 			if (list.size() == 1) {
 				Object e = list.get(0);
 				if (e instanceof DocumentImpl) {
@@ -167,9 +170,7 @@ class ValidationELResolver extends ELResolver {
 				}
 			}
 		}
-		else if (object instanceof DocumentImpl) {
-			DocumentImpl document = (DocumentImpl) object;
-
+		else if (object instanceof DocumentImpl document) {
 			Document currentDocument = document;
 			while (currentDocument != null) {
 				// Conditions are boolean type
@@ -179,8 +180,8 @@ class ValidationELResolver extends ELResolver {
 
 				Attribute attribute = currentDocument.getAttribute(propertyName);
 				if (attribute != null) {
-					if (attribute instanceof Relation) {
-						String relationDocumentName = ((Relation) attribute).getDocumentName();
+					if (attribute instanceof Relation relation) {
+						String relationDocumentName = relation.getDocumentName();
 						Module module = customer.getModule(currentDocument.getOwningModuleName());
 						DocumentImpl relationDocument = (DocumentImpl) module.getDocument(customer, relationDocumentName);
 						// Collection and InverseMany are a singleton List<Document>
@@ -191,7 +192,7 @@ class ValidationELResolver extends ELResolver {
 						return relationDocument;
 					}
 					// Every other attribute is a scalar type
-					return mock(attribute.getAttributeType().getImplementingType());
+					return mock(attribute.getImplementingType());
 				}
 				
 				// Get super-document if applicable
@@ -211,12 +212,11 @@ class ValidationELResolver extends ELResolver {
 				object = document.getBeanClass(customer);
 			}
 			catch (ClassNotFoundException e) {
-				throw new IllegalStateException("Cannot get bean class for document " + document.getOwningModuleName() + "." + document.getName(), e);
+				throw new IllegalStateException(CANNOT_GET_BEAN_CLASS_FOR_DOCUMENT + document.getOwningModuleName() + "." + document.getName(), e);
 			}
 		}
 		
-		if (object instanceof Class<?>) {
-			Class<?> type = (Class<?>) object;
+		if (object instanceof Class<?> type) {
 			if (Object.class.equals(type)) { // we are not in type-safe mode
 				return Object.class;
 			}
@@ -237,7 +237,7 @@ class ValidationELResolver extends ELResolver {
 						return mock(descriptor.getPropertyType());
 					}
 				}
-				throw new PropertyNotFoundException("Property " + propertyName + " on " + type + " does not exist");
+				throw new PropertyNotFoundException("Property " + propertyName + ON_INFIX + type + DOES_NOT_EXIST);
 			}
 		}
 		
@@ -248,19 +248,18 @@ class ValidationELResolver extends ELResolver {
 		Class<?> result = null;
 		
 		Object value = getClassOrDocument(base, property);
-		if (value instanceof Class<?>) {
-			result = (Class<?>) value;
+		if (value instanceof Class<?> type) {
+			result = type;
 		}
 		else if (value instanceof List<?>) {
 			result = List.class;
 		}
-		else if (value instanceof DocumentImpl) {
-			DocumentImpl document = (DocumentImpl) value;
+		else if (value instanceof DocumentImpl document) {
 			try {
 				result = document.getBeanClass(customer);
 			}
 			catch (ClassNotFoundException e) {
-				throw new IllegalStateException("Cannot get bean class for document " + document.getOwningModuleName() + "." + document.getName(), e);
+				throw new IllegalStateException(CANNOT_GET_BEAN_CLASS_FOR_DOCUMENT + document.getOwningModuleName() + "." + document.getName(), e);
 			}
 		}
 		
@@ -268,6 +267,7 @@ class ValidationELResolver extends ELResolver {
 	}
 	
 	@Override
+	@SuppressWarnings("java:S3776") // Cognitive Complexity not too high
 	public Object invoke(ELContext context, Object base, Object method, Class<?>[] paramTypes, Object[] params) {
 		Class<?> type = null;
 		if (Object.class.equals(base)) { // we are not in type-safe mode
@@ -277,16 +277,16 @@ class ValidationELResolver extends ELResolver {
 		else if (base instanceof List<?>) {
 			type = List.class;
 		}
-		else if (base instanceof DocumentImpl) {
+		else if (base instanceof DocumentImpl document) {
 			try {
-				type = ((DocumentImpl) base).getBeanClass(customer);
+				type = document.getBeanClass(customer);
 			}
 			catch (ClassNotFoundException e) {
-				throw new MethodNotFoundException("Method " + method + " on " + base + " cannot be invoked", e);
+				throw new MethodNotFoundException(METHOD_PREFIX + method + ON_INFIX + base + " cannot be invoked", e);
 			}
 		}
-		else if (base instanceof Class<?>) {
-			type = (Class<?>) base;
+		else if (base instanceof Class<?> clazz) {
+			type = clazz;
 		}
 		else {
 			return null; // we don't handle this
@@ -299,7 +299,7 @@ class ValidationELResolver extends ELResolver {
 					context.setPropertyResolved(base, method);
 					return mock(m.getReturnType());
 	            }
-				throw new MethodNotFoundException("Method " + method + " on " + base + " is not public");
+				throw new MethodNotFoundException(METHOD_PREFIX + method + ON_INFIX + base + " is not public");
 			}
 			
 			int paramCount = (params == null) ? 0 : params.length;
@@ -310,14 +310,15 @@ class ValidationELResolver extends ELResolver {
 					return mock(m.getReturnType());
 				}
 			}
-			throw new MethodNotFoundException("Method " + method + " on " + base + " does not exist");
+			throw new MethodNotFoundException(METHOD_PREFIX + method + ON_INFIX + base + DOES_NOT_EXIST);
 		}
 		catch (NoSuchMethodException e) {
-			throw new MethodNotFoundException("Method " + method + " on " + base + " does not exist", e);
+			throw new MethodNotFoundException(METHOD_PREFIX + method + ON_INFIX + base + DOES_NOT_EXIST, e);
 		}
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public boolean isReadOnly(ELContext context, Object base, Object property) {
 		if (Object.class.equals(base)) { // we are not in type-safe mode
 			context.setPropertyResolved(true);
@@ -326,14 +327,12 @@ class ValidationELResolver extends ELResolver {
 		else if (base instanceof List<?>) {
 			checkInteger(property);
 			context.setPropertyResolved(true);
-			return UNMODIFIABLE_LIST_CLASS.equals(((List<?>) base).getClass());
+			return UNMODIFIABLE_LIST_CLASS.equals(base.getClass());
 		}
 		
 		Object object = base;
 		String propertyName = (String) property;
-		if (object instanceof DocumentImpl) {
-			DocumentImpl document = (DocumentImpl) object;
-
+		if (object instanceof DocumentImpl document) {
 			Document currentDocument = document;
 			while (currentDocument != null) {
 				// Conditions are read-only
@@ -370,9 +369,8 @@ class ValidationELResolver extends ELResolver {
 			}
 		}
 		
-		if (object instanceof Class<?>) {
+		if (object instanceof Class<?> type) {
 			context.setPropertyResolved(true);
-			Class<?> type = (Class<?>) object;
 			if (type.isArray()) {
 				checkInteger(property);
 				return false;
@@ -398,11 +396,6 @@ class ValidationELResolver extends ELResolver {
 	}
 
 	@Override
-	public Iterator<FeatureDescriptor> getFeatureDescriptors(ELContext context, Object base) {
-		return null;
-	}
-
-	@Override
 	public Class<?> getCommonPropertyType(ELContext context, Object base) {
 		if (base instanceof DocumentImpl) {
 			return Object.class;
@@ -410,8 +403,7 @@ class ValidationELResolver extends ELResolver {
 		else if (base instanceof List<?>) {
 			return Integer.class;
 		}
-		else if (base instanceof Class<?>) {
-			Class<?> type = (Class<?>) base;
+		else if (base instanceof Class<?> type) {
 			if (type.isArray()) {
 				return Integer.class;
 			}
@@ -429,10 +421,11 @@ class ValidationELResolver extends ELResolver {
 		return (mock == null) ? type : mock;
 	}
 
+	@SuppressWarnings("java:S2201") // we are using this to validate input
 	private static void checkInteger(Object p) {
 		if (! (p instanceof Number)) {
-			if (p instanceof String) {
-				Integer.parseInt((String) p); // throws NumberFormatException
+			if (p instanceof String string) {
+				Integer.parseInt(string); // throws NumberFormatException
 			}
 			else if (! (p instanceof Character)) {
 				throw new PropertyNotFoundException(p + " is not coercible to an integer");

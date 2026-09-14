@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import modules.admin.Configuration.ConfigurationExtension;
+import modules.admin.Contact.ContactExtension;
 import modules.admin.Group.GroupExtension;
 import modules.admin.Startup.StartupExtension;
 import modules.admin.UserProxy.UserProxyExtension;
@@ -22,6 +23,8 @@ import org.skyve.util.Util;
 
 /**
  * Setup
+ * <br/>
+ * Manages system-wide configuration settings including password policies, email configuration, two-factor authentication, user registration settings, and security parameters for the entire application.
  * 
  * @depend - - - PasswordComplexityModel
  * @depend - - - TwoFactorType
@@ -152,7 +155,7 @@ public abstract class Configuration extends AbstractPersistentBean {
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum PasswordComplexityModel implements Enumeration {
+	public enum PasswordComplexityModel implements Enumeration {
 		minimumMin6Chars("MINIMUM", "Minimum - min 6 chars"),
 		mediumMin6CharsUpperLowerAndNumeric("MEDIUM", "Medium - min 6 chars, upper, lower and numeric"),
 		goodMin8CharsUpperLowerNumericAndPunctuation("MAXIMUM", "Good - min 8 chars, upper, lower, numeric and punctuation"),
@@ -226,7 +229,7 @@ public abstract class Configuration extends AbstractPersistentBean {
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum TwoFactorType implements Enumeration {
+	public enum TwoFactorType implements Enumeration {
 		off("OFF", "Off"),
 		email("EMAIL", "Email");
 
@@ -489,7 +492,7 @@ public abstract class Configuration extends AbstractPersistentBean {
 	/**
 	 * Email To Contact
 	 **/
-	private Contact emailToContact = null;
+	private ContactExtension emailToContact = null;
 
 	/**
 	 * Startup
@@ -543,12 +546,6 @@ public abstract class Configuration extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof Configuration) && 
-					this.getBizId().equals(((Configuration) o).getBizId()));
 	}
 
 	/**
@@ -1044,7 +1041,7 @@ public abstract class Configuration extends AbstractPersistentBean {
 	 * {@link #emailToContact} accessor.
 	 * @return	The value.
 	 **/
-	public Contact getEmailToContact() {
+	public ContactExtension getEmailToContact() {
 		return emailToContact;
 	}
 
@@ -1053,7 +1050,7 @@ public abstract class Configuration extends AbstractPersistentBean {
 	 * @param emailToContact	The new value.
 	 **/
 	@XmlElement
-	public void setEmailToContact(Contact emailToContact) {
+	public void setEmailToContact(ContactExtension emailToContact) {
 		if (this.emailToContact != emailToContact) {
 			preset(emailToContactPropertyName, emailToContact);
 			this.emailToContact = emailToContact;
@@ -1231,22 +1228,41 @@ public abstract class Configuration extends AbstractPersistentBean {
 	}
 
 	/**
-	 * True when an IPinfo token has been set
+	 * True when an Geo IP key/token has been set
 	 *
 	 * @return The condition
 	 */
 	@XmlTransient
-	public boolean isHasIpInfoToken() {
-		return (getStartup().getApiIpInfoToken() != null);
+	public boolean isHasGeoIPKey() {
+		return (getStartup().getGeoIPKey() != null);
 	}
 
 	/**
-	 * {@link #isHasIpInfoToken} negation.
+	 * {@link #isHasGeoIPKey} negation.
 	 *
 	 * @return The negated condition
 	 */
-	public boolean isNotHasIpInfoToken() {
-		return (! isHasIpInfoToken());
+	public boolean isNotHasGeoIPKey() {
+		return (! isHasGeoIPKey());
+	}
+
+	/**
+	 * True when IP address checks are enabled in startup.
+	 *
+	 * @return The condition
+	 */
+	@XmlTransient
+	public boolean isIpAddressChecksEnabled() {
+		return (getStartup().isIpAddressChecksEnabled());
+	}
+
+	/**
+	 * {@link #isIpAddressChecksEnabled} negation.
+	 *
+	 * @return The negated condition
+	 */
+	public boolean isNotIpAddressChecksEnabled() {
+		return (! isIpAddressChecksEnabled());
 	}
 
 	/**

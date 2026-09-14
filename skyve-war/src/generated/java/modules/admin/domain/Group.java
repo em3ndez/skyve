@@ -15,6 +15,11 @@ import org.skyve.impl.domain.ChangeTrackingArrayList;
 
 /**
  * Group
+ * <br/>
+ * Group represents a security group in Skyve's role-based access control system. Groups serve as containers 
+		for collections of roles, allowing administrators to manage user permissions efficiently by assigning users 
+		to groups rather than individual roles. Users inherit all permissions from the groups they 
+		belong to, in addition to any individual roles directly assigned to them.
  * 
  * @navcomposed 1 roles 1..n GroupRole
  * @navcomposed 1 candidateRoles 0..n GroupRole
@@ -103,12 +108,6 @@ public abstract class Group extends AbstractPersistentBean {
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof Group) && 
-					this.getBizId().equals(((Group) o).getBizId()));
 	}
 
 	/**

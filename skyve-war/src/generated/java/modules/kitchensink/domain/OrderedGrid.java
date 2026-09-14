@@ -61,7 +61,7 @@ public class OrderedGrid extends AbstractTransientBean implements ChildBean<Kitc
 	 **/
 	@XmlEnum
 	@Generated(value = "org.skyve.impl.generate.OverridableDomainGenerator")
-	public static enum Enum3 implements Enumeration {
+	public enum Enum3 implements Enumeration {
 		one("one", "one"),
 		two("two", "two"),
 		three("three", "three");
@@ -184,12 +184,6 @@ public class OrderedGrid extends AbstractTransientBean implements ChildBean<Kitc
 		catch (@SuppressWarnings("unused") Exception e) {
 			return "Unknown";
 		}
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		return ((o instanceof OrderedGrid) && 
-					this.getBizId().equals(((OrderedGrid) o).getBizId()));
 	}
 
 	/**

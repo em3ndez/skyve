@@ -1,5 +1,6 @@
 package modules.admin.Configuration;
 
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -32,19 +33,28 @@ import modules.admin.domain.Contact;
 import modules.admin.domain.Startup;
 import modules.admin.domain.User;
 
+/**
+ * Validates and enriches configuration data, including startup users and messaging settings.
+ */
 public class ConfigurationBizlet extends SingletonCachedBizlet<ConfigurationExtension> {
-
 	private static final String TFA_CODE_EXPRESSION = "{tfaCode}";
 	private static final String RESET_PASSWORD_URL_EXPRESSION = "{#resetPasswordUrl}";
 
+	/**
+	 * Performs the newInstance operation.
+	 * @param bean the bean value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public ConfigurationExtension newInstance(ConfigurationExtension bean) throws Exception {
 		// temporarily elevate access to find existing configuration regardless of user
 		ConfigurationExtension result = newInstance(bean, DocumentPermissionScope.customer);
 
-		// Set the startup and set the emailFrom to the startup mailsender
+		// initialise the startup bean
 		if (result.getStartup() == null) {
-			result.setStartup(Startup.newInstance());
+			StartupExtension startup = Startup.newInstance();
+			result.setStartup(startup);
 			result.setEmailFrom(result.getStartup().getMailSender());
 		}
 
@@ -66,16 +76,18 @@ public class ConfigurationBizlet extends SingletonCachedBizlet<ConfigurationExte
 				);
 			result.setPasswordResetEmailBody(body);
 		}
-
-		// initialise the startup bean
-		if (result.getStartup() == null) {
-			StartupExtension startup = Startup.newInstance();
-			result.setStartup(startup);
-		}
 		
 		return result;
 	}
 	
+	/**
+	 * Performs the complete operation.
+	 * @param attributeName the attributeName value
+	 * @param value the value value
+	 * @param bean the bean value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public List<String> complete(String attributeName, String value, ConfigurationExtension bean) throws Exception {
 		if (Configuration.twoFactorEmailBodyPropertyName.equals(attributeName)) {
@@ -108,6 +120,15 @@ public class ConfigurationBizlet extends SingletonCachedBizlet<ConfigurationExte
 		return Collections.emptyList();
 	}
 	
+	/**
+	 * Performs the preExecute operation.
+	 * @param actionName the actionName value
+	 * @param bean the bean value
+	 * @param parentBean the parentBean value
+	 * @param webContext the webContext value
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public ConfigurationExtension preExecute(ImplicitActionName actionName, ConfigurationExtension bean, Bean parentBean,
 			WebContext webContext) throws Exception {
@@ -143,7 +164,15 @@ public class ConfigurationBizlet extends SingletonCachedBizlet<ConfigurationExte
 		return super.preExecute(actionName, bean, parentBean, webContext);
 	}
 
+	/**
+	 * Performs the preRerender operation.
+	 * @param source the source value
+	 * @param bean the bean value
+	 * @param webContext the webContext value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
+	@SuppressWarnings("java:S3776") // Complexity OK
 	public void preRerender(String source, ConfigurationExtension bean, WebContext webContext) throws Exception {
 
 		if (Binder.createCompoundBinding(Configuration.startupPropertyName, Startup.mapTypePropertyName).equals(source)) {
@@ -211,6 +240,11 @@ public class ConfigurationBizlet extends SingletonCachedBizlet<ConfigurationExte
 		super.preRerender(source, bean, webContext);
 	}
 	
+	/**
+	 * Performs the postSave operation.
+	 * @param bean the bean value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public void postSave(ConfigurationExtension bean) throws Exception {
 		TwoFactorType type = bean.getTwoFactorType();
@@ -224,7 +258,7 @@ public class ConfigurationBizlet extends SingletonCachedBizlet<ConfigurationExte
 				TwoFactorAuthConfigurationSingleton.getInstance().add(tfaConfig);
 			}
 			else {
-				Map<String, Object> originalValues = bean.originalValues();
+				Map<String, Serializable> originalValues = bean.originalValues();
 				if (originalValues.containsKey(Configuration.twoFactorTypePropertyName) || 
 						originalValues.containsKey(Configuration.twofactorPushCodeTimeOutSecondsPropertyName) || 
 						originalValues.containsKey(Configuration.twoFactorEmailSubjectPropertyName) ||
@@ -236,6 +270,12 @@ public class ConfigurationBizlet extends SingletonCachedBizlet<ConfigurationExte
 		}
 	}
 
+	/**
+	 * Performs the validate operation.
+	 * @param bean the bean value
+	 * @param e the e value
+	 * @throws Exception if the operation fails
+	 */
 	@Override
 	public void validate(ConfigurationExtension bean, ValidationException e) throws Exception {
 		String expression = bean.getPasswordResetEmailSubject();

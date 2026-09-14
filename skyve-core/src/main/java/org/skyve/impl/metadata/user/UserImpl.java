@@ -28,13 +28,34 @@ import org.skyve.metadata.user.DocumentPermissionScope;
 import org.skyve.metadata.user.User;
 import org.skyve.metadata.user.UserAccess;
 import org.skyve.persistence.Persistence;
+import org.skyve.util.logging.Category;
+import org.slf4j.Logger;
+
+import com.google.common.base.MoreObjects;
 
 import jakarta.annotation.Nonnull;
 
+/**
+ * Runtime implementation of {@link org.skyve.metadata.user.User} carrying the
+ * authenticated user's identity, resolved role privileges, and permission state.
+ *
+ * <p>Constructed by the persistence layer during login; populated with the user's
+ * customer, data group, roles, and the derived privilege set (aggregated from all
+ * assigned roles). The privilege set is cached on construction so that permission
+ * checks during request processing do not require repeated metadata traversal.
+ *
+ * <p>Threading: thread-confined. One instance per request thread (held by
+ * {@link org.skyve.impl.persistence.AbstractPersistence}).
+ *
+ * @see org.skyve.metadata.user.User
+ * @see SuperUser
+ */
 public class UserImpl implements User {
 	private static final long serialVersionUID = -8485741818564437957L;
 
 	private static final String SECURITY_ADMINISTRATOR_ROLE = "admin.SecurityAdministrator";
+
+    private static final Logger SECURITY_LOGGER = Category.SECURITY.logger();
 
 	/**
 	 * Represents a user that does not belong to a data group.
@@ -103,30 +124,54 @@ public class UserImpl implements User {
 	 */
 	private ConcurrentHashMap<String, Set<String>> accesses = new ConcurrentHashMap<>();
 	
+	/**
+	 * Returns the authenticated user identifier.
+	 *
+	 * @return the user identifier.
+	 */
 	@Override
 	public String getId() {
 		return id;
 	}
 
+	/**
+	 * Sets the authenticated user identifier.
+	 *
+	 * @param id the user identifier.
+	 */
 	@Override
 	public void setId(String id) {
 		this.id = id;
 	}
 
+	/**
+	 * Returns the display name for this user.
+	 *
+	 * @return the user display name.
+	 */
 	@Override
 	public String getName() {
 		return name;
 	}
 
+	/**
+	 * Sets the display name for this user.
+	 *
+	 * @param name the user display name.
+	 */
 	public void setName(String name) {
 		this.name = name;
 	}
 
+	/**
+	 * Returns the active HTTP session identifier for this user.
+	 *
+	 * @return the session identifier.
+	 */
 	@Override
 	public String getSessionId() {
 		return sessionId;
 	}
-
 
 	/**
 	 * Set the session ID of the session this user is in.
@@ -136,11 +181,21 @@ public class UserImpl implements User {
 		this.sessionId = sessionId;
 	}
 
+	/**
+	 * Returns the preferred language tag for this user.
+	 *
+	 * @return the IETF BCP 47 language tag, or {@code null} when not set.
+	 */
 	@Override
 	public String getLanguageTag() {
 		return languageTag;
 	}
 	
+	/**
+	 * Sets the preferred language tag and derives the transient locale.
+	 *
+	 * @param languageTag the IETF BCP 47 language tag.
+	 */
 	public void setLanguageTag(String languageTag) {
 		this.languageTag = languageTag;
 		if (languageTag == null) {
@@ -159,73 +214,146 @@ public class UserImpl implements User {
         return this;
     }
 
+	/**
+	 * Returns the resolved locale for this user.
+	 *
+	 * @return the locale derived from language tag or request context.
+	 */
 	@Override
 	public Locale getLocale() {
 		return locale;
 	}
 
+	/**
+	 * Sets the web-request locale only when no explicit language tag exists.
+	 *
+	 * @param locale the request locale to cache for this user.
+	 */
 	public void setWebLocale(Locale locale) {
 		if (languageTag == null) {
 			this.locale = locale;
 		}
 	}
 	
+	/**
+	 * Returns the stored password hash.
+	 *
+	 * @return the password hash.
+	 */
 	@Override
 	public String getPasswordHash() {
 		return passwordHash;
 	}
 
+	/**
+	 * Sets the stored password hash.
+	 *
+	 * @param passwordHash the password hash.
+	 */
 	public void setPasswordHash(String passwordHash) {
 		this.passwordHash = passwordHash;
 	}
 
+	/**
+	 * Indicates whether this user must change their password.
+	 *
+	 * @return {@code true} when a password change is required.
+	 */
 	@Override
 	public boolean isPasswordChangeRequired() {
 		return passwordChangeRequired;
 	}
 
+	/**
+	 * Sets whether this user must change their password.
+	 *
+	 * @param passwordChangeRequired {@code true} when a password change is required.
+	 */
 	public void setPasswordChangeRequired(boolean passwordChangeRequired) {
 		this.passwordChangeRequired = passwordChangeRequired;
 	}
 
+	/**
+	 * Returns the linked contact identifier for this user.
+	 *
+	 * @return the contact identifier.
+	 */
 	@Override
 	public String getContactId() {
 		return contactId;
 	}
 
+	/**
+	 * Sets the linked contact identifier for this user.
+	 *
+	 * @param contactId the contact identifier.
+	 */
 	public void setContactId(String contactId) {
 		this.contactId = contactId;
 	}
 
+	/**
+	 * Returns the linked contact display name for this user.
+	 *
+	 * @return the contact display name.
+	 */
 	@Override
 	public String getContactName() {
 		return contactName;
 	}
 
+	/**
+	 * Sets the linked contact display name for this user.
+	 *
+	 * @param contactName the contact display name.
+	 */
 	public void setContactName(String contactName) {
 		this.contactName = contactName;
 	}
 
+	/**
+	 * Returns the linked contact image content identifier.
+	 *
+	 * @return the contact image identifier.
+	 */
 	@Override
 	public String getContactImageId() {
 		return contactImageId;
 	}
 
+	/**
+	 * Sets the linked contact image content identifier.
+	 *
+	 * @param contactImageId the contact image identifier.
+	 */
 	public void setContactImageId(String contactImageId) {
 		this.contactImageId = contactImageId;
 	}
 
+	/**
+	 * Builds a content endpoint URL for the user's contact image.
+	 *
+	 * @param width the requested image width.
+	 * @param height the requested image height.
+	 * @return the content URL, or {@code null} when no contact image is available.
+	 */
 	@Override
 	public String getContactImageUrl(int width, int height) {
 		if (contactImageId == null) {
-			return "images/blank.gif";
+			return null;
 		}
+		
 		StringBuilder result = new StringBuilder(256);
-		result.append("\"content?_n=").append(contactImageId).append("&_doc=admin.Contact&_b=image&_w=");
+		result.append("content?_n=").append(contactImageId).append("&_doc=admin.Contact&_b=image&_w=");
 		result.append(width).append("&_h=").append(height);
 		return result.toString();
 	}
 
+	/**
+	 * Returns avatar initials derived from contact name or user name.
+	 *
+	 * @return one or two uppercase initials, or {@code "??"} when no name is available.
+	 */
 	@Override
 	public String getContactAvatarInitials() {
 		String n = (contactName == null) ? name : contactName;
@@ -254,40 +382,83 @@ public class UserImpl implements User {
 		return attributes;
 	}
 
+	/**
+	 * Resolves the customer's metadata object for this user context.
+	 *
+	 * @return the current customer metadata, or {@code null} if it cannot be resolved.
+	 */
 	@Override
 	public Customer getCustomer() {
 		return ProvidedRepositoryFactory.get().getCustomer(customerName);
 	}
 
+	/**
+	 * Sets the customer name associated with this user context.
+	 *
+	 * @param customerName the customer name.
+	 */
 	@Override
 	public void setCustomerName(String customerName) {
 		this.customerName = customerName;
 	}
 
+	/**
+	 * Returns the customer name associated with this user context.
+	 *
+	 * @return the customer name.
+	 */
 	@Override
 	public String getCustomerName() {
 		return customerName;
 	}
 
+	/**
+	 * Returns the data-group identifier associated with this user.
+	 *
+	 * @return the data-group identifier, or {@code null} for ungrouped users.
+	 */
 	@Override
 	public String getDataGroupId() {
 		return dataGroupId;
 	}
 
+	/**
+	 * Sets the data-group identifier associated with this user.
+	 *
+	 * @param dataGroupId the data-group identifier.
+	 */
 	@Override
 	public void setDataGroupId(String dataGroupId) {
 		this.dataGroupId = dataGroupId;
 	}
 
+	/**
+	 * Returns the configured home module name for this user.
+	 *
+	 * @return the home module name.
+	 */
 	@Override
 	public String getHomeModuleName() {
 		return homeModuleName;
 	}
 
+	/**
+	 * Sets the configured home module name for this user.
+	 *
+	 * @param homeModuleName the home module name.
+	 */
 	public void setHomeModuleName(String homeModuleName) {
 		this.homeModuleName = homeModuleName;
 	}
 
+	/**
+	 * Merges permissions from a role into this user's effective access state.
+	 *
+	 * <p>Side effects: updates document CRUD scope, executable actions, content
+	 * restrictions, and content permissions. Duplicate role additions are ignored.
+	 *
+	 * @param role the role to merge into effective permissions.
+	 */
 	public void addRole(RoleImpl role) {
 		String roleName = new StringBuilder(128).append(role.getOwningModule().getName()).append('.').append(role.getName()).toString();
 		
@@ -295,12 +466,12 @@ public class UserImpl implements User {
 		if (roleNames.add(roleName)) {
 			String owningModuleName = role.getOwningModule().getName();
 			for (Privilege privilege : role.getPrivileges()) {
-				if (privilege instanceof DocumentPrivilege) {
-					DocumentPermission permission = ((DocumentPrivilege) privilege).getPermission();
+				if (privilege instanceof DocumentPrivilege documentPrivilege) {
+					DocumentPermission permission = documentPrivilege.getPermission();
 					putDocumentPermission(owningModuleName, privilege.getName(), permission);
 				}
-				else if (privilege instanceof ActionPrivilege) {
-					addActionPermission(owningModuleName, (ActionPrivilege) privilege);
+				else if (privilege instanceof ActionPrivilege actionPrivilege) {
+					addActionPermission(owningModuleName, actionPrivilege);
 				}
 			}
 			
@@ -377,6 +548,12 @@ public class UserImpl implements User {
 		contentPermissions.add(key.toString());
 	}
 
+	/**
+	 * Returns fully qualified document names for which this user has explicit permissions.
+	 *
+	 * @return the permission map key set in {@code <module>.<document>} form.
+	 */
+
 	public Set<String> getFullyQualifiedDocumentNames() {
 		return documentPermissions.keySet();
 	}
@@ -408,6 +585,9 @@ public class UserImpl implements User {
 		accesses.clear();
 	}
 
+	/**
+	 * Returns module names that currently have at least one accessible menu item.
+	 */
 	@Override
 	public Set<String> getAccessibleModuleNames() {
 		Set<String> result = new TreeSet<>();
@@ -422,6 +602,15 @@ public class UserImpl implements User {
 		return result;
 	}
 
+	/**
+	 * Checks whether the user holds the specified role.
+	 *
+	 * <p>Also treats security administrators without a data group as data administrators.
+	 *
+	 * @param moduleName the role's owning module name.
+	 * @param roleName the role name.
+	 * @return {@code true} when the role is effectively held.
+	 */
 	@Override
 	public boolean isInRole(String moduleName, String roleName) {
 		String fullyQualifiedRoleName = new StringBuilder(128).append(moduleName).append('.').append(roleName).toString();
@@ -433,6 +622,14 @@ public class UserImpl implements User {
 			roleNames.contains(SECURITY_ADMINISTRATOR_ROLE));
 	}
 
+	/**
+	 * Returns the document permission scope for the specified module/document pair.
+	 *
+	 * @param moduleName the module name.
+	 * @param documentName the document name.
+	 * @return the configured scope, or {@link DocumentPermissionScope#none} when no
+	 *         permission exists.
+	 */
 	@Override
 	public DocumentPermissionScope getScope(String moduleName, String documentName) {
 		DocumentPermissionScope result = DocumentPermissionScope.none;
@@ -446,19 +643,24 @@ public class UserImpl implements User {
 	}
 
 	/**
-	 * Determine if we can read the document bean given the document scope etc. 
-	 * NB. Cannot select the bean from bizhub data store in this method, coz it may be transient.
-	 * 
-	 * @param beanBizId
-	 * @param beanBizModule
-	 * @param beanBizDocument
-	 * @param beanBizCustomer
-	 * @param beanBizDataGroupId
-	 * @param beanBizUserId
-	 * @return
+	 * Determines whether this user can read a bean instance identified by biz fields.
+	 *
+	 * <p>Evaluates document permission scope (global/customer/data-group/user). If the
+	 * document has no direct permission and is a child document, the decision falls back
+	 * to parent-document readability.
+	 *
+	 * <p>Side effects: may execute a parent-join lookup for child documents.
+	 *
+	 * @param beanBizId the bean identifier.
+	 * @param beanBizModule the owning module name.
+	 * @param beanBizDocument the owning document name.
+	 * @param beanBizCustomer the bean customer value.
+	 * @param beanBizDataGroupId the bean data-group identifier.
+	 * @param beanBizUserId the bean owning user identifier.
+	 * @return {@code true} when read access is granted; otherwise {@code false}.
 	 */
 	@Override
-	@SuppressWarnings("incomplete-switch")
+	@SuppressWarnings({"incomplete-switch", "java:S3776"}) // Complexity OK
 	public boolean canReadBean(String beanBizId,
 								String beanBizModule,
 								String beanBizDocument,
@@ -494,23 +696,13 @@ public class UserImpl implements User {
 					}
 				}
 				if ((! result) && UtilImpl.SECURITY_TRACE) {
-					StringBuilder trace = new StringBuilder(256);
-					trace.append("Security - ");
-					trace.append(beanBizModule).append('.');
-					trace.append(beanBizDocument).append('.');
-					trace.append(beanBizId).append(" denied - not in scope");
-					UtilImpl.LOGGER.info(trace.toString());
+                    SECURITY_LOGGER.info("Security - {}.{}.{} denied - not in scope", beanBizModule, beanBizDocument, beanBizId);
 				}
 			}
 			else {
 				result = false;
 				if (UtilImpl.SECURITY_TRACE) {
-					StringBuilder trace = new StringBuilder(256);
-					trace.append("Security - ");
-					trace.append(beanBizModule).append('.');
-					trace.append(beanBizDocument).append('.');
-					trace.append(beanBizId).append(" denied - no read permission");
-					UtilImpl.LOGGER.info(trace.toString());
+					SECURITY_LOGGER.info("Security - {}.{}.{} denied - no read permission", beanBizModule, beanBizDocument, beanBizId);
 				}
 			}
 		}
@@ -523,14 +715,9 @@ public class UserImpl implements User {
 			Document parentDocument = document.getParentDocument(customer);
 			if (parentDocument == null) { // document has no parent
 				result = false;
-				if (UtilImpl.SECURITY_TRACE) {
-					StringBuilder trace = new StringBuilder(256);
-					trace.append("Security - ");
-					trace.append(beanBizModule).append('.');
-					trace.append(beanBizDocument).append('.');
-					trace.append(beanBizId).append(" denied - no permission");
-					UtilImpl.LOGGER.info(trace.toString());
-				}
+                if (UtilImpl.SECURITY_TRACE) {
+                    SECURITY_LOGGER.info("Security - {}.{}.{} denied - no permission", beanBizModule, beanBizDocument, beanBizId);
+                }
 			}
 			else { // found a parent document
 				if (! beanBizDocument.equals(parentDocument.getName())) { // exclude hierarchical documents
@@ -566,12 +753,7 @@ public class UserImpl implements User {
 													(String) values[2], 
 													(String) values[3]);
 							if ((! result) && (UtilImpl.SECURITY_TRACE)) {
-								StringBuilder trace = new StringBuilder(256);
-								trace.append("Security - ");
-								trace.append(beanBizModule).append('.');
-								trace.append(beanBizDocument).append('.');
-								trace.append(beanBizId).append(" denied - no read on parent");
-								UtilImpl.LOGGER.info(trace.toString());
+			                    SECURITY_LOGGER.info("Security - {}.{}.{} denied - no read on parent", beanBizModule, beanBizDocument, beanBizId);
 							}
 						}
 					}
@@ -603,35 +785,39 @@ public class UserImpl implements User {
 				// deny if user can't read owning document
 				result = canReadBean(bizId, bizModule, bizDocument, bizCustomer, bizDataGroupId, bizUserId);
 				if ((! result) && (UtilImpl.SECURITY_TRACE)) {
-					StringBuilder trace = new StringBuilder(256);
-					trace.append("Security - ");
-					trace.append(bizModule).append('.');
-					trace.append(bizDocument).append('.');
-					trace.append(bizId).append(" denied - no read. Content permission can be explicitly granted for non-persistent document attribtues");
-					UtilImpl.LOGGER.info(trace.toString());
+                    SECURITY_LOGGER.info(
+                            "Security - {}.{}.{} denied - no read. Content permission can be explicitly granted for non-persistent document attribtues",
+                            bizModule, bizDocument, bizId);
 				}
 			}
 		}
 		else {
 			if (UtilImpl.SECURITY_TRACE) {
-				StringBuilder trace = new StringBuilder(256);
-				trace.append("Security - ");
-				trace.append(bizModule).append('.');
-				trace.append(bizDocument).append('.');
-				trace.append(attributeName).append(" denied - restricted content");
-				UtilImpl.LOGGER.info(trace.toString());
+                SECURITY_LOGGER.info( "Security - {}.{}.{} denied - restricted content", bizModule, bizDocument, attributeName);
 			}
 		}
 
 		return result;
 	}
-
+	
+	/**
+	 * Indicates whether any explicit document permission exists for the supplied document.
+	 *
+	 * @param document the document metadata.
+	 * @return {@code true} when a document permission entry exists.
+	 */
 	@Override
 	public boolean canAccessDocument(Document document) {
 		String modoc = new StringBuilder(128).append(document.getOwningModuleName()).append('.').append(document.getName()).toString();
 		return (documentPermissions.get(modoc) != null);
 	}
 
+	/**
+	 * Indicates whether the user has create permission on the supplied document.
+	 *
+	 * @param document the document metadata.
+	 * @return {@code true} when create permission is granted.
+	 */
 	@Override
 	public boolean canCreateDocument(Document document) {
 		boolean result = false;
@@ -644,12 +830,23 @@ public class UserImpl implements User {
 
 		return result;
 	}
-	
+
+	/**
+	 * Indicates whether the user may use flagging features.
+	 *
+	 * @return {@code true} when the user has at least one configured flag role.
+	 */
 	@Override
 	public boolean canFlag() {
 		return ! Collections.disjoint(((CustomerImpl) getCustomer()).getFlagRoles(), roleNames);
 	}
 
+	/**
+	 * Indicates whether the user has read permission on the supplied document.
+	 *
+	 * @param document the document metadata.
+	 * @return {@code true} when read permission is granted.
+	 */
 	@Override
 	public boolean canReadDocument(Document document) {
 		boolean result = false;
@@ -662,17 +859,33 @@ public class UserImpl implements User {
 
 		return result;
 	}
-	
+
+	/**
+	 * Indicates whether the user may use text-search features.
+	 *
+	 * @return {@code true} when the user has at least one configured text-search role.
+	 */
 	@Override
 	public boolean canTextSearch() {
 		return ! Collections.disjoint(((CustomerImpl) getCustomer()).getTextSearchRoles(), roleNames);
 	}
-	
+
+	/**
+	 * Indicates whether the user may switch UI mode.
+	 *
+	 * @return {@code true} when the user has at least one configured switch-mode role.
+	 */
 	@Override
 	public boolean canSwitchMode() {
 		return ! Collections.disjoint(((CustomerImpl) getCustomer()).getSwitchModeRoles(), roleNames);
 	}
 
+	/**
+	 * Indicates whether the user has update permission on the supplied document.
+	 *
+	 * @param document the document metadata.
+	 * @return {@code true} when update permission is granted.
+	 */
 	@Override
 	public boolean canUpdateDocument(Document document) {
 		boolean result = false;
@@ -686,6 +899,12 @@ public class UserImpl implements User {
 		return result;
 	}
 
+	/**
+	 * Indicates whether the user has delete permission on the supplied document.
+	 *
+	 * @param document the document metadata.
+	 * @return {@code true} when delete permission is granted.
+	 */
 	@Override
 	public boolean canDeleteDocument(Document document) {
 		boolean result = false;
@@ -699,6 +918,13 @@ public class UserImpl implements User {
 		return result;
 	}
 
+	/**
+	 * Indicates whether the user can execute the named action on the supplied document.
+	 *
+	 * @param document the document metadata.
+	 * @param actionName the action name.
+	 * @return {@code true} when the fully qualified action is present in the user's action set.
+	 */
 	@Override
 	public boolean canExecuteAction(Document document, String actionName) {
 		StringBuilder sb = new StringBuilder(192);
@@ -708,7 +934,13 @@ public class UserImpl implements User {
 	}
 
 	/**
-	 * If ! UtilImpl.ACCESS_CONTROL, allow access.
+	 * Evaluates whether the user may navigate to the requested access target for a UX/UI.
+	 *
+	 * <p>When access control is disabled all access is allowed. Otherwise this method
+	 * evaluates the lazily built access-control list and in development mode retries once
+	 * after clearing stale ACL state.
+	 * 
+ 	 * If ! UtilImpl.ACCESS_CONTROL, allow access.
 	 * If access string key DNE then no access.
 	 * If access string key exists and yields null, then access for every UX/UI.
 	 * Otherwise, check access at UX/UI level.
@@ -731,7 +963,15 @@ public class UserImpl implements User {
 
 		return result;
 	}
-	
+
+	/**
+	 * Evaluates access against the built access-control map, including singular-access
+	 * fallback to base-document access definitions.
+	 *
+	 * @param access the requested access vector.
+	 * @param uxui the active UX/UI identifier.
+	 * @return {@code true} when access is allowed for the supplied UX/UI.
+	 */
 	private boolean canAccessWithDevMode(UserAccess access, String uxui) {
 		// Create the ACL if not already created
 		if (accesses.isEmpty()) {
@@ -769,11 +1009,11 @@ public class UserImpl implements User {
 		// No access found
 		return false;
 	}
-	
+
 	/**
-	 * Return the client representation of the logged in user.
+	 * Creates a client-facing DTO representation of this user and their effective permissions.
 	 * 
-	 * @return A new ClientUserData
+	 * @return a populated client user payload.
 	 */
 	public ClientUserData createClientUser() {
 		ClientUserData result = new ClientUserData();
@@ -805,7 +1045,6 @@ public class UserImpl implements User {
 		return result;
 	}
 	
-	
 	/**
 	 * Clear all the permissions and menus on this user.
 	 * <br />
@@ -819,5 +1058,19 @@ public class UserImpl implements User {
 		contentPermissions.clear();
 		moduleMenuMap.clear();
 		accesses.clear();
+	}
+
+	/**
+	 * Returns a concise string representation of this user context.
+	 *
+	 * @return a string containing name, customer, and user identifier.
+	 */
+	@Override
+	public String toString() {
+		return MoreObjects.toStringHelper(this)
+				.add("name", name)
+				.add("customerName", customerName)
+				.add("id", id)
+				.toString();
 	}
 }

@@ -16,6 +16,10 @@ import org.hibernate.type.LiteralType;
 import org.hibernate.usertype.UserType;
 import org.skyve.domain.types.TimeOnly;
 
+/**
+ * Hibernate {@link org.hibernate.usertype.UserType} that maps the Skyve
+ * {@link org.skyve.domain.types.TimeOnly} type to a SQL {@code TIME} column.
+ */
 public class TimeOnlyUserType implements UserType, LiteralType<Date>, Serializable {
 	private static final long serialVersionUID = 8170300540374728474L;
 
@@ -41,9 +45,10 @@ public class TimeOnlyUserType implements UserType, LiteralType<Date>, Serializab
 		Date xdate = (Date) x;
 		Date ydate = (Date) y;
 
-		if (xdate.getTime() == ydate.getTime())
+		if (xdate.getTime() == ydate.getTime()) {
 			return true;
-
+		}
+		
 		Calendar calendar1 = Calendar.getInstance();
 		Calendar calendar2 = Calendar.getInstance();
 		calendar1.setTime(xdate);
